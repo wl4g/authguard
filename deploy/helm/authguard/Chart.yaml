@@ -1,0 +1,16 @@
+apiVersion: v2
+name: authguard
+description: Envoy Gateway integrated Resource URN external authorization service
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: gateway-helm
+    alias: envoy-gateway
+    version: v1.9.0
+    repository: oci://docker.io/envoyproxy
+    condition: envoy-gateway.enabled
+  - name: redis-cluster
+    version: 8.8.2
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis-cluster.enabled

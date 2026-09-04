@@ -1,0 +1,56 @@
+[workspace]
+resolver = "2"
+members = [
+  "src/core",
+  "src/adapters/rust",
+  "use-cases/customer-growth-job-service/e2e/deploy/rust-sqlx-service",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+rust-version = "1.85"
+
+[workspace.dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+axum = "0.8"
+base64 = "0.22"
+config = { version = "0.15", default-features = false, features = ["convert-case", "yaml"] }
+envoy-types = "=0.7.0"
+http = "1.2"
+humantime-serde = "1.1"
+hmac = "0.12"
+ipnet = { version = "2.11", features = ["serde"] }
+ldap3 = { version = "0.12.1", default-features = false, features = ["tls-rustls-ring"] }
+opentelemetry = "0.32"
+opentelemetry-http = "0.32"
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "trace"] }
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
+prometheus-client = "0.25"
+prost = "0.14"
+rand = "0.9"
+redis = { version = "=1.2.2", default-features = false, features = ["cluster-async", "tokio-rustls-comp"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "postgres", "macros", "migrate", "json"] }
+thiserror = "2.0"
+tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "net", "signal", "sync"] }
+tower = { version = "0.5", features = ["limit", "util"] }
+tower-http = { version = "0.6", features = ["catch-panic", "compression-gzip", "timeout"] }
+tonic = { version = "0.14", default-features = false, features = ["transport", "router", "tls-webpki-roots"] }
+tonic-prost = "0.14"
+tracing = "0.1"
+tracing-opentelemetry = "0.33"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"

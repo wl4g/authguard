@@ -1,0 +1,19 @@
+server:
+  port: ${PORT:8080}
+  shutdown: graceful
+spring:
+  application:
+    name: e2e-customer-growth-spring-jdbc
+  datasource:
+    url: ${DATABASE_URL}
+    username: ${DATABASE_USERNAME}
+    password: ${DATABASE_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 1
+      connection-timeout: 5000
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

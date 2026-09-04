@@ -1,0 +1,86 @@
+{{- $integration := .Values.authguardIntegration -}}
+{{- $jwt := $integration.jwt -}}
+{{- if $integration.enabled }}
+{{- if eq $jwt.enabled $integration.oidc.enabled }}
+{{- fail "authguardIntegration requires exactly one of jwt.enabled or oidc.enabled" }}
+{{- end }}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: {{ include "authguard.fullname" . }}
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ $integration.gateway.name }}
+  extAuth:
+    failOpen: false
+    timeout: 2s
+    headersToExtAuth:
+      {{- if $jwt.enabled }}
+      - authorization
+      {{- else }}
+      - x-authguard-id-token
+      {{- end }}
+      # Correlation and W3C trace context only; identity/resource headers are
+      # deliberately not accepted from the untrusted downstream request.
+      - x-request-id
+      - traceparent
+      - tracestate
+    grpc:
+      backendRefs:
+        - name: {{ include "authguard.fullname" . }}
+          port: {{ .Values.authguard.service.grpcPort }}
+  {{- if $jwt.enabled }}
+  jwt:
+    optional: false
+    providers:
+      - name: platform-idp
+        issuer: {{ required "authguardIntegration.jwt.issuer is required" $jwt.issuer | quote }}
+        audiences:
+          {{- toYaml $jwt.audiences | nindent 10 }}
+        extractFrom:
+          headers:
+            - name: authorization
+              valuePrefix: "Bearer "
+        {{- if $jwt.remoteJWKS.uri }}
+        remoteJWKS:
+          uri: {{ $jwt.remoteJWKS.uri | quote }}
+          cacheDuration: 5m
+          {{- with $jwt.remoteJWKS.backendRefs }}
+          backendRefs:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- else }}
+        localJWKS:
+          type: ValueRef
+          valueRef:
+            group: ""
+            kind: ConfigMap
+            name: {{ include "authguard.jwtJwksConfigMapName" . }}
+        {{- end }}
+  {{- end }}
+  {{- if $integration.oidc.enabled }}
+  oidc:
+    provider:
+      issuer: {{ required "authguardIntegration.oidc.issuer is required" $integration.oidc.issuer | quote }}
+    clientID: {{ required "authguardIntegration.oidc.clientID is required" $integration.oidc.clientID | quote }}
+    clientSecret:
+      name: {{ include "authguard.oidcSecretName" . }}
+    scopes: [openid, profile, email, groups]
+    {{- with $integration.oidc.redirectURL }}
+    redirectURL: {{ . | quote }}
+    {{- end }}
+    logoutPath: /logout
+    passThroughAuthHeader: true
+    forwardIDToken:
+      header: x-authguard-id-token
+    denyRedirect:
+      headers:
+        - name: x-requested-with
+          type: Exact
+          value: XMLHttpRequest
+  {{- end }}
+{{- end }}

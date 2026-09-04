@@ -1,0 +1,9 @@
+dependencies:
+- name: gateway-helm
+  repository: oci://docker.io/envoyproxy
+  version: v1.9.0
+- name: redis-cluster
+  repository: https://charts.bitnami.com/bitnami
+  version: 8.8.2
+digest: sha256:d17651d8a6d365fa8babbbc7763f7adf45e91dc465c88cc04508b3bbe9d08eec
+generated: "2026-09-02T09:55:02.01735018+08:00"

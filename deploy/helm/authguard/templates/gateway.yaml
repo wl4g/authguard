@@ -1,0 +1,70 @@
+{{- $envoyGateway := index .Values "envoy-gateway" -}}
+{{- $integration := .Values.authguardIntegration -}}
+{{- $gateway := $integration.gateway -}}
+{{- $tracing := $integration.tracing -}}
+{{- if and $integration.enabled $gateway.create }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: {{ $gateway.className }}
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: {{ printf "%s-authguard" $gateway.name | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        container:
+          image: {{ $envoyGateway.global.images.envoyProxy.image }}
+  filterOrder:
+    - name: envoy.filters.http.jwt_authn
+      before: envoy.filters.http.ext_authz
+  {{- if $tracing.enabled }}
+  telemetry:
+    tracing:
+      provider:
+        type: OpenTelemetry
+        backendRefs:
+          - group: ""
+            kind: Service
+            name: {{ required "authguardIntegration.tracing.backendRef.name is required when tracing is enabled" $tracing.backendRef.name | quote }}
+            port: {{ required "authguardIntegration.tracing.backendRef.port is required when tracing is enabled" $tracing.backendRef.port }}
+            {{- with $tracing.backendRef.namespace }}
+            namespace: {{ . | quote }}
+            {{- end }}
+        {{- with $tracing.serviceName }}
+        serviceName: {{ . | quote }}
+        {{- end }}
+        openTelemetry:
+          sampler:
+            type: AlwaysOn
+  {{- end }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ $gateway.name }}
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+spec:
+  gatewayClassName: {{ $gateway.className }}
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: {{ printf "%s-authguard" $gateway.name | trunc 63 | trimSuffix "-" }}
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: All
+{{- end }}

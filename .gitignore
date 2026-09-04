@@ -1,0 +1,27 @@
+target/
+**/target/
+
+.idea/
+.vscode/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+
+node_modules/
+dist/
+
+.DS_Store
+*.log
+
+*.db
+*.db-shm
+*.db-wal
+
+# The Authguard chart vendors immutable upstream dependencies so installs and
+# CI rendering do not require registry access.
+deploy/helm/**/charts/*
+!deploy/helm/authguard/charts/*.tgz

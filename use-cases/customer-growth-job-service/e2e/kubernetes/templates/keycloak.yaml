@@ -1,0 +1,216 @@
+{{- $name := include "customer-growth-e2e.keycloakName" . -}}
+{{- $keycloakSecretName := include "customer-growth-e2e.keycloakSecretName" . -}}
+{{- $principalSecretName := include "customer-growth-e2e.principalDiscoverySecretName" . -}}
+{{- $ldapName := include "customer-growth-e2e.ldapName" . -}}
+{{- $jaegerName := include "customer-growth-e2e.jaegerName" . -}}
+{{- $issuer := printf "http://%s.%s.svc.cluster.local:8080" $name .Release.Namespace -}}
+{{- $clientSecret := randAlphaNum 48 -}}
+{{- $authguardLdapBindPassword := randAlphaNum 48 -}}
+{{- $keycloakLdapBindPassword := randAlphaNum 48 -}}
+{{- $existingPrincipalSecret := lookup "v1" "Secret" .Release.Namespace $principalSecretName -}}
+{{- $existingKeycloakSecret := lookup "v1" "Secret" .Release.Namespace $keycloakSecretName -}}
+{{- if and $existingPrincipalSecret (hasKey $existingPrincipalSecret.data "keycloak-client-secret") -}}
+{{- $clientSecret = index $existingPrincipalSecret.data "keycloak-client-secret" | b64dec -}}
+{{- end -}}
+{{- if and $existingPrincipalSecret (hasKey $existingPrincipalSecret.data "ldap-bind-password") -}}
+{{- $authguardLdapBindPassword = index $existingPrincipalSecret.data "ldap-bind-password" | b64dec -}}
+{{- end -}}
+{{- if and $existingKeycloakSecret (hasKey $existingKeycloakSecret.data "ldap-bind-password") -}}
+{{- $keycloakLdapBindPassword = index $existingKeycloakSecret.data "ldap-bind-password" | b64dec -}}
+{{- end -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $principalSecretName }}
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  keycloak-client-secret: {{ $clientSecret | quote }}
+  ldap-bind-password: {{ $authguardLdapBindPassword | quote }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $keycloakSecretName }}
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  bootstrap-admin-username: {{ .Values.keycloak.bootstrapAdminUsername | quote }}
+  bootstrap-admin-password: {{ .Values.keycloak.bootstrapAdminPassword | quote }}
+  ldap-bind-password: {{ $keycloakLdapBindPassword | quote }}
+  ldap-config.cfg: |
+    [ldap]
+      enabled = true
+      listen = "0.0.0.0:389"
+
+    [ldaps]
+      enabled = false
+
+    [behaviors]
+      IgnoreCapabilities = true
+
+    [backend]
+      datastore = "config"
+      baseDN = "dc=example,dc=org"
+      nameformat = "cn"
+      groupformat = "ou"
+
+    [[users]]
+      name = "svc-keycloak"
+      givenname = "Keycloak"
+      sn = "Federation"
+      mail = "svc-keycloak@example-corp.example"
+      uidnumber = 5000
+      primarygroup = 5500
+      passsha256 = {{ sha256sum $keycloakLdapBindPassword | quote }}
+      othergroups = []
+      attrs = { entryUUID = "44444444-4444-4444-8444-444444444444" }
+
+    [[users]]
+      name = "svc-authguard"
+      givenname = "Authguard"
+      sn = "Principal Discovery"
+      mail = "svc-authguard@example-corp.example"
+      uidnumber = 5001
+      primarygroup = 5500
+      passsha256 = {{ sha256sum $authguardLdapBindPassword | quote }}
+      othergroups = []
+      attrs = { entryUUID = "55555555-5555-4555-8555-555555555555" }
+
+    [[users]]
+      name = "ldap-retention-analyst"
+      givenname = "LDAP Retention"
+      sn = "Analyst"
+      mail = "ldap-retention-analyst@example-corp.example"
+      uidnumber = 1001
+      primarygroup = 5501
+      passsha256 = "ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f"
+      othergroups = [5501]
+      attrs = { entryUUID = "33333333-3333-4333-8333-333333333333", displayName = "LDAP Retention Analyst", department = "Customer Growth" }
+
+    [[groups]]
+      name = "Users"
+      gidnumber = 5500
+      description = "LDAP service accounts"
+
+    [[groups]]
+      name = "customer-growth-analysts"
+      gidnumber = 5501
+      description = "Customer growth analytics team"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-realm
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+data:
+  example-corp-realm.json: |
+{{ required "keycloak.realm must contain the E2E realm JSON" .Values.keycloak.realm | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+    app.kubernetes.io/component: e2e-keycloak
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: e2e-keycloak
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+    app.kubernetes.io/component: e2e-keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: e2e-keycloak
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: e2e-keycloak
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      {{- if .Values.ldap.enabled }}
+      initContainers:
+        - name: wait-for-e2e-ldap
+          image: {{ .Values.keycloak.image | quote }}
+          imagePullPolicy: {{ .Values.keycloak.pullPolicy }}
+          command: ["/bin/bash", "-ec"]
+          args:
+            - >-
+              until (exec 3<>/dev/tcp/{{ $ldapName }}/389) 2>/dev/null;
+              do sleep 1; done
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: 5m, memory: 16Mi }
+            limits: { cpu: 50m, memory: 64Mi }
+      {{- end }}
+      containers:
+        - name: keycloak
+          image: {{ .Values.keycloak.image | quote }}
+          imagePullPolicy: {{ .Values.keycloak.pullPolicy }}
+          args: ["start-dev", "--import-realm", "--health-enabled=true"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          env:
+            - { name: KC_BOOTSTRAP_ADMIN_USERNAME, valueFrom: { secretKeyRef: { name: {{ $keycloakSecretName }}, key: bootstrap-admin-username } } }
+            - { name: KC_BOOTSTRAP_ADMIN_PASSWORD, valueFrom: { secretKeyRef: { name: {{ $keycloakSecretName }}, key: bootstrap-admin-password } } }
+            - { name: KC_HTTP_ENABLED, value: "true" }
+            - { name: KC_HOSTNAME, value: {{ $issuer | quote }} }
+            - { name: KC_HOSTNAME_STRICT, value: "false" }
+            - { name: E2E_LDAP_ENABLED, value: {{ ternary "true" "false" .Values.ldap.enabled | quote }} }
+            - { name: E2E_LDAP_URL, value: {{ printf "ldap://%s.%s.svc.cluster.local:389" $ldapName .Release.Namespace | quote }} }
+            - { name: E2E_LDAP_BIND_PASSWORD, valueFrom: { secretKeyRef: { name: {{ $keycloakSecretName }}, key: ldap-bind-password } } }
+            - { name: E2E_PRINCIPAL_DISCOVERY_CLIENT_SECRET, valueFrom: { secretKeyRef: { name: {{ $principalSecretName }}, key: keycloak-client-secret } } }
+            {{- if .Values.jaeger.enabled }}
+            - { name: KC_TRACING_ENABLED, value: "true" }
+            - { name: KC_TRACING_SAMPLER_TYPE, value: "always_on" }
+            - { name: KC_TELEMETRY_ENDPOINT, value: {{ printf "http://%s.%s.svc.cluster.local:4317" $jaegerName .Release.Namespace | quote }} }
+            - { name: KC_TELEMETRY_PROTOCOL, value: "grpc" }
+            - { name: KC_TELEMETRY_SERVICE_NAME, value: {{ $name | quote }} }
+            - { name: KC_TELEMETRY_RESOURCE_ATTRIBUTES, value: {{ printf "deployment.environment.name=e2e,k8s.namespace.name=%s,service.namespace=customer-growth-job-service" .Release.Namespace | quote }} }
+            {{- end }}
+          ports:
+            - { name: http, containerPort: 8080 }
+          startupProbe:
+            httpGet: { path: /realms/master, port: http }
+            periodSeconds: 3
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /realms/example-corp, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 2
+          resources:
+            {{- toYaml .Values.keycloak.resources | nindent 12 }}
+          volumeMounts:
+            - name: realm
+              mountPath: /opt/keycloak/data/import/example-corp-realm.json
+              subPath: example-corp-realm.json
+              readOnly: true
+      volumes:
+        - name: realm
+          configMap:
+            name: {{ $name }}-realm

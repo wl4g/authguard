@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "authguard.fullname" . }}
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "authguard.serverSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: authz-grpc
+      port: {{ .Values.authguard.service.grpcPort }}
+      targetPort: authz-grpc
+      appProtocol: grpc
+    - name: scope-grpc
+      port: {{ .Values.authguard.service.scopeGrpcPort }}
+      targetPort: scope-grpc
+      appProtocol: grpc
+    {{- if .Values.authguard.config.mgmt.enabled }}
+    - name: mgmt
+      port: {{ .Values.authguard.service.mgmtPort }}
+      targetPort: mgmt
+    {{- end }}

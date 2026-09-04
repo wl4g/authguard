@@ -1,0 +1,12 @@
+{{- $integration := .Values.authguardIntegration -}}
+{{- $jwt := $integration.jwt -}}
+{{- if and $integration.enabled $jwt.enabled (not $jwt.remoteJWKS.uri) (not $jwt.localJWKS.existingConfigMap) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "authguard.jwtJwksConfigMapName" . }}
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+data:
+  jwks: {{ required "authguardIntegration.jwt.localJWKS.inline is required when remoteJWKS.uri and existingConfigMap are empty" $jwt.localJWKS.inline | quote }}
+{{- end }}

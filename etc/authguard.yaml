@@ -1,0 +1,118 @@
+# =============================================================================
+#  Authguard - Envoy Gateway external URN authorization service
+#
+#  Canonical keys use snake_case. Container overrides use double underscores:
+#  AUTHGUARD__SERVER__PORT=8081
+#  AUTHGUARD__AUTH__ADMIN_TOKEN=<secret>
+# =============================================================================
+
+server:
+  service_name: authguard
+  host: 0.0.0.0
+  port: 8080
+  scope_port: 8081
+  shutdown_timeout: 15s
+  request:
+    max_message_bytes: 1048576 # 1 MiB; extAuth normally sends headers only
+    timeout: 5s
+  response:
+    max_message_bytes: 1048576
+  performance:
+    worker_threads: 2
+    max_in_flight_requests: 4096
+
+# Management traffic is exposed on a separate ClusterIP port and is not routed through the public Gateway.
+mgmt:
+  enabled: true
+  host: 0.0.0.0
+  port: 9091
+  context_path: "/"
+  health:
+    liveness_path: "/healthz"
+    readiness_path: "/readyz"
+  metrics:
+    enabled: true
+    path: "/metrics"
+  otel:
+    enabled: false
+    endpoint: "http://otel-collector.observability.svc:4317"
+    protocol: grpc
+    timeout: 5s
+    sample_rate: 1.0
+
+logging:
+  mode: JSON  # HUMAN | JSON
+  level: "info,tower_http=info"
+
+auth:
+  # Envoy Gateway verifies OIDC/JWT before forwarding this token to extAuth.
+  identity:
+    token_header: authorization
+    issuer_claim: iss
+    external_id_claim: sub
+    # Values must be issuer-local stable group identifiers, not display names.
+    groups_claim: authguard_group_ids
+  # Small scopes travel directly; large scopes use a Redis-backed opaque token.
+  scope_delivery:
+    direct_urn_limit: 32
+    max_direct_header_bytes: 8192
+    context_ttl: 30s
+    scope_token_ttl: 30s
+  # Principal projections remain local. JIT consumes only identities already
+  # verified by Envoy; federated search is control-plane only; SCIM is opt-in.
+  principal_discovery:
+    jit:
+      enabled: true
+      discovery_id: verified-oidc
+      trusted_issuers: [https://idp.example.com/realms/example-corp]
+      allow_insecure_http: false
+    federated:
+      keycloak: []
+      ldap: []
+    scim:
+      enabled: false
+      discovery_id: corporate-scim
+      # Must exactly equal the OIDC `iss`; SCIM externalId should equal OIDC `sub`.
+      issuer: https://idp.example.com/realms/example-corp
+  # Keep empty in source. Inject AUTHGUARD__AUTH__ADMIN_TOKEN from a Secret.
+  admin_token: ""
+
+storage:
+  # SQLite is the zero-dependency single-replica backend. PostgreSQL is required
+  # for durable multi-replica policy administration.
+  backend: sqlite
+  bootstrap_policy: null
+  policy_refresh_interval: 5s
+  # Readiness fails when no complete policy refresh succeeds within this window.
+  policy_max_staleness: 30s
+  sqlite:
+    url: "sqlite://authguard.db"
+    max_connections: 1
+    connect_timeout: 5s
+  postgres:
+    url: ""
+    max_connections: 20
+    connect_timeout: 5s
+
+# Local development defaults to an in-process cache. Helm overrides provider
+# to Redis so opaque scope tokens are shared by replicas.
+cache:
+  provider: Memory # Memory | Redis
+  memory:
+    initial_capacity: 32
+    max_capacity: 65535
+    ttl: 1h
+    eviction_policy: LRU
+  redis:
+    nodes: ["redis://127.0.0.1:6379"]
+    username: "default"
+    password: ""
+    key_prefix: authguard
+    connection_timeout: 3s
+    response_timeout: 6s
+    # Also bounds initial connection retries while a freshly deployed cluster forms.
+    retries: 8
+    max_retry_wait: 65s
+    min_retry_wait: 1280ms
+    # Scope tokens require read-after-write consistency; keep replica reads off.
+    read_from_replica: false

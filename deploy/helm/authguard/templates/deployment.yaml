@@ -1,0 +1,158 @@
+{{- if and (eq (lower .Values.authguard.config.storage.backend) "sqlite") (gt (int .Values.authguard.replicaCount) 1) -}}
+{{- fail "authguard.config.storage.backend=sqlite supports only one Authguard replica; use PostgreSQL before increasing authguard.replicaCount" -}}
+{{- end }}
+{{- if and (eq (lower .Values.authguard.config.cache.provider) "memory") (gt (int .Values.authguard.replicaCount) 1) -}}
+{{- fail "authguard.config.cache.provider=Memory supports only one Authguard replica; use Redis before increasing authguard.replicaCount" -}}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "authguard.fullname" . }}
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  replicas: {{ .Values.authguard.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "authguard.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/access-context-key: {{ .Values.authguard.accessContext | toJson | sha256sum }}
+        {{- with .Values.authguard.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "authguard.serverSelectorLabels" . | nindent 8 }}
+        {{- with .Values.authguard.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "authguard.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      {{- with .Values.authguard.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- $redis := index .Values "redis-cluster" }}
+      containers:
+        - name: authguard
+          image: "{{ .Values.authguard.image.repository }}:{{ .Values.authguard.image.tag }}"
+          imagePullPolicy: {{ .Values.authguard.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          env:
+            - name: AUTHGUARD_CONFIG_FILE
+              value: /etc/authguard/authguard.yaml
+            - name: AUTHGUARD_REPLICA_COUNT
+              value: {{ .Values.authguard.replicaCount | quote }}
+            - name: AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "authguard.accessContextSecretName" . }}
+                  key: {{ .Values.authguard.accessContext.key }}
+            {{- if or .Values.authguard.admin.existingSecret .Values.authguard.admin.token }}
+            - name: AUTHGUARD__AUTH__ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (printf "%s-admin" (include "authguard.fullname" .)) .Values.authguard.admin.existingSecret }}
+                  key: {{ .Values.authguard.admin.key }}
+            {{- end }}
+            {{- with .Values.authguard.storage.existingSecret }}
+            - name: AUTHGUARD__STORAGE__POSTGRES__URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: {{ $.Values.authguard.storage.urlKey }}
+            {{- end }}
+            {{- if and (eq (lower .Values.authguard.config.cache.provider) "redis") (or $redis.enabled $redis.existingSecret) }}
+            - name: AUTHGUARD__CACHE__REDIS__PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "authguard.redisSecretName" . }}
+                  key: {{ include "authguard.redisPasswordKey" . }}
+            {{- end }}
+          ports:
+            - { name: authz-grpc, containerPort: {{ .Values.authguard.config.server.port }}, protocol: TCP }
+            - { name: scope-grpc, containerPort: {{ .Values.authguard.config.server.scope_port }}, protocol: TCP }
+            {{- if .Values.authguard.config.mgmt.enabled }}
+            - { name: mgmt, containerPort: {{ .Values.authguard.config.mgmt.port }}, protocol: TCP }
+            {{- end }}
+          {{- if .Values.authguard.config.mgmt.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ include "authguard.joinPath" (dict "context" .Values.authguard.config.mgmt.context_path "path" .Values.authguard.config.mgmt.health.liveness_path) }}
+              port: mgmt
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: {{ include "authguard.joinPath" (dict "context" .Values.authguard.config.mgmt.context_path "path" .Values.authguard.config.mgmt.health.readiness_path) }}
+              port: mgmt
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: {{ include "authguard.joinPath" (dict "context" .Values.authguard.config.mgmt.context_path "path" .Values.authguard.config.mgmt.health.liveness_path) }}
+              port: mgmt
+            periodSeconds: 2
+            failureThreshold: 30
+          {{- end }}
+          resources:
+            {{- toYaml .Values.authguard.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/authguard
+              readOnly: true
+            {{- with .Values.authguard.principalDiscovery.existingSecret }}
+            - name: principal-discovery-credentials
+              mountPath: /etc/authguard/principal-discovery
+              readOnly: true
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "authguard.fullname" . }}-config
+        {{- with .Values.authguard.principalDiscovery.existingSecret }}
+        - name: principal-discovery-credentials
+          secret:
+            secretName: {{ . }}
+        {{- end }}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.authguard.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.authguard.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.authguard.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.authguard.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

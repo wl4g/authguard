@@ -1,0 +1,23 @@
+{{- $integration := .Values.authguardIntegration -}}
+{{- if $integration.enabled }}
+Authguard is installed as the external authorization backend for Gateway
+{{ $integration.gateway.name }}.
+
+The generated SecurityPolicy sends checks to:
+  grpc://{{ include "authguard.fullname" . }}:{{ .Values.authguard.service.grpcPort }}/envoy.service.auth.v3.Authorization/Check
+
+Protected workloads resolve x-authguard-scope-token with:
+  AUTHGUARD_GRPC_TARGET={{ include "authguard.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.authguard.service.scopeGrpcPort }}
+  AUTHGUARD_GRPC_TLS=false
+
+Management endpoints are available only on Service port {{ .Values.authguard.service.mgmtPort }}.
+Configure a real policy and gateway-authenticated OIDC/JWT identity before routing production traffic.
+{{- if and $integration.gateway.create $integration.tracing.enabled }}
+
+Envoy data-plane traces are exported with OpenTelemetry to:
+  {{ printf "%s/%s:%v" (default .Release.Namespace $integration.tracing.backendRef.namespace) $integration.tracing.backendRef.name $integration.tracing.backendRef.port }}
+{{- end }}
+{{- else }}
+Authguard is installed without Envoy Gateway external-authorization resources.
+Set authguardIntegration.enabled=true to attach it to a Gateway.
+{{- end }}

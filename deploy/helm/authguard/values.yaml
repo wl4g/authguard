@@ -1,0 +1,259 @@
+# Optional cluster-level Envoy Gateway controller. Disable this when the
+# cluster already has a compatible Envoy Gateway installation. This block is
+# passed directly to the vendored official gateway-helm chart.
+envoy-gateway:
+  enabled: true
+  global:
+    images:
+      envoyGateway:
+        image: registry.cn-shenzhen.aliyuncs.com/wl4g/envoyproxy_gateway:v1.9.0
+        pullPolicy: IfNotPresent
+      envoyProxy:
+        image: registry.cn-shenzhen.aliyuncs.com/wl4g/envoyproxy_envoy:distroless-v1.36.4
+        pullPolicy: IfNotPresent
+  deployment:
+    replicas: 2
+    envoyGateway:
+      resources:
+        requests: { cpu: 100m, memory: 256Mi }
+        limits: { cpu: 500m, memory: 512Mi }
+
+# Independent Redis Cluster dependency used for opaque request-access tokens.
+# The 8.8.2 chart is the final Bitnami
+# line built for Redis 7.0.x; only its patch-level image is overridden to 7.0.14.
+redis-cluster:
+  enabled: true
+  image:
+    registry: registry.cn-shenzhen.aliyuncs.com
+    repository: wl4g-k8s/bitnami_redis-cluster
+    tag: "7.0.14"
+    pullPolicy: IfNotPresent
+  usePassword: true
+  password: ""
+  existingSecret: ""
+  existingSecretPasswordKey: redis-password
+  cluster:
+    nodes: 6
+    replicas: 1
+  persistence:
+    enabled: false
+  redis:
+    resources:
+      requests: { cpu: 50m, memory: 96Mi }
+      limits: { cpu: 500m, memory: 256Mi }
+
+# Authguard resources that bind to an Envoy Gateway. This switch is independent
+# from envoy-gateway.enabled, so an existing GKE/Kubernetes Gateway can reuse
+# the same ext_auth integration without installing another controller.
+authguardIntegration:
+  enabled: true
+  gateway:
+    create: true
+    name: authguard
+    className: authguard
+  # Optional Envoy data-plane spans exported over OTLP/gRPC. The sampler is
+  # intentionally fixed to AlwaysOn; sampling should be performed centrally.
+  tracing:
+    enabled: false
+    backendRef:
+      name: ""
+      port: 4317
+    # Empty uses Envoy Gateway's <gateway>.<namespace> service-name default.
+    serviceName: ""
+  jwt:
+    enabled: true
+    issuer: https://idp.example.com/realms/example-corp
+    audiences: [customer-growth-job-service]
+    localJWKS:
+      existingConfigMap: ""
+      inline: '{"keys":[]}'
+    remoteJWKS:
+      uri: ""
+      backendRefs: []
+  oidc:
+    enabled: false
+    issuer: https://idp.example.com
+    clientID: authguard
+    existingSecret: ""
+    clientSecret: ""
+    redirectURL: ""
+  exampleRoute:
+    enabled: false
+    name: protected-app
+    hostnames: []
+    backend:
+      name: app
+      port: 8080
+
+authguard:
+  # SQLite is the default backend, so the zero-configuration deployment is a
+  # single replica. Select PostgreSQL before increasing this value.
+  replicaCount: 1
+  image:
+    repository: registry.cn-shenzhen.aliyuncs.com/wl4g/authguard
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+  service:
+    grpcPort: 8080
+    scopeGrpcPort: 8081
+    mgmtPort: 9091
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 1000m, memory: 512Mi }
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  disruptionBudget:
+    enabled: true
+    minAvailable: 1
+  admin:
+    # Existing Opaque Secret key containing the /adm/v1 Bearer token.
+    existingSecret: ""
+    key: admin-token
+    # Intended only for local rendering; prefer existingSecret in every cluster.
+    token: ""
+  accessContext:
+    # Shared HMAC key used only for direct x-authguard-context delivery.
+    # Leave signingKey empty to generate and retain a 64-character key.
+    existingSecret: ""
+    key: hmac-key
+    signingKey: ""
+  principalDiscovery:
+    # Optional Secret whose keys are referenced through connector `*_file`
+    # settings under config.auth.principal_discovery.
+    existingSecret: ""
+  storage:
+    # Required when config.storage.backend is postgres. The Secret value is
+    # injected as AUTHGUARD__STORAGE__POSTGRES__URL and never rendered.
+    existingSecret: ""
+    urlKey: database-url
+  config:
+    server:
+      service_name: authguard
+      host: 0.0.0.0
+      port: 8080
+      scope_port: 8081
+      shutdown_timeout: 15s
+      request:
+        max_message_bytes: 1048576
+        timeout: 5s
+      response:
+        max_message_bytes: 1048576
+      performance:
+        worker_threads: 2
+        max_in_flight_requests: 4096
+    mgmt:
+      enabled: true
+      host: 0.0.0.0
+      port: 9091
+      context_path: "/"
+      health:
+        liveness_path: /healthz
+        readiness_path: /readyz
+      metrics:
+        enabled: true
+        path: /metrics
+      otel:
+        enabled: false
+        endpoint: http://otel-collector.observability.svc:4317
+        protocol: grpc
+        timeout: 5s
+        sample_rate: 1.0
+    logging:
+      mode: JSON
+      level: info,tower_http=info
+    auth:
+      identity:
+        token_header: authorization
+        issuer_claim: iss
+        external_id_claim: sub
+        # Values must be issuer-local stable group identifiers, not display names.
+        groups_claim: authguard_group_ids
+      scope_delivery:
+        direct_urn_limit: 32
+        max_direct_header_bytes: 8192
+        context_ttl: 30s
+        scope_token_ttl: 30s
+      principal_discovery:
+        jit:
+          enabled: true
+          discovery_id: verified-oidc
+          trusted_issuers: [https://idp.example.com/realms/example-corp]
+          allow_insecure_http: false
+        federated:
+          keycloak: []
+          ldap: []
+        scim:
+          enabled: false
+          discovery_id: corporate-scim
+          # Must exactly equal the OIDC `iss`; SCIM externalId should equal OIDC `sub`.
+          issuer: https://idp.example.com/realms/example-corp
+      admin_token: ""
+    storage:
+      backend: sqlite
+      bootstrap_policy: null
+      policy_refresh_interval: 5s
+      policy_max_staleness: 30s
+      sqlite:
+        url: sqlite:///tmp/authguard.db
+        max_connections: 1
+        connect_timeout: 5s
+      postgres:
+        url: ""
+        max_connections: 20
+        connect_timeout: 5s
+    cache:
+      provider: Redis
+      memory:
+        initial_capacity: 32
+        max_capacity: 65535
+        ttl: 1h
+        eviction_policy: LRU
+      redis:
+        nodes: []
+        username: default
+        password: ""
+        key_prefix: authguard
+        connection_timeout: 3s
+        response_timeout: 6s
+        # Covers both initial cluster formation and transient command retries.
+        retries: 8
+        max_retry_wait: 65s
+        min_retry_wait: 1280ms
+        read_from_replica: false
+  policy:
+    id: default
+    revision: 0
+    name: Default authorization policy
+    description: ""
+    actions: []
+    roles: []
+    role_bindings: []
+  networkPolicy:
+    enabled: true
+    # Match these selectors to the managed Envoy Proxy, protected workloads
+    # resolving opaque scope tokens, and management plane. An empty namespace
+    # selector means the Authguard release namespace only; set labels here only
+    # when the corresponding clients live in another namespace.
+    envoyProxyNamespaceSelector: {}
+    envoyProxyPodSelector:
+      app.kubernetes.io/name: envoy
+    workloadNamespaceSelector: {}
+    workloadPodSelector:
+      authguard.io/scope-client: "true"
+    managementNamespaceSelector: {}
+    managementPodSelector:
+      authguard.io/management-client: "true"
+  observability:
+    serviceMonitor:
+      enabled: false
+      interval: 30s
+      labels: {}

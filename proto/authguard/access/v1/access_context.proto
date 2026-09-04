@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package authguard.access.v1;
+
+import "google/protobuf/wrappers.proto";
+
+// Resolves a short-lived opaque scope token into the same encoded access
+// context used by x-authguard-context. StringValue.value carries the token in
+// the request and the Base64URL context in the response.
+service AccessContextService {
+  rpc ResolveScope(google.protobuf.StringValue) returns (google.protobuf.StringValue);
+}

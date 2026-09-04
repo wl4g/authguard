@@ -1,0 +1,44 @@
+{{- $networkPolicy := .Values.authguard.networkPolicy -}}
+{{- if $networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "authguard.fullname" . }}
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "authguard.serverSelectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - {{- with $networkPolicy.envoyProxyNamespaceSelector }}
+          namespaceSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          podSelector:
+            {{- toYaml $networkPolicy.envoyProxyPodSelector | nindent 12 }}
+      ports:
+        - { protocol: TCP, port: {{ .Values.authguard.config.server.port }} }
+    - from:
+        - {{- with $networkPolicy.workloadNamespaceSelector }}
+          namespaceSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          podSelector:
+            {{- toYaml $networkPolicy.workloadPodSelector | nindent 12 }}
+      ports:
+        - { protocol: TCP, port: {{ .Values.authguard.config.server.scope_port }} }
+    {{- if .Values.authguard.config.mgmt.enabled }}
+    - from:
+        - {{- with $networkPolicy.managementNamespaceSelector }}
+          namespaceSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          podSelector:
+            {{- toYaml $networkPolicy.managementPodSelector | nindent 12 }}
+      ports:
+        - { protocol: TCP, port: {{ .Values.authguard.config.mgmt.port }} }
+    {{- end }}
+{{- end }}

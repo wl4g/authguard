@@ -1,0 +1,469 @@
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::time::Instant;
+
+use sha2::{Digest as _, Sha256};
+use thiserror::Error;
+
+use crate::model::{Principal, PrincipalKind, PrincipalStatus};
+use crate::principal::{
+    ExternalPrincipal, ExternalPrincipalRef, FederatedPrincipalDiscovery, IPrincipalDiscovery,
+    IPrincipalResolver, JitPrincipalDiscovery, PrincipalDiscoveryError, PrincipalSearchPage,
+    PrincipalSearchQuery, ScimPrincipalDiscovery, ScimProjectionEvent, ScimRefreshRequest,
+    VerifiedOidcPrincipal,
+};
+use crate::storage::{PrincipalReferenced, PrincipalRepository};
+use crate::utils::RequestIdentity;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedRequestPrincipal {
+    pub principal_id: String,
+    pub group_principal_ids: Vec<String>,
+}
+
+#[derive(Debug, Error)]
+pub enum PrincipalHandlerError {
+    #[error("principal `{0}` was not found")]
+    NotFound(String),
+    #[error("principal `{0}` is disabled")]
+    Disabled(String),
+    #[error("principal `{0}` is still referenced by a role binding")]
+    Referenced(String),
+    #[error("principal provider is not configured")]
+    ProviderUnavailable,
+    #[error("principal discovery failed: {0}")]
+    Discovery(#[from] PrincipalDiscoveryError),
+    #[error("principal storage unavailable: {0}")]
+    Storage(#[source] anyhow::Error),
+}
+
+/// Orchestrates principal discovery, durable projection, and status checks.
+///
+/// External discovery is deliberately kept out of the hot authorization path
+/// except for the bounded JIT projection of an already verified OIDC identity.
+/// Security-sensitive Principal state is read directly from durable storage so
+/// disable and delete operations take effect without cache-revocation races.
+#[derive(Clone)]
+pub struct PrincipalHandler {
+    repository: Arc<dyn PrincipalRepository>,
+    jit: Option<JitPrincipalDiscovery>,
+    federated: Option<FederatedPrincipalDiscovery>,
+    scim: Option<ScimPrincipalDiscovery>,
+}
+
+impl PrincipalHandler {
+    #[must_use]
+    pub fn new(
+        repository: Arc<dyn PrincipalRepository>,
+        jit: Option<JitPrincipalDiscovery>,
+        federated: Option<FederatedPrincipalDiscovery>,
+        scim: Option<ScimPrincipalDiscovery>,
+    ) -> Self {
+        Self { repository, jit, federated, scim }
+    }
+
+    /// Resolves an already authenticated request identity to local Principal IDs.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed for disabled principals, unavailable storage, untrusted JIT
+    /// issuers, or identities that cannot be projected.
+    pub async fn resolve_request(
+        &self,
+        identity: &RequestIdentity,
+    ) -> Result<ResolvedRequestPrincipal, PrincipalHandlerError> {
+        let started = Instant::now();
+        let group_external_ids = identity
+            .group_external_ids
+            .iter()
+            .map(|group| (Self::namespaced_group_external_id(group), group.as_str()))
+            .collect::<BTreeMap<_, _>>();
+        let mut requested_external_ids = Vec::with_capacity(group_external_ids.len() + 1);
+        requested_external_ids.push(identity.external_id.clone());
+        requested_external_ids.extend(group_external_ids.keys().cloned());
+        let mut projected = self
+            .repository
+            .find_by_external_keys(&identity.issuer, &requested_external_ids)
+            .await
+            .map_err(PrincipalHandlerError::Storage)?
+            .into_iter()
+            .map(|principal| (principal.external_id.clone(), principal))
+            .collect::<BTreeMap<_, _>>();
+        tracing::debug!(
+            authguard.identity.issuer = %identity.issuer,
+            authguard.principal.requested_projection_count = requested_external_ids.len(),
+            authguard.principal.existing_projection_count = projected.len(),
+            "loaded request principal projections"
+        );
+        let primary = self
+            .resolve_or_project(
+                Self::verified_principal(identity, Self::request_principal_kind(identity), None),
+                projected.remove(&identity.external_id),
+            )
+            .await?;
+        if primary.status != PrincipalStatus::Active {
+            return Err(PrincipalHandlerError::Disabled(primary.id));
+        }
+
+        let mut group_principal_ids = Vec::with_capacity(group_external_ids.len());
+        for (external_id, group) in group_external_ids {
+            let Some(group_principal) = self
+                .resolve_optional_group(
+                    Self::verified_principal(
+                        identity,
+                        PrincipalKind::Group,
+                        Some((&external_id, group)),
+                    ),
+                    projected.remove(&external_id),
+                )
+                .await?
+            else {
+                continue;
+            };
+            if group_principal.status == PrincipalStatus::Active {
+                group_principal_ids.push(group_principal.id);
+            }
+        }
+        group_principal_ids.sort();
+        group_principal_ids.dedup();
+        tracing::debug!(
+            authguard.principal_id = %primary.id,
+            authguard.principal_kind = primary.kind.as_str(),
+            authguard.principal_group_count = group_principal_ids.len(),
+            duration_seconds = started.elapsed().as_secs_f64(),
+            "request principal resolution completed"
+        );
+        Ok(ResolvedRequestPrincipal { principal_id: primary.id, group_principal_ids })
+    }
+
+    /// Searches configured external identity systems without materializing results.
+    ///
+    /// # Errors
+    ///
+    /// Returns a provider configuration, authentication, or transport error.
+    pub async fn search(
+        &self,
+        query: PrincipalSearchQuery,
+    ) -> Result<PrincipalSearchPage, PrincipalHandlerError> {
+        let started = Instant::now();
+        let provider_filter_count = query.provider_ids.len();
+        let kind_filter_count = query.kinds.len();
+        let requested_page_size = query.per_provider_limit;
+        let provider = self.federated.as_ref().ok_or(PrincipalHandlerError::ProviderUnavailable)?;
+        let page = provider.discover(query).await.map_err(PrincipalHandlerError::Discovery)?;
+        tracing::info!(
+            authguard.principal.discovery = "federation",
+            authguard.principal.provider_filter_count = provider_filter_count,
+            authguard.principal.kind_filter_count = kind_filter_count,
+            authguard.principal.requested_page_size = requested_page_size,
+            authguard.principal.result_count = page.principals.len(),
+            authguard.principal.next_cursor_count = page.next_cursors.len(),
+            duration_seconds = started.elapsed().as_secs_f64(),
+            "federated principal search completed"
+        );
+        Ok(page)
+    }
+
+    /// Re-resolves a selected external candidate and persists its local projection.
+    ///
+    /// # Errors
+    ///
+    /// Returns not-found, provider, validation, or storage errors.
+    pub async fn materialize(
+        &self,
+        reference: &ExternalPrincipalRef,
+    ) -> Result<Principal, PrincipalHandlerError> {
+        let provider = self.federated.as_ref().ok_or(PrincipalHandlerError::ProviderUnavailable)?;
+        let external = provider
+            .resolve_principal(reference)
+            .await?
+            .ok_or_else(|| PrincipalHandlerError::NotFound(reference.external_id.clone()))?;
+        self.upsert_external(external, "federation").await
+    }
+
+    /// Applies one normalized SCIM provisioning event to the local projection.
+    ///
+    /// SCIM DELETE is represented as a disabled tombstone so existing role
+    /// bindings and audit references remain intact.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation or storage errors.
+    pub async fn apply_scim_projection(
+        &self,
+        event: ScimProjectionEvent,
+    ) -> Result<Option<Principal>, PrincipalHandlerError> {
+        match event {
+            ScimProjectionEvent::Upsert(external) => {
+                self.upsert_external(external, "scim").await.map(Some)
+            }
+            ScimProjectionEvent::Delete(reference) => {
+                let Some(principal) =
+                    self.find_external(&reference.issuer, &reference.external_id).await?
+                else {
+                    tracing::debug!(
+                        authguard.principal.discovery = "scim",
+                        authguard.principal.operation = "disable",
+                        "SCIM deletion referenced an unknown principal projection"
+                    );
+                    return Ok(None);
+                };
+                self.update_status(&principal.id, PrincipalStatus::Disabled).await.map(Some)
+            }
+        }
+    }
+
+    /// Normalizes and applies one SCIM provisioning change.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when SCIM is disabled or normalization/persistence fails.
+    pub async fn refresh_scim(
+        &self,
+        request: ScimRefreshRequest,
+    ) -> Result<Option<Principal>, PrincipalHandlerError> {
+        let discovery = self.scim.as_ref().ok_or(PrincipalHandlerError::ProviderUnavailable)?;
+        let event = discovery.refresh(request).await?;
+        self.apply_scim_projection(event).await
+    }
+
+    /// Loads one locally projected principal.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage error.
+    pub async fn get(&self, id: &str) -> Result<Option<Principal>, PrincipalHandlerError> {
+        self.repository.get(id).await.map_err(PrincipalHandlerError::Storage)
+    }
+
+    /// Lists locally projected principals using a stable ID cursor.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage error.
+    pub async fn list(
+        &self,
+        query: &str,
+        after_id: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<Principal>, PrincipalHandlerError> {
+        self.repository.list(query, after_id, limit).await.map_err(PrincipalHandlerError::Storage)
+    }
+
+    /// Updates a local projection status.
+    ///
+    /// # Errors
+    ///
+    /// Returns not-found or storage errors.
+    pub async fn update_status(
+        &self,
+        id: &str,
+        status: PrincipalStatus,
+    ) -> Result<Principal, PrincipalHandlerError> {
+        let updated = self
+            .repository
+            .update_status(id, status)
+            .await
+            .map_err(PrincipalHandlerError::Storage)?
+            .ok_or_else(|| PrincipalHandlerError::NotFound(id.to_string()))?;
+        tracing::info!(
+            authguard.principal_id = %updated.id,
+            authguard.principal_kind = updated.kind.as_str(),
+            authguard.principal_status = updated.status.as_str(),
+            "principal projection status updated"
+        );
+        Ok(updated)
+    }
+
+    /// Deletes one unreferenced local projection.
+    ///
+    /// # Errors
+    ///
+    /// Returns not-found, reference-conflict, or storage errors.
+    pub async fn delete(&self, id: &str) -> Result<(), PrincipalHandlerError> {
+        let deleted = self.repository.delete(id).await.map_err(Self::map_storage_error)?;
+        if !deleted {
+            return Err(PrincipalHandlerError::NotFound(id.to_string()));
+        }
+        tracing::info!(
+            authguard.principal_id = %id,
+            "principal projection deleted"
+        );
+        Ok(())
+    }
+
+    async fn resolve_or_project(
+        &self,
+        verified: VerifiedOidcPrincipal,
+        projected: Option<Principal>,
+    ) -> Result<Principal, PrincipalHandlerError> {
+        if let Some(principal) = projected {
+            return Ok(principal);
+        }
+        let projector = self.jit.as_ref().ok_or(PrincipalHandlerError::ProviderUnavailable)?;
+        let external = projector.discover(verified).await?;
+        self.upsert_external(external, "jit").await
+    }
+
+    async fn resolve_optional_group(
+        &self,
+        verified: VerifiedOidcPrincipal,
+        projected: Option<Principal>,
+    ) -> Result<Option<Principal>, PrincipalHandlerError> {
+        if let Some(principal) = projected {
+            return Ok(Some(principal));
+        }
+        let Some(discovery) = self.jit.as_ref() else {
+            // Unprojected groups cannot have a local role binding, so ignoring
+            // them is both safe and necessary when JIT projection is disabled.
+            return Ok(None);
+        };
+        let external = discovery.discover(verified).await?;
+        self.upsert_external(external, "jit").await.map(Some)
+    }
+
+    async fn find_external(
+        &self,
+        issuer: &str,
+        external_id: &str,
+    ) -> Result<Option<Principal>, PrincipalHandlerError> {
+        self.repository
+            .find_by_external_key(issuer, external_id)
+            .await
+            .map_err(PrincipalHandlerError::Storage)
+    }
+
+    async fn upsert_external(
+        &self,
+        external: ExternalPrincipal,
+        discovery: &'static str,
+    ) -> Result<Principal, PrincipalHandlerError> {
+        let mut attributes = external.attributes;
+        attributes.insert(
+            "provider_id".to_string(),
+            serde_json::Value::String(external.reference.provider_id),
+        );
+        if let Some(username) = external.username {
+            attributes.insert("username".to_string(), serde_json::Value::String(username));
+        }
+        if let Some(email) = external.email {
+            attributes.insert("email".to_string(), serde_json::Value::String(email));
+        }
+        let principal = Principal {
+            id: Self::stable_principal_id(
+                &external.reference.issuer,
+                &external.reference.external_id,
+            ),
+            issuer: external.reference.issuer,
+            external_id: external.reference.external_id,
+            kind: external.kind,
+            display_name: external.display_name,
+            status: if external.enabled {
+                PrincipalStatus::Active
+            } else {
+                PrincipalStatus::Disabled
+            },
+            attributes,
+        };
+        let projected =
+            self.repository.upsert(&principal).await.map_err(PrincipalHandlerError::Storage)?;
+        tracing::info!(
+            authguard.principal.discovery = discovery,
+            authguard.principal_id = %projected.id,
+            authguard.principal_kind = projected.kind.as_str(),
+            authguard.principal_status = projected.status.as_str(),
+            authguard.identity.issuer = %projected.issuer,
+            "principal projection persisted"
+        );
+        Ok(projected)
+    }
+
+    fn verified_principal(
+        identity: &RequestIdentity,
+        kind: PrincipalKind,
+        group: Option<(&str, &str)>,
+    ) -> VerifiedOidcPrincipal {
+        let (subject, display_name) = group.map_or_else(
+            || {
+                let display = identity
+                    .claims
+                    .get("name")
+                    .or_else(|| identity.claims.get("preferred_username"))
+                    .cloned();
+                (identity.external_id.clone(), display)
+            },
+            |(external_id, name)| (external_id.to_string(), Some(name.to_string())),
+        );
+        VerifiedOidcPrincipal {
+            issuer: identity.issuer.clone(),
+            subject,
+            kind,
+            display_name,
+            username: identity.claims.get("preferred_username").cloned(),
+            email: identity.claims.get("email").cloned(),
+            enabled: true,
+            attributes: identity
+                .claims
+                .iter()
+                .map(|(name, value)| (name.clone(), serde_json::Value::String(value.clone())))
+                .collect::<BTreeMap<_, _>>(),
+        }
+    }
+
+    fn request_principal_kind(identity: &RequestIdentity) -> PrincipalKind {
+        match identity.claims.get("principal_type").map(String::as_str) {
+            Some("WORKLOAD" | "workload" | "SERVICE_ACCOUNT" | "service_account") => {
+                PrincipalKind::Workload
+            }
+            _ => PrincipalKind::User,
+        }
+    }
+
+    fn namespaced_group_external_id(group: &str) -> String {
+        group
+            .strip_prefix("group:")
+            .map_or_else(|| format!("group:{group}"), |id| format!("group:{id}"))
+    }
+
+    fn stable_principal_id(issuer: &str, external_id: &str) -> String {
+        let mut digest = Sha256::new();
+        digest.update(issuer.as_bytes());
+        digest.update([0]);
+        digest.update(external_id.as_bytes());
+        format!("principal-{:x}", digest.finalize())
+    }
+
+    fn map_storage_error(error: anyhow::Error) -> PrincipalHandlerError {
+        if let Some(conflict) = error.downcast_ref::<PrincipalReferenced>() {
+            return PrincipalHandlerError::Referenced(conflict.id.clone());
+        }
+        PrincipalHandlerError::Storage(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PrincipalHandler;
+
+    #[test]
+    fn stable_ids_are_issuer_scoped() {
+        let first = PrincipalHandler::stable_principal_id("https://id.example/realm-a", "user-1");
+        assert_eq!(
+            first,
+            PrincipalHandler::stable_principal_id("https://id.example/realm-a", "user-1",)
+        );
+        assert_ne!(
+            first,
+            PrincipalHandler::stable_principal_id("https://id.example/realm-b", "user-1",)
+        );
+    }
+
+    #[test]
+    fn group_external_ids_use_a_separate_namespace() {
+        assert_eq!(PrincipalHandler::namespaced_group_external_id("analysts"), "group:analysts");
+        assert_eq!(
+            PrincipalHandler::namespaced_group_external_id("group:analysts"),
+            "group:analysts"
+        );
+    }
+}
