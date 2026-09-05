@@ -152,7 +152,7 @@ pub trait PrincipalRepository: Send + Sync {
 /// Returns an error for an unsupported provider or failed database initialization.
 pub async fn open(storage: &StorageConfig) -> anyhow::Result<Repositories> {
     match storage.provider.to_ascii_lowercase().as_str() {
-        "SQLite" => {
+        "sqlite" => {
             let repository = Arc::new(
                 SqliteAuthorizationRepository::connect(&storage.sqlite)
                     .await
@@ -160,7 +160,7 @@ pub async fn open(storage: &StorageConfig) -> anyhow::Result<Repositories> {
             );
             Ok(Repositories { policy: repository.clone(), principals: repository })
         }
-        "Postgres" => {
+        "postgres" => {
             let repository = Arc::new(
                 PostgresAuthorizationRepository::connect(&storage.postgres)
                     .await

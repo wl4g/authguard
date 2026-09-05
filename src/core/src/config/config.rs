@@ -2,7 +2,6 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use crate::model::Policy;
-use crate::utils::TelemetryConfig;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -134,6 +133,7 @@ pub struct FederatedPrincipalDiscoveryConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct KeycloakPrincipalDiscoveryConfig {
+    pub enabled: bool,
     pub discovery_id: String,
     pub base_url: String,
     pub issuer: String,
@@ -152,6 +152,7 @@ pub struct KeycloakPrincipalDiscoveryConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LdapPrincipalDiscoveryConfig {
+    pub enabled: bool,
     pub discovery_id: String,
     pub url: String,
     pub issuer: String,
@@ -169,7 +170,7 @@ pub struct LdapPrincipalDiscoveryConfig {
     pub allow_insecure: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LdapObjectMappingConfig {
     pub search_base: String,
@@ -190,6 +191,7 @@ pub struct LdapObjectMappingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CustomPrincipalDiscoveryConfig {
+    pub enabled: bool,
     pub discovery_id: String,
     pub url: String,
     pub issuer: String,
@@ -340,25 +342,6 @@ impl AuthguardConfig {
     pub fn mgmt_addr(&self) -> SocketAddr {
         SocketAddr::new(self.mgmt.host, self.mgmt.port)
     }
-
-    #[must_use]
-    pub fn telemetry_config(&self) -> TelemetryConfig {
-        TelemetryConfig {
-            service_name: self.server.service_name.clone(),
-            environment: std::env::var("OTEL_RESOURCE_ATTRIBUTES")
-                .ok()
-                .and_then(|attributes| {
-                    find_resource_attribute(&attributes, "deployment.environment.name")
-                })
-                .unwrap_or_else(|| "production".to_string()),
-            env_filter: self.logging.level.clone(),
-            json: self.logging.mode.eq_ignore_ascii_case("JSON"),
-            otlp_endpoint: self.mgmt.otel.enabled.then(|| self.mgmt.otel.endpoint.clone()),
-            export_timeout: self.mgmt.otel.timeout,
-            sample_rate: self.mgmt.otel.sample_rate,
-            ..TelemetryConfig::default()
-        }
-    }
 }
 
 impl Default for ServerConfig {
@@ -463,6 +446,7 @@ impl Default for JitPrincipalDiscoveryConfig {
 impl Default for KeycloakPrincipalDiscoveryConfig {
     fn default() -> Self {
         Self {
+            enabled: false,
             discovery_id: String::new(),
             base_url: String::new(),
             issuer: String::new(),
@@ -481,6 +465,7 @@ impl Default for KeycloakPrincipalDiscoveryConfig {
 impl Default for LdapPrincipalDiscoveryConfig {
     fn default() -> Self {
         Self {
+            enabled: false,
             discovery_id: String::new(),
             url: String::new(),
             issuer: String::new(),
@@ -498,24 +483,10 @@ impl Default for LdapPrincipalDiscoveryConfig {
     }
 }
 
-impl Default for LdapObjectMappingConfig {
-    fn default() -> Self {
-        Self {
-            search_base: String::new(),
-            object_filter: String::new(),
-            id_attribute: String::new(),
-            name_attribute: String::new(),
-            display_name_attribute: None,
-            email_attribute: None,
-            enabled_attribute: None,
-            search_attributes: Vec::new(),
-        }
-    }
-}
-
 impl Default for CustomPrincipalDiscoveryConfig {
     fn default() -> Self {
         Self {
+            enabled: false,
             discovery_id: String::new(),
             url: String::new(),
             issuer: String::new(),
@@ -644,11 +615,4 @@ impl Default for PostgresConfig {
     fn default() -> Self {
         Self { url: String::new(), max_connections: 20, connect_timeout: Duration::from_secs(5) }
     }
-}
-
-fn find_resource_attribute(attributes: &str, name: &str) -> Option<String> {
-    attributes.split(',').find_map(|entry| {
-        let (key, value) = entry.split_once('=')?;
-        (key.trim() == name).then(|| value.trim().to_string())
-    })
 }

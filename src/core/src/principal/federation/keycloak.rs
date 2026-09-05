@@ -8,11 +8,11 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::Mutex;
 
+use crate::config::KeycloakPrincipalDiscoveryConfig;
 use crate::model::PrincipalKind;
 use crate::principal::{
     validate_search_query, BearerTokenProvider, ExternalPrincipalRef, IPrincipalDiscovery,
-    KeycloakPrincipalDiscoveryConfig, PrincipalDiscoveryError, PrincipalProjection,
-    PrincipalSearchPage, PrincipalSearchQuery,
+    PrincipalDiscoveryError, PrincipalProjection, PrincipalSearchPage, PrincipalSearchQuery,
 };
 
 #[derive(Debug)]
@@ -156,13 +156,13 @@ impl KeycloakPrincipalDiscovery {
     /// Returns an error when the provider identifier, realm, URL, timeout, or
     /// page-size configuration is invalid.
     pub fn with_bearer_provider(
-        config: KeycloakPrincipalDiscoveryConfig,
+        config: &KeycloakPrincipalDiscoveryConfig,
         bearer_tokens: Arc<dyn BearerTokenProvider>,
     ) -> Result<Self, PrincipalDiscoveryError> {
-        let endpoints = KeycloakEndpoints::from_config(&config)?;
-        let client = build_client(&config)?;
+        let endpoints = KeycloakEndpoints::from_config(config)?;
+        let client = build_client(config)?;
         Ok(Self {
-            provider_id: config.provider_id,
+            provider_id: config.discovery_id.clone(),
             issuer: endpoints.issuer,
             users_endpoint: endpoints.users,
             groups_endpoint: endpoints.groups,
@@ -180,21 +180,21 @@ impl KeycloakPrincipalDiscovery {
     /// credentials. The secret is used only in the token request and is never
     /// included in provider errors.
     pub fn with_client_credentials(
-        config: KeycloakPrincipalDiscoveryConfig,
+        config: &KeycloakPrincipalDiscoveryConfig,
         client_id: impl Into<String>,
         client_secret: impl Into<String>,
     ) -> Result<Self, PrincipalDiscoveryError> {
-        let endpoints = KeycloakEndpoints::from_config(&config)?;
-        let client = build_client(&config)?;
+        let endpoints = KeycloakEndpoints::from_config(config)?;
+        let client = build_client(config)?;
         let bearer_tokens = Arc::new(ClientCredentialsBearerTokenProvider::new(
-            config.provider_id.clone(),
+            config.discovery_id.clone(),
             client.clone(),
             endpoints.token,
             client_id.into(),
             client_secret.into(),
         )?);
         Ok(Self {
-            provider_id: config.provider_id,
+            provider_id: config.discovery_id.clone(),
             issuer: endpoints.issuer,
             users_endpoint: endpoints.users,
             groups_endpoint: endpoints.groups,
@@ -518,14 +518,14 @@ impl KeycloakEndpoints {
                 "invalid Keycloak base_url: {error}"
             ))
         })?;
-        let issuer = if let Some(issuer) = config.issuer_url.as_deref() {
-            parse_endpoint("issuer_url", issuer, config.allow_insecure_http)?;
-            issuer.to_string()
-        } else {
+        let issuer = if config.issuer.is_empty() {
             append_segments(&base, &["realms", config.realm.trim()])?
                 .to_string()
                 .trim_end_matches('/')
                 .to_string()
+        } else {
+            parse_endpoint("issuer", &config.issuer, config.allow_insecure_http)?;
+            config.issuer.clone()
         };
         let users = append_segments(&base, &["admin", "realms", config.realm.trim(), "users"])?;
         let groups = append_segments(&base, &["admin", "realms", config.realm.trim(), "groups"])?;
@@ -540,8 +540,8 @@ impl KeycloakEndpoints {
 fn validate_config(
     config: &KeycloakPrincipalDiscoveryConfig,
 ) -> Result<(), PrincipalDiscoveryError> {
-    if config.provider_id.trim().is_empty()
-        || config.provider_id.trim() != config.provider_id
+    if config.discovery_id.trim().is_empty()
+        || config.discovery_id.trim() != config.discovery_id
         || config.realm.trim().is_empty()
         || config.realm.trim() != config.realm
     {
@@ -562,8 +562,8 @@ fn validate_config(
         )));
     }
     parse_endpoint("base_url", &config.base_url, config.allow_insecure_http)?;
-    if let Some(issuer) = config.issuer_url.as_deref() {
-        parse_endpoint("issuer_url", issuer, config.allow_insecure_http)?;
+    if !config.issuer.is_empty() {
+        parse_endpoint("issuer", &config.issuer, config.allow_insecure_http)?;
     }
     Ok(())
 }
@@ -865,24 +865,26 @@ mod tests {
     }
 
     fn test_config(base_url: String) -> KeycloakPrincipalDiscoveryConfig {
-        let mut config = KeycloakPrincipalDiscoveryConfig::new(
-            "corporate-keycloak",
+        KeycloakPrincipalDiscoveryConfig {
+            discovery_id: "corporate-keycloak".to_string(),
             base_url,
-            "customer-growth",
-        );
-        config.allow_insecure_http = true;
-        config.max_page_size = 2;
-        config
+            realm: "customer-growth".to_string(),
+            allow_insecure_http: true,
+            max_page_size: 2,
+            ..KeycloakPrincipalDiscoveryConfig::default()
+        }
     }
 
     #[test]
     fn rejects_plain_http_by_default() {
-        let config = KeycloakPrincipalDiscoveryConfig::new(
-            "corporate-keycloak",
-            "http://id.example.com",
-            "customer-growth",
-        );
-        let result = KeycloakPrincipalDiscovery::with_bearer_provider(config, Arc::new(FixedToken));
+        let config = KeycloakPrincipalDiscoveryConfig {
+            discovery_id: "corporate-keycloak".to_string(),
+            base_url: "http://id.example.com".to_string(),
+            realm: "customer-growth".to_string(),
+            ..KeycloakPrincipalDiscoveryConfig::default()
+        };
+        let result =
+            KeycloakPrincipalDiscovery::with_bearer_provider(&config, Arc::new(FixedToken));
         assert!(matches!(result, Err(PrincipalDiscoveryError::InvalidConfiguration(_))));
     }
 
@@ -891,9 +893,9 @@ mod tests {
         let (base_url, _state, server) = start_server().await;
         let expected_issuer = "https://identity.example.com/realms/customer-growth";
         let mut config = test_config(base_url);
-        config.issuer_url = Some(expected_issuer.to_string());
+        config.issuer = expected_issuer.to_string();
         let provider =
-            KeycloakPrincipalDiscovery::with_bearer_provider(config, Arc::new(FixedToken))
+            KeycloakPrincipalDiscovery::with_bearer_provider(&config, Arc::new(FixedToken))
                 .expect("provider");
         let mut query = PrincipalSearchQuery::new("alice@example.com");
         query.per_provider_limit = 2;
@@ -919,7 +921,7 @@ mod tests {
     async fn resolve_returns_principal_or_none() {
         let (base_url, _state, server) = start_server().await;
         let provider = KeycloakPrincipalDiscovery::with_bearer_provider(
-            test_config(base_url),
+            &test_config(base_url),
             Arc::new(FixedToken),
         )
         .expect("provider");
@@ -940,7 +942,7 @@ mod tests {
     async fn resolves_group_reference_using_namespaced_external_id() {
         let (base_url, _state, server) = start_server().await;
         let provider = KeycloakPrincipalDiscovery::with_bearer_provider(
-            test_config(base_url),
+            &test_config(base_url),
             Arc::new(FixedToken),
         )
         .expect("provider");
@@ -962,7 +964,7 @@ mod tests {
     async fn client_credentials_token_is_reused_until_refresh() {
         let (base_url, state, server) = start_server().await;
         let provider = KeycloakPrincipalDiscovery::with_client_credentials(
-            test_config(base_url),
+            &test_config(base_url),
             "authguard-admin",
             "not-logged-secret",
         )
@@ -983,7 +985,7 @@ mod tests {
     async fn invalid_provider_cursor_fails_before_http_request() {
         let (base_url, state, server) = start_server().await;
         let provider = KeycloakPrincipalDiscovery::with_client_credentials(
-            test_config(base_url),
+            &test_config(base_url),
             "authguard-admin",
             "not-logged-secret",
         )
@@ -1002,7 +1004,7 @@ mod tests {
     async fn group_only_search_does_not_call_the_user_endpoint() {
         let (base_url, state, server) = start_server().await;
         let provider = KeycloakPrincipalDiscovery::with_client_credentials(
-            test_config(base_url),
+            &test_config(base_url),
             "authguard-admin",
             "not-logged-secret",
         )
@@ -1025,7 +1027,7 @@ mod tests {
     async fn default_search_queries_users_and_groups_with_independent_cursors() {
         let (base_url, state, server) = start_server().await;
         let provider = KeycloakPrincipalDiscovery::with_client_credentials(
-            test_config(base_url),
+            &test_config(base_url),
             "authguard-admin",
             "not-logged-secret",
         )
@@ -1056,7 +1058,7 @@ mod tests {
     async fn resolve_rejects_issuer_mismatch_before_requesting_a_token() {
         let (base_url, state, server) = start_server().await;
         let provider = KeycloakPrincipalDiscovery::with_client_credentials(
-            test_config(base_url),
+            &test_config(base_url),
             "authguard-admin",
             "not-logged-secret",
         )
@@ -1078,10 +1080,10 @@ mod tests {
     fn preserves_explicit_issuer_exactly() {
         let mut config = test_config("http://127.0.0.1:9".to_string());
         let issuer = "https://identity.example.com/realms/customer-growth/";
-        config.issuer_url = Some(issuer.to_string());
+        config.issuer = issuer.to_string();
 
         let provider =
-            KeycloakPrincipalDiscovery::with_bearer_provider(config, Arc::new(FixedToken))
+            KeycloakPrincipalDiscovery::with_bearer_provider(&config, Arc::new(FixedToken))
                 .expect("provider");
 
         assert_eq!(provider.issuer, issuer);
@@ -1089,14 +1091,15 @@ mod tests {
 
     #[test]
     fn rejects_configuration_with_surrounding_whitespace() {
-        let config = KeycloakPrincipalDiscoveryConfig::new(
-            "corporate-keycloak",
-            " https://identity.example.com",
-            "customer-growth",
-        );
+        let config = KeycloakPrincipalDiscoveryConfig {
+            discovery_id: "corporate-keycloak".to_string(),
+            base_url: " https://identity.example.com".to_string(),
+            realm: "customer-growth".to_string(),
+            ..KeycloakPrincipalDiscoveryConfig::default()
+        };
 
         assert!(matches!(
-            KeycloakPrincipalDiscovery::with_bearer_provider(config, Arc::new(FixedToken)),
+            KeycloakPrincipalDiscovery::with_bearer_provider(&config, Arc::new(FixedToken)),
             Err(PrincipalDiscoveryError::InvalidConfiguration(_))
         ));
     }
@@ -1105,7 +1108,7 @@ mod tests {
     async fn oversized_search_text_fails_before_requesting_a_token() {
         let (base_url, state, server) = start_server().await;
         let provider = KeycloakPrincipalDiscovery::with_client_credentials(
-            test_config(base_url),
+            &test_config(base_url),
             "authguard-admin",
             "not-logged-secret",
         )

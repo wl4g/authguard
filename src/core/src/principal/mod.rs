@@ -11,15 +11,20 @@ mod jit;
 mod scim;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::Duration;
+use std::sync::Arc;
 
+use anyhow::Context;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
+use crate::handler::PrincipalHandler;
+
 pub use crate::model::PrincipalKind;
-pub use federation::{CustomPrincipalDiscovery, KeycloakPrincipalDiscovery, LdapPrincipalDiscovery};
+pub use federation::{
+    CustomPrincipalDiscovery, KeycloakPrincipalDiscovery, LdapPrincipalDiscovery,
+};
 pub use jit::{JitPrincipalDiscovery, PrincipalProjectionError};
 pub use scim::{
     ScimGroupResource, ScimPrincipalDiscovery, ScimProjectionEvent, ScimRefreshRequest,
@@ -245,125 +250,13 @@ pub trait BearerTokenProvider: Send + Sync + 'static {
     async fn bearer_token(&self) -> Result<String, PrincipalDiscoveryError>;
 }
 
-/// Connection and safety limits for one Keycloak realm.
-///
-/// Keycloak Admin REST API:
-/// <https://www.keycloak.org/docs-api/latest/rest-api/index.html>
-#[derive(Debug, Clone)]
-pub struct KeycloakPrincipalDiscoveryConfig {
-    pub provider_id: String,
-    pub base_url: String,
-    /// Canonical OIDC issuer used in the `(issuer, external_id)` identity key.
-    /// When omitted, it is derived from `base_url` and `realm`.
-    pub issuer_url: Option<String>,
-    pub realm: String,
-    pub connect_timeout: Duration,
-    pub request_timeout: Duration,
-    pub max_page_size: u32,
-    pub allow_insecure_http: bool,
-}
-
-/// LDAP object-class and attribute mapping for one Principal kind.
-///
-/// `object_filter` is a static RFC 4515 filter supplied by an administrator.
-/// Runtime query values are never interpolated directly and are always escaped
-/// according to RFC 4515.
-/// <https://www.rfc-editor.org/rfc/rfc4515.html>
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LdapObjectMapping {
-    /// Relative search DN below [`LdapPrincipalDiscoveryConfig::base_dn`].
-    pub search_base: String,
-    pub object_filter: String,
-    pub id_attribute: String,
-    pub name_attribute: String,
-    pub display_name_attribute: Option<String>,
-    pub email_attribute: Option<String>,
-    pub enabled_attribute: Option<String>,
-    pub search_attributes: Vec<String>,
-}
-
-impl LdapObjectMapping {
-    #[must_use]
-    pub fn new(
-        search_base: impl Into<String>,
-        object_filter: impl Into<String>,
-        id_attribute: impl Into<String>,
-        name_attribute: impl Into<String>,
-        search_attributes: impl IntoIterator<Item = String>,
-    ) -> Self {
-        Self {
-            search_base: search_base.into(),
-            object_filter: object_filter.into(),
-            id_attribute: id_attribute.into(),
-            name_attribute: name_attribute.into(),
-            display_name_attribute: None,
-            email_attribute: None,
-            enabled_attribute: None,
-            search_attributes: search_attributes.into_iter().collect(),
-        }
-    }
-}
-
-/// Connection, search, and projection settings for one LDAP directory.
-///
-/// LDAP protocol and filter syntax are defined by RFC 4511 and RFC 4515.
-/// Paged search uses the RFC 2696 simple paged-results control.
-/// <https://www.rfc-editor.org/rfc/rfc4511.html>
-/// <https://www.rfc-editor.org/rfc/rfc4515.html>
-/// <https://www.rfc-editor.org/rfc/rfc2696.html>
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LdapPrincipalDiscoveryConfig {
-    pub provider_id: String,
-    pub url: String,
-    /// Stable namespace used with the directory's immutable external ID.
-    pub issuer: String,
-    pub base_dn: String,
-    pub bind_dn: String,
-    pub bind_password: String,
-    pub user: LdapObjectMapping,
-    pub group: LdapObjectMapping,
-    pub connect_timeout: Duration,
-    pub request_timeout: Duration,
-    pub max_page_size: u32,
-    pub allow_insecure: bool,
-}
-
-impl LdapPrincipalDiscoveryConfig {
-    #[must_use]
-    pub fn new(
-        provider_id: impl Into<String>,
-        url: impl Into<String>,
-        issuer: impl Into<String>,
-        base_dn: impl Into<String>,
-        bind_dn: impl Into<String>,
-        bind_password: impl Into<String>,
-        user: LdapObjectMapping,
-        group: LdapObjectMapping,
-    ) -> Self {
-        Self {
-            provider_id: provider_id.into(),
-            url: url.into(),
-            issuer: issuer.into(),
-            base_dn: base_dn.into(),
-            bind_dn: bind_dn.into(),
-            bind_password: bind_password.into(),
-            user,
-            group,
-            connect_timeout: Duration::from_secs(3),
-            request_timeout: Duration::from_secs(5),
-            max_page_size: PrincipalSearchQuery::MAX_PAGE_SIZE,
-            allow_insecure: false,
-        }
-    }
-}
-
-/// Request binding for one custom in-house identity API.
+/// Runtime request binding for one custom in-house identity API.
 ///
 /// Query parameters transport the runtime search/resolve values; the optional
 /// body template is rendered for POST requests with the same placeholder
 /// values.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CustomRequestBinding {
+pub(crate) struct CustomRequestBinding {
     pub path: String,
     /// Query parameter carrying the search text (e.g. `search`).
     pub text_param: String,
@@ -385,33 +278,28 @@ impl CustomRequestBinding {
     pub const LIMIT_PLACEHOLDER: &'static str = "limit";
     pub const KIND_PLACEHOLDER: &'static str = "kind";
     pub const EXTERNAL_ID_PLACEHOLDER: &'static str = "external_id";
+}
 
-    #[must_use]
-    pub fn new(
-        path: impl Into<String>,
-        text_param: impl Into<String>,
-        offset_param: impl Into<String>,
-        limit_param: impl Into<String>,
-        external_id_param: impl Into<String>,
-    ) -> Self {
+impl From<&crate::config::CustomRequestBindingConfig> for CustomRequestBinding {
+    fn from(config: &crate::config::CustomRequestBindingConfig) -> Self {
         Self {
-            path: path.into(),
-            text_param: text_param.into(),
-            offset_param: offset_param.into(),
-            limit_param: limit_param.into(),
-            external_id_param: external_id_param.into(),
-            body_template: None,
+            path: config.path.clone(),
+            text_param: config.text_param.clone(),
+            offset_param: config.offset_param.clone(),
+            limit_param: config.limit_param.clone(),
+            external_id_param: config.external_id_param.clone(),
+            body_template: config.body_template.clone(),
         }
     }
 }
 
-/// Response attribute mapping for one custom in-house identity API.
+/// Runtime response attribute mapping for one custom in-house identity API.
 ///
 /// `array_path` selects the result array inside the JSON payload with a
 /// JSON-pointer path such as `/data/items`; an empty path means the payload is
-/// itself the array. `<https://www.rfc-editor.org/rfc/rfc6901.html>`.
+/// itself the array. <https://www.rfc-editor.org/rfc/rfc6901.html>
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CustomResponseMapping {
+pub(crate) struct CustomResponseMapping {
     pub array_path: String,
     pub id_attr: String,
     pub display_name_attr: String,
@@ -421,67 +309,16 @@ pub struct CustomResponseMapping {
     pub kind_attr: Option<String>,
 }
 
-impl CustomResponseMapping {
-    #[must_use]
-    pub fn new(
-        id_attr: impl Into<String>,
-        display_name_attr: impl Into<String>,
-    ) -> Self {
+impl From<&crate::config::CustomResponseMappingConfig> for CustomResponseMapping {
+    fn from(config: &crate::config::CustomResponseMappingConfig) -> Self {
         Self {
-            array_path: String::new(),
-            id_attr: id_attr.into(),
-            display_name_attr: display_name_attr.into(),
-            username_attr: None,
-            email_attr: None,
-            enabled_attr: None,
-            kind_attr: None,
-        }
-    }
-}
-
-/// Connection, request, and response settings for one custom in-house
-/// identity API (e.g. an enterprise DSP user system).
-///
-/// The connector requires no proprietary protocol: the operator maps the
-/// vendor's request binding and response attribute names in configuration,
-/// and the connector speaks plain HTTP(S) with a static bearer JWT.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CustomPrincipalDiscoveryConfig {
-    pub provider_id: String,
-    pub url: String,
-    /// Stable namespace used with the source's immutable external ID.
-    pub issuer: String,
-    /// Pre-issued bearer JWT for the in-house identity API.
-    pub jwt_token: String,
-    pub request: CustomRequestBinding,
-    pub response: CustomResponseMapping,
-    pub connect_timeout: Duration,
-    pub request_timeout: Duration,
-    pub max_page_size: u32,
-    pub allow_insecure_http: bool,
-}
-
-impl CustomPrincipalDiscoveryConfig {
-    #[must_use]
-    pub fn new(
-        provider_id: impl Into<String>,
-        url: impl Into<String>,
-        issuer: impl Into<String>,
-        jwt_token: impl Into<String>,
-        request: CustomRequestBinding,
-        response: CustomResponseMapping,
-    ) -> Self {
-        Self {
-            provider_id: provider_id.into(),
-            url: url.into(),
-            issuer: issuer.into(),
-            jwt_token: jwt_token.into(),
-            request,
-            response,
-            connect_timeout: Duration::from_secs(3),
-            request_timeout: Duration::from_secs(5),
-            max_page_size: PrincipalSearchQuery::MAX_PAGE_SIZE,
-            allow_insecure_http: false,
+            array_path: config.array_path.clone(),
+            id_attr: config.id_attr.clone(),
+            display_name_attr: config.display_name_attr.clone(),
+            username_attr: config.username_attr.clone(),
+            email_attr: config.email_attr.clone(),
+            enabled_attr: config.enabled_attr.clone(),
+            kind_attr: config.kind_attr.clone(),
         }
     }
 }
@@ -489,22 +326,136 @@ impl CustomPrincipalDiscoveryConfig {
 /// Compatibility name retained for management API callers during migration.
 pub type ExternalPrincipal = PrincipalProjection;
 
-impl KeycloakPrincipalDiscoveryConfig {
-    #[must_use]
+/// Builds the principal discovery providers from the configured sources and
+/// wires them into one [`PrincipalHandler`].
+///
+/// The startup logic for JIT, federated search, and SCIM lives here instead of
+/// in the server: each connector consumes its serde config sub-object
+/// directly, and credential files are resolved exactly once at startup.
+pub struct PrincipalDiscoveryComponent {
+    handler: PrincipalHandler,
+}
+
+impl PrincipalDiscoveryComponent {
+    /// Opens the JIT projection, the enabled federated search connectors, and
+    /// the optional SCIM projection into a ready [`PrincipalHandler`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a configuration or credential-file error.
     pub fn new(
-        provider_id: impl Into<String>,
-        base_url: impl Into<String>,
-        realm: impl Into<String>,
-    ) -> Self {
-        Self {
-            provider_id: provider_id.into(),
-            base_url: base_url.into(),
-            issuer_url: None,
-            realm: realm.into(),
-            connect_timeout: Duration::from_secs(3),
-            request_timeout: Duration::from_secs(5),
-            max_page_size: PrincipalSearchQuery::MAX_PAGE_SIZE,
-            allow_insecure_http: false,
+        repository: Arc<dyn crate::storage::PrincipalRepository>,
+        config: &crate::config::PrincipalDiscoveryConfig,
+    ) -> anyhow::Result<Self> {
+        let jit = config
+            .jit
+            .enabled
+            .then(|| {
+                JitPrincipalDiscovery::new(
+                    config.jit.discovery_id.clone(),
+                    config.jit.trusted_issuers.clone(),
+                    config.jit.allow_insecure_http,
+                )
+            })
+            .transpose()
+            .context("configure OIDC JIT Principal discovery")?;
+        let mut federated: Vec<Arc<PrincipalSearchDiscovery>> = Vec::new();
+        for keycloak in config.federated.keycloak.iter().filter(|entry| entry.enabled) {
+            let secret = Self::credential(
+                &keycloak.client_secret,
+                &keycloak.client_secret_file,
+                "Keycloak client secret",
+            )?;
+            let provider = KeycloakPrincipalDiscovery::with_client_credentials(
+                keycloak,
+                &keycloak.client_id,
+                secret,
+            )
+            .context("configure Keycloak Principal discovery")?;
+            Self::add_search_provider(&mut federated, provider)?;
         }
+        for ldap in config.federated.ldap.iter().filter(|entry| entry.enabled) {
+            let password = Self::credential(
+                &ldap.bind_password,
+                &ldap.bind_password_file,
+                "LDAP bind password",
+            )?;
+            let mut resolved = ldap.clone();
+            resolved.bind_password = password;
+            let provider = LdapPrincipalDiscovery::new(&resolved)
+                .context("configure LDAP Principal discovery")?;
+            Self::add_search_provider(&mut federated, provider)?;
+        }
+        for custom in config.federated.custom.iter().filter(|entry| entry.enabled) {
+            let token =
+                Self::credential(&custom.jwt_token, &custom.jwt_token_file, "custom JWT token")?;
+            let mut resolved = custom.clone();
+            resolved.jwt_token = token;
+            let provider = CustomPrincipalDiscovery::new(&resolved)
+                .context("configure custom Principal discovery")?;
+            Self::add_search_provider(&mut federated, provider)?;
+        }
+        let scim = config
+            .scim
+            .enabled
+            .then(|| {
+                ScimPrincipalDiscovery::new(
+                    config.scim.discovery_id.clone(),
+                    config.scim.issuer.clone(),
+                )
+            })
+            .transpose()
+            .context("configure SCIM Principal discovery")?;
+        let federated_provider_count = federated.len();
+        let handler = PrincipalHandler::new(repository, jit, federated, scim);
+        tracing::info!(
+            authguard.principal.jit_enabled = config.jit.enabled,
+            authguard.principal.federated_provider_count = federated_provider_count,
+            authguard.principal.scim_enabled = config.scim.enabled,
+            "principal discovery providers configured"
+        );
+        Ok(Self { handler })
+    }
+
+    #[must_use]
+    pub fn handler(&self) -> PrincipalHandler {
+        self.handler.clone()
+    }
+
+    /// Adds one search provider, rejecting duplicate protocol identifiers.
+    ///
+    /// Each `FED_KEYCLOAK`/`FED_LDAP`/`FED_CUSTOM` protocol may be configured
+    /// at most once, because search filtering and resolution dispatch on the
+    /// protocol identifier.
+    fn add_search_provider<T>(
+        providers: &mut Vec<Arc<PrincipalSearchDiscovery>>,
+        provider: T,
+    ) -> anyhow::Result<()>
+    where
+        T: IPrincipalDiscovery<PrincipalSearchQuery, Output = PrincipalSearchPage>,
+    {
+        let protocol = provider.provider();
+        if providers.iter().any(|existing| existing.provider() == protocol) {
+            anyhow::bail!(PrincipalDiscoveryError::InvalidConfiguration(format!(
+                "search provider protocol `{protocol}` is already configured"
+            )));
+        }
+        providers.push(Arc::new(provider));
+        Ok(())
+    }
+
+    /// Resolves one file-or-inline credential value.
+    fn credential(value: &str, file: &str, name: &str) -> anyhow::Result<String> {
+        if !value.is_empty() {
+            return Ok(value.to_string());
+        }
+        let value = std::fs::read_to_string(file)
+            .with_context(|| format!("read {name} file"))?
+            .trim_end_matches(['\r', '\n'])
+            .to_string();
+        if value.is_empty() {
+            return Err(anyhow::anyhow!("{name} file is empty"));
+        }
+        Ok(value)
     }
 }

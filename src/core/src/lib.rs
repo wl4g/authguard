@@ -1,3 +1,4 @@
+pub mod apm;
 pub mod cache;
 pub mod config;
 pub mod handler;
@@ -8,6 +9,7 @@ pub mod server;
 pub mod storage;
 pub mod utils;
 
+pub use apm::MetricsRegistry;
 pub use handler::{PolicyError, PolicyRuntime};
 pub use model::{
     AccessContext, Action, AuthorizationConditionSpec, AuthorizationDecision, AuthorizationRequest,

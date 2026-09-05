@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,11 +12,11 @@ use ldap3::{ldap_escape, LdapConnAsync, LdapConnSettings, Scope, SearchEntry};
 use reqwest::Url;
 use serde_json::Value;
 
+use crate::config::{LdapObjectMappingConfig, LdapPrincipalDiscoveryConfig};
 use crate::model::PrincipalKind;
 use crate::principal::{
-    validate_search_query, ExternalPrincipalRef, IPrincipalDiscovery, LdapObjectMapping,
-    LdapPrincipalDiscoveryConfig, PrincipalDiscoveryError, PrincipalProjection,
-    PrincipalSearchPage, PrincipalSearchQuery,
+    validate_search_query, ExternalPrincipalRef, IPrincipalDiscovery, PrincipalDiscoveryError,
+    PrincipalProjection, PrincipalSearchPage, PrincipalSearchQuery,
 };
 
 const USER_CURSOR_STREAM: &str = "users";
@@ -85,7 +86,7 @@ struct DefaultLdapSearchClient {
 impl DefaultLdapSearchClient {
     fn new(config: &LdapPrincipalDiscoveryConfig) -> Self {
         Self {
-            provider_id: config.provider_id.clone(),
+            provider_id: config.discovery_id.clone(),
             url: config.url.clone(),
             bind_dn: config.bind_dn.clone(),
             bind_password: config.bind_password.clone(),
@@ -203,25 +204,25 @@ impl LdapPrincipalDiscovery {
     ///
     /// Returns an error for unsafe URLs, malformed filters, invalid DNs or
     /// attributes, empty bind credentials, and unsafe paging limits.
-    pub fn new(config: LdapPrincipalDiscoveryConfig) -> Result<Self, PrincipalDiscoveryError> {
-        Self::validate_config(&config)?;
-        let client = Arc::new(DefaultLdapSearchClient::new(&config));
-        Ok(Self { config, client })
+    pub fn new(config: &LdapPrincipalDiscoveryConfig) -> Result<Self, PrincipalDiscoveryError> {
+        Self::validate_config(config)?;
+        let client = Arc::new(DefaultLdapSearchClient::new(config));
+        Ok(Self { config: config.clone(), client })
     }
 
     #[cfg(test)]
     fn with_client(
-        config: LdapPrincipalDiscoveryConfig,
+        config: &LdapPrincipalDiscoveryConfig,
         client: Arc<dyn ILdapSearchClient>,
     ) -> Result<Self, PrincipalDiscoveryError> {
-        Self::validate_config(&config)?;
-        Ok(Self { config, client })
+        Self::validate_config(config)?;
+        Ok(Self { config: config.clone(), client })
     }
 
     fn validate_config(
         config: &LdapPrincipalDiscoveryConfig,
     ) -> Result<(), PrincipalDiscoveryError> {
-        Self::validate_canonical("provider_id", &config.provider_id)?;
+        Self::validate_canonical("discovery_id", &config.discovery_id)?;
         Self::validate_canonical("issuer", &config.issuer)?;
         Self::validate_dn("base_dn", &config.base_dn, false)?;
         Self::validate_dn("bind_dn", &config.bind_dn, false)?;
@@ -270,7 +271,7 @@ impl LdapPrincipalDiscovery {
 
     fn validate_mapping(
         kind: &str,
-        mapping: &LdapObjectMapping,
+        mapping: &LdapObjectMappingConfig,
     ) -> Result<(), PrincipalDiscoveryError> {
         Self::validate_dn(&format!("{kind}.search_base"), &mapping.search_base, true)?;
         if ldap3::parse_filter(&mapping.object_filter).is_err() {
@@ -352,7 +353,7 @@ impl LdapPrincipalDiscovery {
     }
 
     fn cursor_key(&self, stream: &str) -> String {
-        format!("{}:{stream}", self.config.provider_id)
+        format!("{}:{stream}", self.config.discovery_id)
     }
 
     fn decode_cursor(
@@ -361,7 +362,7 @@ impl LdapPrincipalDiscovery {
         stream: &str,
     ) -> Result<Vec<u8>, PrincipalDiscoveryError> {
         let key = self.cursor_key(stream);
-        let cursor = query.cursor_for(&key).or_else(|| query.cursor_for(&self.config.provider_id));
+        let cursor = query.cursor_for(&key).or_else(|| query.cursor_for(&self.config.discovery_id));
         cursor.map_or_else(
             || Ok(Vec::new()),
             |value| {
@@ -374,7 +375,7 @@ impl LdapPrincipalDiscovery {
         )
     }
 
-    fn search_dn(&self, mapping: &LdapObjectMapping) -> String {
+    fn search_dn(&self, mapping: &LdapObjectMappingConfig) -> String {
         if mapping.search_base.is_empty() {
             self.config.base_dn.clone()
         } else {
@@ -382,7 +383,7 @@ impl LdapPrincipalDiscovery {
         }
     }
 
-    fn requested_attributes(mapping: &LdapObjectMapping) -> Vec<String> {
+    fn requested_attributes(mapping: &LdapObjectMappingConfig) -> Vec<String> {
         let mut attributes =
             BTreeSet::from([mapping.id_attribute.clone(), mapping.name_attribute.clone()]);
         attributes.extend(mapping.search_attributes.iter().cloned());
@@ -392,17 +393,16 @@ impl LdapPrincipalDiscovery {
         attributes.into_iter().collect()
     }
 
-    fn search_filter(mapping: &LdapObjectMapping, text: &str) -> String {
+    fn search_filter(mapping: &LdapObjectMappingConfig, text: &str) -> String {
         let escaped = ldap_escape(text.trim());
-        let candidates = mapping
-            .search_attributes
-            .iter()
-            .map(|attribute| format!("({attribute}=*{escaped}*)"))
-            .collect::<String>();
+        let mut candidates = String::new();
+        for attribute in &mapping.search_attributes {
+            let _ = write!(candidates, "({attribute}=*{escaped}*)");
+        }
         format!("(&{}(|{candidates}))", mapping.object_filter)
     }
 
-    fn exact_filter(mapping: &LdapObjectMapping, external_id: &str) -> String {
+    fn exact_filter(mapping: &LdapObjectMappingConfig, external_id: &str) -> String {
         let escaped = ldap_escape(external_id);
         format!("(&{}({}={escaped}))", mapping.object_filter, mapping.id_attribute)
     }
@@ -410,7 +410,7 @@ impl LdapPrincipalDiscovery {
     fn map_entry(
         &self,
         entry: LdapEntry,
-        mapping: &LdapObjectMapping,
+        mapping: &LdapObjectMappingConfig,
         kind: PrincipalKind,
     ) -> Result<PrincipalProjection, PrincipalDiscoveryError> {
         let external_id = self.required_value(&entry, &mapping.id_attribute, "id")?;
@@ -440,7 +440,7 @@ impl LdapPrincipalDiscovery {
             .collect();
         Ok(PrincipalProjection {
             reference: ExternalPrincipalRef {
-                provider_id: self.config.provider_id.clone(),
+                provider_id: self.config.discovery_id.clone(),
                 issuer: self.config.issuer.clone(),
                 external_id: if kind == PrincipalKind::Group {
                     format!("group:{external_id}")
@@ -468,7 +468,7 @@ impl LdapPrincipalDiscovery {
             .filter(|value| !value.is_empty() && value.trim() == *value)
             .map(ToOwned::to_owned)
             .ok_or_else(|| PrincipalDiscoveryError::InvalidResponse {
-                provider_id: self.config.provider_id.clone(),
+                provider_id: self.config.discovery_id.clone(),
                 message: format!("LDAP entry has no canonical {purpose} attribute"),
             })
     }
@@ -478,7 +478,7 @@ impl LdapPrincipalDiscovery {
             "true" | "1" | "yes" | "enabled" | "active" => Ok(true),
             "false" | "0" | "no" | "disabled" | "inactive" => Ok(false),
             _ => Err(PrincipalDiscoveryError::InvalidResponse {
-                provider_id: self.config.provider_id.clone(),
+                provider_id: self.config.discovery_id.clone(),
                 message: "LDAP enabled attribute has an unsupported value".to_string(),
             }),
         }
@@ -487,7 +487,7 @@ impl LdapPrincipalDiscovery {
     async fn search_kind(
         &self,
         query: &PrincipalSearchQuery,
-        mapping: &LdapObjectMapping,
+        mapping: &LdapObjectMappingConfig,
         kind: PrincipalKind,
         stream: &str,
     ) -> Result<PrincipalSearchPage, PrincipalDiscoveryError> {
@@ -515,7 +515,7 @@ impl LdapPrincipalDiscovery {
     async fn resolve_kind(
         &self,
         external_id: &str,
-        mapping: &LdapObjectMapping,
+        mapping: &LdapObjectMappingConfig,
         kind: PrincipalKind,
     ) -> Result<Option<PrincipalProjection>, PrincipalDiscoveryError> {
         let page = self
@@ -535,7 +535,7 @@ impl LdapPrincipalDiscovery {
                 self.map_entry(entry, mapping, kind).map(Some)
             }
             _ => Err(PrincipalDiscoveryError::InvalidResponse {
-                provider_id: self.config.provider_id.clone(),
+                provider_id: self.config.discovery_id.clone(),
                 message: "LDAP identity attribute is not unique".to_string(),
             }),
         }
@@ -555,7 +555,7 @@ impl IPrincipalDiscovery<PrincipalSearchQuery> for LdapPrincipalDiscovery {
         query: PrincipalSearchQuery,
     ) -> Result<Self::Output, PrincipalDiscoveryError> {
         validate_search_query(&query)?;
-        if !query.provider_ids.is_empty() && !query.provider_ids.contains(&self.config.provider_id)
+        if !query.provider_ids.is_empty() && !query.provider_ids.contains(&self.config.discovery_id)
         {
             return Ok(PrincipalSearchPage::default());
         }
@@ -602,7 +602,7 @@ impl IPrincipalDiscovery<PrincipalSearchQuery> for LdapPrincipalDiscovery {
         &self,
         reference: &ExternalPrincipalRef,
     ) -> Result<Option<PrincipalProjection>, PrincipalDiscoveryError> {
-        if reference.provider_id != self.config.provider_id {
+        if reference.provider_id != self.config.discovery_id {
             return Err(PrincipalDiscoveryError::UnknownProvider(reference.provider_id.clone()));
         }
         if reference.issuer != self.config.issuer {
@@ -657,41 +657,42 @@ mod tests {
         }
     }
 
-    fn user_mapping() -> LdapObjectMapping {
-        let mut mapping = LdapObjectMapping::new(
-            "ou=people",
-            "(objectClass=inetOrgPerson)",
-            "entryUUID",
-            "uid",
-            ["uid", "cn", "mail"].into_iter().map(str::to_string),
-        );
-        mapping.display_name_attribute = Some("cn".to_string());
-        mapping.email_attribute = Some("mail".to_string());
-        mapping.enabled_attribute = Some("accountEnabled".to_string());
-        mapping
+    fn user_mapping() -> LdapObjectMappingConfig {
+        LdapObjectMappingConfig {
+            search_base: "ou=people".to_string(),
+            object_filter: "(objectClass=inetOrgPerson)".to_string(),
+            id_attribute: "entryUUID".to_string(),
+            name_attribute: "uid".to_string(),
+            display_name_attribute: Some("cn".to_string()),
+            email_attribute: Some("mail".to_string()),
+            enabled_attribute: Some("accountEnabled".to_string()),
+            search_attributes: ["uid", "cn", "mail"].into_iter().map(str::to_string).collect(),
+        }
     }
 
-    fn group_mapping() -> LdapObjectMapping {
-        LdapObjectMapping::new(
-            "ou=groups",
-            "(objectClass=groupOfNames)",
-            "entryUUID",
-            "cn",
-            ["cn"].into_iter().map(str::to_string),
-        )
+    fn group_mapping() -> LdapObjectMappingConfig {
+        LdapObjectMappingConfig {
+            search_base: "ou=groups".to_string(),
+            object_filter: "(objectClass=groupOfNames)".to_string(),
+            id_attribute: "entryUUID".to_string(),
+            name_attribute: "cn".to_string(),
+            search_attributes: ["cn"].into_iter().map(str::to_string).collect(),
+            ..LdapObjectMappingConfig::default()
+        }
     }
 
     fn config() -> LdapPrincipalDiscoveryConfig {
-        LdapPrincipalDiscoveryConfig::new(
-            "corporate-ldap",
-            "ldaps://ldap.example.com:636",
-            "https://identity.example.com/directories/corporate",
-            "dc=example,dc=com",
-            "uid=authguard,ou=service-accounts,dc=example,dc=com",
-            "not-logged-secret",
-            user_mapping(),
-            group_mapping(),
-        )
+        LdapPrincipalDiscoveryConfig {
+            discovery_id: "corporate-ldap".to_string(),
+            url: "ldaps://ldap.example.com:636".to_string(),
+            issuer: "https://identity.example.com/directories/corporate".to_string(),
+            base_dn: "dc=example,dc=com".to_string(),
+            bind_dn: "uid=authguard,ou=service-accounts,dc=example,dc=com".to_string(),
+            bind_password: "not-logged-secret".to_string(),
+            user: user_mapping(),
+            group: group_mapping(),
+            ..LdapPrincipalDiscoveryConfig::default()
+        }
     }
 
     fn user_entry(external_id: &str) -> LdapEntry {
@@ -722,7 +723,7 @@ mod tests {
         let mut config = config();
         config.url = "ldap://ldap.example.com:389".to_string();
 
-        let error = LdapPrincipalDiscovery::new(config).err().expect("unsafe LDAP rejected");
+        let error = LdapPrincipalDiscovery::new(&config).err().expect("unsafe LDAP rejected");
 
         assert!(matches!(error, PrincipalDiscoveryError::InvalidConfiguration(_)));
         assert!(!error.to_string().contains("not-logged-secret"));
@@ -734,18 +735,18 @@ mod tests {
         config.url = "ldap://127.0.0.1:1389".to_string();
         config.allow_insecure = true;
 
-        assert!(LdapPrincipalDiscovery::new(config).is_ok());
+        assert!(LdapPrincipalDiscovery::new(&config).is_ok());
     }
 
     #[test]
     fn rejects_malformed_static_filter_and_attribute_description() {
         let mut invalid_filter = config();
         invalid_filter.user.object_filter = "(objectClass=person".to_string();
-        assert!(LdapPrincipalDiscovery::new(invalid_filter).is_err());
+        assert!(LdapPrincipalDiscovery::new(&invalid_filter).is_err());
 
         let mut invalid_attribute = config();
         invalid_attribute.user.search_attributes = vec!["uid)(objectClass=*)".to_string()];
-        assert!(LdapPrincipalDiscovery::new(invalid_attribute).is_err());
+        assert!(LdapPrincipalDiscovery::new(&invalid_attribute).is_err());
     }
 
     #[tokio::test]
@@ -767,7 +768,7 @@ mod tests {
             ),
         ]));
         let provider =
-            LdapPrincipalDiscovery::with_client(config(), fake.clone()).expect("provider");
+            LdapPrincipalDiscovery::with_client(&config(), fake.clone()).expect("provider");
 
         let page =
             provider.discover(PrincipalSearchQuery::new("growth")).await.expect("search LDAP");
@@ -793,7 +794,7 @@ mod tests {
     async fn search_escapes_untrusted_text_before_building_rfc4515_filter() {
         let fake = Arc::new(FakeLdapSearchClient::default());
         let provider =
-            LdapPrincipalDiscovery::with_client(config(), fake.clone()).expect("provider");
+            LdapPrincipalDiscovery::with_client(&config(), fake.clone()).expect("provider");
         let mut query = PrincipalSearchQuery::new("alice*)(uid=*)");
         query.kinds.insert(PrincipalKind::User);
 
@@ -812,7 +813,7 @@ mod tests {
     async fn provider_and_kind_selection_prevent_unnecessary_directory_searches() {
         let fake = Arc::new(FakeLdapSearchClient::default());
         let provider =
-            LdapPrincipalDiscovery::with_client(config(), fake.clone()).expect("provider");
+            LdapPrincipalDiscovery::with_client(&config(), fake.clone()).expect("provider");
         let mut other_provider = PrincipalSearchQuery::new("alice");
         other_provider.provider_ids.insert("other-directory".to_string());
         assert!(provider.discover(other_provider).await.expect("filtered").principals.is_empty());
@@ -829,7 +830,7 @@ mod tests {
         let mut provider_config = config();
         provider_config.max_page_size = 10;
         let provider =
-            LdapPrincipalDiscovery::with_client(provider_config, fake.clone()).expect("provider");
+            LdapPrincipalDiscovery::with_client(&provider_config, fake.clone()).expect("provider");
         let mut query = PrincipalSearchQuery::new("alice");
         query.kinds.insert(PrincipalKind::User);
         query.per_provider_limit = 80;
@@ -851,7 +852,7 @@ mod tests {
             LdapSearchPage { entries: vec![user_entry("user*)(uid=*)")], next_cookie: Vec::new() },
         )]));
         let provider =
-            LdapPrincipalDiscovery::with_client(config(), fake.clone()).expect("provider");
+            LdapPrincipalDiscovery::with_client(&config(), fake.clone()).expect("provider");
         let reference = ExternalPrincipalRef {
             provider_id: "corporate-ldap".to_string(),
             issuer: "https://identity.example.com/directories/corporate".to_string(),
@@ -879,7 +880,7 @@ mod tests {
                 next_cookie: Vec::new(),
             },
         )]));
-        let provider = LdapPrincipalDiscovery::with_client(config(), fake).expect("provider");
+        let provider = LdapPrincipalDiscovery::with_client(&config(), fake).expect("provider");
         let reference = ExternalPrincipalRef {
             provider_id: "corporate-ldap".to_string(),
             issuer: "https://identity.example.com/directories/corporate".to_string(),
@@ -895,7 +896,7 @@ mod tests {
     async fn resolve_rejects_provider_and_issuer_mismatch_before_directory_access() {
         let fake = Arc::new(FakeLdapSearchClient::default());
         let provider =
-            LdapPrincipalDiscovery::with_client(config(), fake.clone()).expect("provider");
+            LdapPrincipalDiscovery::with_client(&config(), fake.clone()).expect("provider");
         let wrong_provider = ExternalPrincipalRef {
             provider_id: "other-ldap".to_string(),
             issuer: "https://identity.example.com/directories/corporate".to_string(),
@@ -926,7 +927,7 @@ mod tests {
             "ou=people,dc=example,dc=com".to_string(),
             LdapSearchPage { entries: vec![entry], next_cookie: Vec::new() },
         )]));
-        let provider = LdapPrincipalDiscovery::with_client(config(), fake).expect("provider");
+        let provider = LdapPrincipalDiscovery::with_client(&config(), fake).expect("provider");
         let mut query = PrincipalSearchQuery::new("alice");
         query.kinds.insert(PrincipalKind::User);
 

@@ -1,8 +1,10 @@
 use anyhow::bail;
 
 use super::{
-    AuthguardConfig, CacheConfig, IdentityConfig, MgmtConfig, PrincipalDiscoveryConfig,
-    RedisClusterConfig, ScopeDeliveryConfig, ServerConfig, StorageConfig,
+    AuthguardConfig, CacheConfig, CustomPrincipalDiscoveryConfig, IdentityConfig,
+    JitPrincipalDiscoveryConfig, KeycloakPrincipalDiscoveryConfig, LdapPrincipalDiscoveryConfig,
+    MgmtConfig, PrincipalDiscoveryConfig, RedisClusterConfig, ScimPrincipalDiscoveryConfig,
+    ScopeDeliveryConfig, ServerConfig, StorageConfig,
 };
 
 impl AuthguardConfig {
@@ -120,96 +122,116 @@ fn validate_identity(identity: &IdentityConfig) -> anyhow::Result<()> {
 }
 
 fn validate_principal_discovery(config: &PrincipalDiscoveryConfig) -> anyhow::Result<()> {
-    if config.jit.enabled
-        && (config.jit.discovery_id.trim().is_empty() || config.jit.trusted_issuers.is_empty())
-    {
+    validate_jit(&config.jit)?;
+    for keycloak in config.federated.keycloak.iter().filter(|entry| entry.enabled) {
+        validate_keycloak(keycloak)?;
+    }
+    for ldap in config.federated.ldap.iter().filter(|entry| entry.enabled) {
+        validate_ldap(ldap)?;
+    }
+    for custom in config.federated.custom.iter().filter(|entry| entry.enabled) {
+        validate_custom(custom)?;
+    }
+    validate_scim(&config.jit, &config.scim)
+}
+
+fn validate_jit(jit: &JitPrincipalDiscoveryConfig) -> anyhow::Result<()> {
+    if jit.enabled && (jit.discovery_id.trim().is_empty() || jit.trusted_issuers.is_empty()) {
         bail!("auth.principal_discovery.jit requires discovery_id and trusted_issuers");
     }
-    for keycloak in &config.federated.keycloak {
-        if keycloak.discovery_id.trim().is_empty()
-            || keycloak.base_url.trim().is_empty()
-            || keycloak.realm.trim().is_empty()
-            || keycloak.client_id.trim().is_empty()
-            || (keycloak.client_secret.is_empty() == keycloak.client_secret_file.is_empty())
-        {
-            bail!(
-                "each Keycloak principal discovery requires id, URL, realm and exactly one of client_secret or client_secret_file"
-            );
-        }
-        if keycloak.connect_timeout.is_zero()
-            || keycloak.request_timeout.is_zero()
-            || keycloak.max_page_size == 0
-        {
-            bail!("Keycloak principal discovery timeouts and max_page_size must be positive");
-        }
-    }
-    for ldap in &config.federated.ldap {
-        if ldap.discovery_id.trim().is_empty()
-            || ldap.url.trim().is_empty()
-            || ldap.issuer.trim().is_empty()
-            || ldap.base_dn.trim().is_empty()
-            || ldap.bind_dn.trim().is_empty()
-            || (ldap.bind_password.is_empty() == ldap.bind_password_file.is_empty())
-        {
-            bail!(
-                "each LDAP principal discovery requires id, URL, issuer, base DN and exactly one of bind_password or bind_password_file"
-            );
-        }
-        if ldap.connect_timeout.is_zero()
-            || ldap.request_timeout.is_zero()
-            || ldap.max_page_size == 0
-        {
-            bail!("LDAP principal discovery timeouts and max_page_size must be positive");
-        }
-        for (kind, mapping) in [("user", &ldap.user), ("group", &ldap.group)] {
-            if mapping.object_filter.trim().is_empty()
-                || mapping.id_attribute.trim().is_empty()
-                || mapping.name_attribute.trim().is_empty()
-                || mapping.search_attributes.is_empty()
-            {
-                bail!(
-                    "LDAP {kind} mapping requires object_filter, id_attribute, name_attribute and search_attributes"
-                );
-            }
-        }
-    }
-    for custom in &config.federated.custom {
-        if custom.discovery_id.trim().is_empty()
-            || custom.url.trim().is_empty()
-            || custom.issuer.trim().is_empty()
-            || (custom.jwt_token.is_empty() == custom.jwt_token_file.is_empty())
-        {
-            bail!(
-                "each custom principal discovery requires id, URL, issuer and exactly one of jwt_token or jwt_token_file"
-            );
-        }
-        if custom.request.path.trim().is_empty()
-            || custom.request.text_param.trim().is_empty()
-            || custom.request.offset_param.trim().is_empty()
-            || custom.request.limit_param.trim().is_empty()
-            || custom.request.external_id_param.trim().is_empty()
-            || custom.response.id_attr.trim().is_empty()
-            || custom.response.display_name_attr.trim().is_empty()
-        {
-            bail!(
-                "custom principal discovery requires request path, query parameter names and response id/display-name attributes"
-            );
-        }
-        if custom.connect_timeout.is_zero()
-            || custom.request_timeout.is_zero()
-            || custom.max_page_size == 0
-        {
-            bail!("custom principal discovery timeouts and max_page_size must be positive");
-        }
-    }
-    if config.scim.enabled
-        && (config.scim.discovery_id.trim().is_empty() || config.scim.issuer.trim().is_empty())
+    Ok(())
+}
+
+fn validate_keycloak(keycloak: &KeycloakPrincipalDiscoveryConfig) -> anyhow::Result<()> {
+    if keycloak.discovery_id.trim().is_empty()
+        || keycloak.base_url.trim().is_empty()
+        || keycloak.realm.trim().is_empty()
+        || keycloak.client_id.trim().is_empty()
+        || (keycloak.client_secret.is_empty() == keycloak.client_secret_file.is_empty())
     {
+        bail!(
+            "each Keycloak principal discovery requires id, URL, realm and exactly one of client_secret or client_secret_file"
+        );
+    }
+    if keycloak.connect_timeout.is_zero()
+        || keycloak.request_timeout.is_zero()
+        || keycloak.max_page_size == 0
+    {
+        bail!("Keycloak principal discovery timeouts and max_page_size must be positive");
+    }
+    Ok(())
+}
+
+fn validate_ldap(ldap: &LdapPrincipalDiscoveryConfig) -> anyhow::Result<()> {
+    if ldap.discovery_id.trim().is_empty()
+        || ldap.url.trim().is_empty()
+        || ldap.issuer.trim().is_empty()
+        || ldap.base_dn.trim().is_empty()
+        || ldap.bind_dn.trim().is_empty()
+        || (ldap.bind_password.is_empty() == ldap.bind_password_file.is_empty())
+    {
+        bail!(
+            "each LDAP principal discovery requires id, URL, issuer, base DN and exactly one of bind_password or bind_password_file"
+        );
+    }
+    if ldap.connect_timeout.is_zero() || ldap.request_timeout.is_zero() || ldap.max_page_size == 0 {
+        bail!("LDAP principal discovery timeouts and max_page_size must be positive");
+    }
+    for (kind, mapping) in [("user", &ldap.user), ("group", &ldap.group)] {
+        if mapping.object_filter.trim().is_empty()
+            || mapping.id_attribute.trim().is_empty()
+            || mapping.name_attribute.trim().is_empty()
+            || mapping.search_attributes.is_empty()
+        {
+            bail!(
+                "LDAP {kind} mapping requires object_filter, id_attribute, name_attribute and search_attributes"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_custom(custom: &CustomPrincipalDiscoveryConfig) -> anyhow::Result<()> {
+    if custom.discovery_id.trim().is_empty()
+        || custom.url.trim().is_empty()
+        || custom.issuer.trim().is_empty()
+        || (custom.jwt_token.is_empty() == custom.jwt_token_file.is_empty())
+    {
+        bail!(
+            "each custom principal discovery requires id, URL, issuer and exactly one of jwt_token or jwt_token_file"
+        );
+    }
+    if custom.request.path.trim().is_empty()
+        || custom.request.text_param.trim().is_empty()
+        || custom.request.offset_param.trim().is_empty()
+        || custom.request.limit_param.trim().is_empty()
+        || custom.request.external_id_param.trim().is_empty()
+        || custom.response.id_attr.trim().is_empty()
+        || custom.response.display_name_attr.trim().is_empty()
+    {
+        bail!(
+            "custom principal discovery requires request path, query parameter names and response id/display-name attributes"
+        );
+    }
+    if custom.connect_timeout.is_zero()
+        || custom.request_timeout.is_zero()
+        || custom.max_page_size == 0
+    {
+        bail!("custom principal discovery timeouts and max_page_size must be positive");
+    }
+    Ok(())
+}
+
+fn validate_scim(
+    jit: &JitPrincipalDiscoveryConfig,
+    scim: &ScimPrincipalDiscoveryConfig,
+) -> anyhow::Result<()> {
+    if scim.enabled && (scim.discovery_id.trim().is_empty() || scim.issuer.trim().is_empty()) {
         bail!("auth.principal_discovery.scim requires discovery_id and issuer");
     }
-    if config.scim.enabled
-        && config.jit.enabled
-        && !config.jit.trusted_issuers.iter().any(|issuer| issuer == &config.scim.issuer)
+    if scim.enabled
+        && jit.enabled
+        && !jit.trusted_issuers.iter().any(|issuer| issuer == &scim.issuer)
     {
         bail!(
             "auth.principal_discovery.scim.issuer must exactly match a trusted OIDC issuer so SCIM and JIT converge on one Principal"
@@ -244,7 +266,7 @@ fn validate_storage(storage: &StorageConfig) -> anyhow::Result<()> {
         "postgres" if storage.postgres.connect_timeout.is_zero() => {
             bail!("storage.postgres.connect_timeout must be positive");
         }
-        "SQLite" | "postgres" => {}
+        "sqlite" | "postgres" => {}
         provider => bail!("storage.provider must be SQLite or postgres, got `{provider}`"),
     }
     Ok(())

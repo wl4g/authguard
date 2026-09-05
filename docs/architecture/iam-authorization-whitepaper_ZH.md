@@ -1,4 +1,4 @@
-# Authguard - 统一通用企业级 IAM 授权系统设计
+# Authguard - 统一通用企业级 IAM 认证鉴权系统设计
 
 - **状态：** Architecture Baseline
 - **日期：** 2026-09-03

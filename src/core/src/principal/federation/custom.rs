@@ -4,11 +4,12 @@ use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url};
 use serde_json::Value;
 
+use crate::config::CustomPrincipalDiscoveryConfig;
 use crate::model::PrincipalKind;
 use crate::principal::{
-    validate_search_query, CustomPrincipalDiscoveryConfig, CustomRequestBinding,
-    CustomResponseMapping, ExternalPrincipalRef, IPrincipalDiscovery, PrincipalDiscoveryError,
-    PrincipalProjection, PrincipalSearchPage, PrincipalSearchQuery,
+    validate_search_query, CustomRequestBinding, CustomResponseMapping, ExternalPrincipalRef,
+    IPrincipalDiscovery, PrincipalDiscoveryError, PrincipalProjection, PrincipalSearchPage,
+    PrincipalSearchQuery,
 };
 
 const USERS_CURSOR_STREAM: &str = "users";
@@ -48,8 +49,8 @@ impl CustomPrincipalDiscovery {
     /// Returns an error when the provider identifier, URL, JWT, request
     /// binding, response mapping, timeout, or page-size configuration is
     /// invalid.
-    pub fn new(config: CustomPrincipalDiscoveryConfig) -> Result<Self, PrincipalDiscoveryError> {
-        validate_config(&config)?;
+    pub fn new(config: &CustomPrincipalDiscoveryConfig) -> Result<Self, PrincipalDiscoveryError> {
+        validate_config(config)?;
         let base_url = parse_endpoint("url", &config.url, config.allow_insecure_http)?;
         validate_request_path(&config.request.path)?;
         validate_body_template(config.request.body_template.as_deref())?;
@@ -65,12 +66,12 @@ impl CustomPrincipalDiscovery {
                 ))
             })?;
         Ok(Self {
-            provider_id: config.provider_id,
-            issuer: config.issuer,
+            provider_id: config.discovery_id.clone(),
+            issuer: config.issuer.clone(),
             base_url,
-            request: config.request,
-            response: config.response,
-            jwt_token: config.jwt_token,
+            request: CustomRequestBinding::from(&config.request),
+            response: CustomResponseMapping::from(&config.response),
+            jwt_token: config.jwt_token.clone(),
             max_page_size: config.max_page_size,
             client,
         })
@@ -85,16 +86,14 @@ impl CustomPrincipalDiscovery {
         query: &PrincipalSearchQuery,
         stream: &str,
     ) -> Result<u32, PrincipalDiscoveryError> {
-        query
-            .cursor_for(&self.cursor_key(stream))
-            .map_or(Ok(0), |value| {
-                value.parse::<u32>().map_err(|_| {
-                    PrincipalDiscoveryError::InvalidQuery(format!(
-                        "cursor for provider `{}` is invalid",
-                        self.provider_id
-                    ))
-                })
+        query.cursor_for(&self.cursor_key(stream)).map_or(Ok(0), |value| {
+            value.parse::<u32>().map_err(|_| {
+                PrincipalDiscoveryError::InvalidQuery(format!(
+                    "cursor for provider `{}` is invalid",
+                    self.provider_id
+                ))
             })
+        })
     }
 
     fn supports_kind(query: &PrincipalSearchQuery, kind: PrincipalKind) -> bool {
@@ -147,8 +146,7 @@ impl CustomPrincipalDiscovery {
             _ => None,
         });
         let mut url = Self::append_path(&self.base_url, &path)?;
-        url.query_pairs_mut()
-            .append_pair(&self.request.external_id_param, external_id);
+        url.query_pairs_mut().append_pair(&self.request.external_id_param, external_id);
         let body = self.request.body_template.as_deref().map(|template| {
             Self::render(template, |placeholder| match placeholder {
                 CustomRequestBinding::EXTERNAL_ID_PLACEHOLDER => Some(external_id.to_string()),
@@ -215,15 +213,12 @@ impl CustomPrincipalDiscovery {
         let offset = self.stream_offset(query, Self::cursor_stream(kind))?;
         let limit = query.per_provider_limit.min(self.max_page_size);
         let request = self.search_request(query, kind, offset, limit)?;
-        let response = self
-            .send(request, "search")
-            .await?
-            .json::<Value>()
-            .await
-            .map_err(|_| PrincipalDiscoveryError::InvalidResponse {
+        let response = self.send(request, "search").await?.json::<Value>().await.map_err(|_| {
+            PrincipalDiscoveryError::InvalidResponse {
                 provider_id: self.provider_id.clone(),
                 message: "custom search response is not valid JSON".to_string(),
-            })?;
+            }
+        })?;
         let items = select_array(&self.response.array_path, &response).ok_or_else(|| {
             PrincipalDiscoveryError::InvalidResponse {
                 provider_id: self.provider_id.clone(),
@@ -290,14 +285,15 @@ impl CustomPrincipalDiscovery {
                 provider_id: self.provider_id.clone(),
                 message: "custom search entry has no canonical id attribute".to_string(),
             })?;
-        let kind = self.response.kind_attr.as_ref().map_or(default_kind, |kind_attr| {
-            match object.get(kind_attr).and_then(Value::as_str) {
-                Some("GROUP" | "group" | "Group") => PrincipalKind::Group,
-                Some("WORKLOAD" | "workload" | "SERVICE_ACCOUNT" | "service_account") => {
-                    PrincipalKind::Workload
-                }
-                _ => PrincipalKind::User,
+        let kind = self.response.kind_attr.as_ref().map_or(default_kind, |kind_attr| match object
+            .get(kind_attr)
+            .and_then(Value::as_str)
+        {
+            Some("GROUP" | "group" | "Group") => PrincipalKind::Group,
+            Some("WORKLOAD" | "workload" | "SERVICE_ACCOUNT" | "service_account") => {
+                PrincipalKind::Workload
             }
+            _ => PrincipalKind::User,
         });
         let external_id = match kind {
             PrincipalKind::Group => format!("group:{external_id}"),
@@ -332,12 +328,16 @@ impl CustomPrincipalDiscovery {
             },
             kind,
             display_name,
-            username: self.response.username_attr.as_ref().and_then(|name| {
-                object.get(name).and_then(Value::as_str).map(ToOwned::to_owned)
-            }),
-            email: self.response.email_attr.as_ref().and_then(|name| {
-                object.get(name).and_then(Value::as_str).map(ToOwned::to_owned)
-            }),
+            username: self
+                .response
+                .username_attr
+                .as_ref()
+                .and_then(|name| object.get(name).and_then(Value::as_str).map(ToOwned::to_owned)),
+            email: self
+                .response
+                .email_attr
+                .as_ref()
+                .and_then(|name| object.get(name).and_then(Value::as_str).map(ToOwned::to_owned)),
             enabled,
             attributes,
         })
@@ -360,8 +360,8 @@ impl IPrincipalDiscovery<PrincipalSearchQuery> for CustomPrincipalDiscovery {
         if !query.provider_ids.is_empty() && !query.provider_ids.contains(&self.provider_id) {
             return Ok(PrincipalSearchPage::default());
         }
-        let search_users =
-            Self::supports_kind(&query, PrincipalKind::User) || Self::supports_kind(&query, PrincipalKind::Workload);
+        let search_users = Self::supports_kind(&query, PrincipalKind::User)
+            || Self::supports_kind(&query, PrincipalKind::Workload);
         let search_groups = Self::supports_kind(&query, PrincipalKind::Group);
         if !search_users && !search_groups {
             return Ok(PrincipalSearchPage::default());
@@ -445,11 +445,9 @@ impl IPrincipalDiscovery<PrincipalSearchQuery> for CustomPrincipalDiscovery {
     }
 }
 
-fn validate_config(
-    config: &CustomPrincipalDiscoveryConfig,
-) -> Result<(), PrincipalDiscoveryError> {
-    if config.provider_id.trim().is_empty()
-        || config.provider_id.trim() != config.provider_id
+fn validate_config(config: &CustomPrincipalDiscoveryConfig) -> Result<(), PrincipalDiscoveryError> {
+    if config.discovery_id.trim().is_empty()
+        || config.discovery_id.trim() != config.discovery_id
         || config.issuer.trim().is_empty()
         || config.issuer.trim() != config.issuer
     {
@@ -651,8 +649,7 @@ mod tests {
                         if headers.get(AUTHORIZATION)
                             != Some(&axum::http::HeaderValue::from_static("Bearer dsp-token"))
                         {
-                            return (AxumStatusCode::UNAUTHORIZED, Json(json!({})))
-                                .into_response();
+                            return (AxumStatusCode::UNAUTHORIZED, Json(json!({}))).into_response();
                         }
                         if let Some(id) = params.get("id") {
                             if id == "missing" {
@@ -695,34 +692,34 @@ mod tests {
     }
 
     fn config(url: &str) -> CustomPrincipalDiscoveryConfig {
-        let request = CustomRequestBinding {
-            path: "api/dsp/{{kind}}/search".to_string(),
-            text_param: "search".to_string(),
-            offset_param: "offset".to_string(),
-            limit_param: "limit".to_string(),
-            external_id_param: "id".to_string(),
-            body_template: None,
-        };
-        let response = CustomResponseMapping {
-            array_path: "/items".to_string(),
-            id_attr: "id".to_string(),
-            display_name_attr: "display_name".to_string(),
-            username_attr: Some("username".to_string()),
-            email_attr: Some("email".to_string()),
-            enabled_attr: Some("enabled".to_string()),
-            kind_attr: Some("kind".to_string()),
-        };
+        use crate::config::{CustomRequestBindingConfig, CustomResponseMappingConfig};
         CustomPrincipalDiscoveryConfig {
-            provider_id: "dsp-directory".to_string(),
+            discovery_id: "dsp-directory".to_string(),
             url: url.to_string(),
             issuer: "https://dsp.example.com".to_string(),
             jwt_token: "dsp-token".to_string(),
-            request,
-            response,
+            request: CustomRequestBindingConfig {
+                path: "api/dsp/{{kind}}/search".to_string(),
+                text_param: "search".to_string(),
+                offset_param: "offset".to_string(),
+                limit_param: "limit".to_string(),
+                external_id_param: "id".to_string(),
+                body_template: None,
+            },
+            response: CustomResponseMappingConfig {
+                array_path: "/items".to_string(),
+                id_attr: "id".to_string(),
+                display_name_attr: "display_name".to_string(),
+                username_attr: Some("username".to_string()),
+                email_attr: Some("email".to_string()),
+                enabled_attr: Some("enabled".to_string()),
+                kind_attr: Some("kind".to_string()),
+            },
             connect_timeout: Duration::from_secs(1),
             request_timeout: Duration::from_secs(2),
             max_page_size: 100,
             allow_insecure_http: true,
+            ..CustomPrincipalDiscoveryConfig::default()
         }
     }
 
@@ -752,7 +749,7 @@ mod tests {
     #[tokio::test]
     async fn search_maps_kind_aware_entries_and_streams_user_group_cursors() {
         let (address, _state, _server) = start_server().await;
-        let discovery = CustomPrincipalDiscovery::new(config(&address)).unwrap();
+        let discovery = CustomPrincipalDiscovery::new(&config(&address)).unwrap();
         assert_eq!(discovery.provider(), "FED_CUSTOM");
 
         let page = discovery
@@ -774,10 +771,7 @@ mod tests {
         assert_eq!(group.kind, PrincipalKind::Group);
         assert_eq!(page.next_cursors.len(), 2);
 
-        let users_only = discovery
-            .discover(query("alice", &[PrincipalKind::User]))
-            .await
-            .unwrap();
+        let users_only = discovery.discover(query("alice", &[PrincipalKind::User])).await.unwrap();
         assert_eq!(users_only.principals.len(), 10);
         assert!(users_only.principals.iter().all(|p| p.kind == PrincipalKind::User));
         assert_eq!(users_only.next_cursors.len(), 1);
@@ -786,7 +780,7 @@ mod tests {
     #[tokio::test]
     async fn resolve_maps_exact_entry_and_reports_unknown_external_ids() {
         let (address, _state, _server) = start_server().await;
-        let discovery = CustomPrincipalDiscovery::new(config(&address)).unwrap();
+        let discovery = CustomPrincipalDiscovery::new(&config(&address)).unwrap();
         let principal = discovery
             .resolve_principal(&ExternalPrincipalRef {
                 provider_id: "dsp-directory".to_string(),
@@ -813,7 +807,7 @@ mod tests {
     #[tokio::test]
     async fn resolve_requires_configured_jwt_bearer_auth() {
         let (address, state, _server) = start_server().await;
-        let discovery = CustomPrincipalDiscovery::new(config(&address)).unwrap();
+        let discovery = CustomPrincipalDiscovery::new(&config(&address)).unwrap();
         assert!(discovery
             .resolve_principal(&ExternalPrincipalRef {
                 provider_id: "dsp-directory".to_string(),
@@ -828,33 +822,33 @@ mod tests {
     #[test]
     fn configuration_rejects_unsafe_or_incomplete_bindings() {
         let base = config("https://dsp.example.com");
-        assert!(CustomPrincipalDiscovery::new(base.clone()).is_ok());
+        assert!(CustomPrincipalDiscovery::new(&base).is_ok());
 
         let mut absolute_path = base.clone();
         absolute_path.request.path = "/api/dsp/search".to_string();
         assert!(matches!(
-            CustomPrincipalDiscovery::new(absolute_path),
+            CustomPrincipalDiscovery::new(&absolute_path),
             Err(PrincipalDiscoveryError::InvalidConfiguration(_))
         ));
 
         let mut bad_template = base.clone();
         bad_template.request.body_template = Some("not json".to_string());
         assert!(matches!(
-            CustomPrincipalDiscovery::new(bad_template),
+            CustomPrincipalDiscovery::new(&bad_template),
             Err(PrincipalDiscoveryError::InvalidConfiguration(_))
         ));
 
         let mut bad_array = base.clone();
         bad_array.response.array_path = "items".to_string();
         assert!(matches!(
-            CustomPrincipalDiscovery::new(bad_array),
+            CustomPrincipalDiscovery::new(&bad_array),
             Err(PrincipalDiscoveryError::InvalidConfiguration(_))
         ));
 
         let mut empty_token = base;
         empty_token.jwt_token = " ".to_string();
         assert!(matches!(
-            CustomPrincipalDiscovery::new(empty_token),
+            CustomPrincipalDiscovery::new(&empty_token),
             Err(PrincipalDiscoveryError::InvalidConfiguration(_))
         ));
     }

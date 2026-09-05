@@ -24,6 +24,7 @@ use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
 use super::{PolicyHandler, PrincipalHandler, PrincipalHandlerError};
+use crate::apm::MetricsRegistry;
 use crate::cache::IAuthorizationCache;
 use crate::config::{IdentityConfig, ScopeDeliveryConfig};
 use crate::model::access_context_v1::access_context_service_server::AccessContextService;
@@ -35,9 +36,7 @@ use crate::model::{
     AuthorizationConditions, AuthorizationDecision, AuthorizationRequest, AuthorizationScope,
     Effect, EvaluationContext, Role, UrnPattern,
 };
-use crate::utils::{
-    HttpMappingError, IdentityError, MetricsRegistry, RequestIdentity, ResolvedHttpRoute,
-};
+use crate::utils::{HttpMappingError, IdentityError, RequestIdentity, ResolvedHttpRoute};
 
 const CHECK_ROUTE: &str = "envoy.service.auth.v3.Authorization/Check";
 const RESOLVE_SCOPE_ROUTE: &str = "authguard.access.v1.AccessContextService/ResolveScope";

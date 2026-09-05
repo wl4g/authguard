@@ -1,4 +1,4 @@
-# Authguard Enterprise IAM Authorization System Design
+# Authguard - Enterprise IAM Authentication Authorization System Design
 
 - **Status:** Architecture Baseline
 - **Date:** 2026-09-03

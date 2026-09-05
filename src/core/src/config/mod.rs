@@ -99,6 +99,7 @@ mod tests {
         let mut config = AuthguardConfig::default();
         config.auth.principal_discovery.federated.keycloak =
             vec![KeycloakPrincipalDiscoveryConfig {
+                enabled: true,
                 discovery_id: "corporate-keycloak".to_string(),
                 base_url: "https://id.example.com".to_string(),
                 issuer: "https://id.example.com/realms/corporate".to_string(),
@@ -115,6 +116,7 @@ mod tests {
             ..LdapObjectMappingConfig::default()
         };
         config.auth.principal_discovery.federated.ldap = vec![LdapPrincipalDiscoveryConfig {
+            enabled: true,
             discovery_id: "corporate-ldap".to_string(),
             url: "ldaps://ldap.example.com:636".to_string(),
             issuer: "urn:identity:corporate-ldap".to_string(),
@@ -130,19 +132,33 @@ mod tests {
             },
             ..LdapPrincipalDiscoveryConfig::default()
         }];
-        config.auth.principal_discovery.federated.custom =
-            vec![CustomPrincipalDiscoveryConfig {
-                discovery_id: "dsp-directory".to_string(),
-                url: "https://dsp.example.com/identity".to_string(),
-                issuer: "https://dsp.example.com".to_string(),
-                jwt_token_file: "/run/secrets/dsp-jwt".to_string(),
-                ..CustomPrincipalDiscoveryConfig::default()
-            }];
+        config.auth.principal_discovery.federated.custom = vec![CustomPrincipalDiscoveryConfig {
+            enabled: true,
+            discovery_id: "dsp-directory".to_string(),
+            url: "https://dsp.example.com/identity".to_string(),
+            issuer: "https://dsp.example.com".to_string(),
+            jwt_token_file: "/run/secrets/dsp-jwt".to_string(),
+            ..CustomPrincipalDiscoveryConfig::default()
+        }];
 
         config.validate().expect("file-backed connector credentials are valid");
 
         config.auth.principal_discovery.federated.keycloak[0].client_secret =
             "ambiguous-inline-secret".to_string();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn skips_disabled_federated_connector_entries() {
+        let mut config = AuthguardConfig::default();
+        // Incomplete on purpose: a disabled entry must not be validated.
+        config.auth.principal_discovery.federated.keycloak =
+            vec![KeycloakPrincipalDiscoveryConfig::default()];
+        config.auth.principal_discovery.federated.ldap =
+            vec![LdapPrincipalDiscoveryConfig::default()];
+        config.auth.principal_discovery.federated.custom =
+            vec![CustomPrincipalDiscoveryConfig::default()];
+
+        config.validate().expect("disabled federated entries are skipped");
     }
 }

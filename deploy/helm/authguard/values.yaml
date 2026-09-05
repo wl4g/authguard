@@ -189,10 +189,10 @@ authguard:
           trusted_issuers: [https://idp.example.com/realms/example-corp]
           allow_insecure_http: false
         federated:
+          # Each connector entry supports `enabled: false`; production-grade
+          # commented examples live in etc/authguard.yaml.
           keycloak: []
           ldap: []
-          # In-house identity systems (e.g. an enterprise DSP directory)
-          # integrate via configurable request/response mapping + bearer JWT.
           custom: []
         scim:
           enabled: false

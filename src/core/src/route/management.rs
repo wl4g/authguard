@@ -12,9 +12,9 @@ use tower_http::timeout::TimeoutLayer;
 
 use super::admin::AdminRoutes;
 use super::middleware::{HttpMetrics, TraceContext};
+use crate::apm::MetricsRegistry;
 use crate::config::AuthguardConfig;
 use crate::handler::{ManagementHandler, PolicyHandler, PrincipalHandler};
-use crate::utils::MetricsRegistry;
 
 #[derive(Clone)]
 struct ManagementRouteState {

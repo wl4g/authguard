@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::apm::MetricsRegistry;
 use crate::cache::IAuthorizationCache;
 use crate::handler::PolicyHandler;
-use crate::utils::MetricsRegistry;
 
 #[derive(Clone)]
 pub struct ManagementHandler {

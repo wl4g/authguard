@@ -41,6 +41,39 @@ impl Default for TelemetryConfig {
     }
 }
 
+impl TelemetryConfig {
+    /// Builds the telemetry settings from the matching config sub-objects.
+    #[must_use]
+    pub fn from_settings(
+        server: &crate::config::ServerConfig,
+        logging: &crate::config::LoggingConfig,
+        otel: &crate::config::OtelConfig,
+    ) -> Self {
+        Self {
+            service_name: server.service_name.clone(),
+            environment: std::env::var("OTEL_RESOURCE_ATTRIBUTES")
+                .ok()
+                .and_then(|attributes| {
+                    find_resource_attribute(&attributes, "deployment.environment.name")
+                })
+                .unwrap_or_else(|| "production".to_string()),
+            env_filter: logging.level.clone(),
+            json: logging.mode.eq_ignore_ascii_case("JSON"),
+            otlp_endpoint: otel.enabled.then(|| otel.endpoint.clone()),
+            export_timeout: otel.timeout,
+            sample_rate: otel.sample_rate,
+            ..TelemetryConfig::default()
+        }
+    }
+}
+
+fn find_resource_attribute(attributes: &str, name: &str) -> Option<String> {
+    attributes.split(',').find_map(|entry| {
+        let (key, value) = entry.split_once('=')?;
+        (key.trim() == name).then(|| value.trim().to_string())
+    })
+}
+
 #[derive(Debug, Error)]
 pub enum TelemetryError {
     #[error("build OTLP trace exporter: {0}")]

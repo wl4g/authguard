@@ -5,14 +5,13 @@ use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
+use crate::apm::MetricsRegistry;
 use crate::model::{
     Action, AuthorizationDecision, AuthorizationRequest, Policy, PrincipalStatus, Role,
     RoleBinding, UrnPattern,
 };
 use crate::storage::{PolicyRepository, PolicyRevisionConflict, PrincipalRepository};
-use crate::utils::{
-    resolve_route, CompiledHttpRoute, HttpMappingError, MetricsRegistry, ResolvedHttpRoute,
-};
+use crate::utils::{resolve_route, CompiledHttpRoute, HttpMappingError, ResolvedHttpRoute};
 
 use super::authorization::{AuthorizationEvaluator, CompiledRoleBinding};
 

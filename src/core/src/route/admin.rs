@@ -4,8 +4,8 @@ use axum::Router;
 use super::middleware::AdminAuthenticator;
 use super::policy::PolicyRoutes;
 use super::principal::PrincipalRoutes;
+use crate::apm::MetricsRegistry;
 use crate::handler::{PolicyHandler, PrincipalHandler};
-use crate::utils::MetricsRegistry;
 
 /// Composes authenticated control-plane resource routes.
 pub struct AdminRoutes {

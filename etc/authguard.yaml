@@ -67,12 +67,65 @@ auth:
       trusted_issuers: [https://idp.example.com/realms/example-corp]
       allow_insecure_http: false
     federated:
+      # Disabled federated providers are ignored at startup and by validation.
+      # Keycloak searches the Admin REST API with a confidential OAuth 2.0
+      # client (client_credentials grant). The canonical `issuer` must equal
+      # the OIDC `iss` verified by Envoy so `(issuer, external_id)` converges
+      # with JIT/SCIM; when omitted it is derived from `base_url` + `realm`.
+      # keycloak:
+      #   - enabled: false
+      #     discovery_id: corporate-keycloak
+      #     base_url: https://sso.example.com
+      #     realm: example-corp
+      #     issuer: https://sso.example.com/realms/example-corp
+      #     # Service account with view-users/view-groups realm-management roles.
+      #     client_id: authguard-search
+      #     client_secret: ""  # or client_secret_file: /run/secrets/keycloak-client-secret
+      #     connect_timeout: 3s
+      #     request_timeout: 5s
+      #     max_page_size: 100
+      #     allow_insecure_http: false
       keycloak: []
+      # LDAP searches through RFC 4511 with RFC 4515 filters and RFC 2696
+      # paged results. Runtime query values are always RFC 4515 escaped.
+      # `object_filter` is a static administrator-supplied filter, e.g.
+      # `(&(objectClass=person)(cn={0}))`; `{0}` is replaced by the escaped
+      # search text. Bind with a read-only service account or GSSAPI (omit
+      # bind_dn/bind_password and configure a SASL mechanism via env).
+      # ldap:
+      #   - enabled: false
+      #     discovery_id: corporate-ldap
+      #     url: ldaps://ldap.example.com:636
+      #     issuer: https://ldap.example.com
+      #     base_dn: dc=example,dc=com
+      #     bind_dn: cn=authguard-readonly,ou=service,dc=example,dc=com
+      #     bind_password: ""  # or bind_password_file: /run/secrets/ldap-bind-password
+      #     user:
+      #       search_base: ou=people
+      #       object_filter: (&(objectClass=person)(|(uid={0})(mail={0})))
+      #       id_attribute: uid
+      #       name_attribute: cn
+      #       display_name_attribute: displayName
+      #       email_attribute: mail
+      #       enabled_attribute: ""  # e.g. shadowExpire or an AD userAccountControl bit
+      #       search_attributes: [uid, mail]
+      #     group:
+      #       search_base: ou=groups
+      #       object_filter: (&(objectClass=groupOfNames)(cn={0}))
+      #       id_attribute: cn
+      #       name_attribute: cn
+      #       display_name_attribute: displayName
+      #       search_attributes: [cn]
+      #     connect_timeout: 3s
+      #     request_timeout: 5s
+      #     max_page_size: 100
+      #     allow_insecure: false
       ldap: []
       # In-house identity systems (e.g. an enterprise DSP directory) integrate
       # through configurable request/response mapping plus a bearer JWT.
       # custom:
-      #   - discovery_id: dsp-directory
+      #   - enabled: false
+      #     discovery_id: dsp-directory
       #     url: https://dsp.example.com/identity
       #     issuer: https://dsp.example.com
       #     jwt_token: ""  # or jwt_token_file: /run/secrets/dsp-jwt

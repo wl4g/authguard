@@ -4,22 +4,16 @@ use anyhow::{anyhow, Context as _};
 use axum::Router;
 use tonic::transport::Server;
 
+use crate::apm::{APMComponent, MetricsRegistry};
 use crate::cache::{self, IAuthorizationCache};
 use crate::config::AuthguardConfig;
 use crate::handler::{
     DefaultAuthorizationHandler, ManagementHandler, PolicyHandler, PrincipalHandler,
 };
 use crate::model::AccessContextSigner;
-use crate::principal::{
-    CustomPrincipalDiscovery, CustomPrincipalDiscoveryConfig, CustomRequestBinding,
-    CustomResponseMapping, IPrincipalDiscovery, JitPrincipalDiscovery, KeycloakPrincipalDiscovery,
-    KeycloakPrincipalDiscoveryConfig, LdapObjectMapping, LdapPrincipalDiscovery,
-    LdapPrincipalDiscoveryConfig, PrincipalDiscoveryError, PrincipalSearchDiscovery,
-    PrincipalSearchPage, PrincipalSearchQuery, ScimPrincipalDiscovery,
-};
+use crate::principal::PrincipalDiscoveryComponent;
 use crate::route::{AuthorizationRoutes, ManagementRoutes};
 use crate::storage;
-use crate::utils::{init_telemetry, MetricsRegistry};
 
 pub struct AuthguardServer {
     config: AuthguardConfig,
@@ -57,21 +51,17 @@ impl AuthguardServer {
     ///
     /// Returns an error when telemetry, storage, cache, listener binding, or serving fails.
     pub async fn run(self) -> anyhow::Result<()> {
-        let telemetry = init_telemetry(&self.config.telemetry_config())?;
+        let apm =
+            APMComponent::open(&self.config.server, &self.config.logging, &self.config.mgmt.otel)
+                .context("configure APM telemetry")?;
         tracing::info!(
             service.name = %self.config.server.service_name,
             authguard.storage.provider = %self.config.storage.provider,
             authguard.cache.provider = %self.config.cache.provider,
             authguard.management.enabled = self.config.mgmt.enabled,
-            authguard.principal.jit_enabled = self.config.auth.principal_discovery.jit.enabled,
-            authguard.principal.federated_provider_count =
-                self.config.auth.principal_discovery.federated.keycloak.len()
-                    + self.config.auth.principal_discovery.federated.ldap.len()
-                    + self.config.auth.principal_discovery.federated.custom.len(),
-            authguard.principal.scim_enabled = self.config.auth.principal_discovery.scim.enabled,
             "starting Authguard runtime"
         );
-        let runtime = RuntimeComponents::open(&self.config).await?;
+        let runtime = RuntimeComponents::open(&self.config, apm.metrics()).await?;
         if self.config.auth.admin_token.is_empty() {
             tracing::warn!("control-plane APIs are disabled because auth.admin_token is empty");
         }
@@ -94,7 +84,7 @@ impl AuthguardServer {
             Ok(()) => tracing::info!("Authguard runtime stopped gracefully"),
             Err(error) => tracing::error!(%error, "Authguard runtime stopped with an error"),
         }
-        telemetry.shutdown();
+        apm.shutdown();
         result
     }
 
@@ -303,29 +293,13 @@ impl ProcessShutdownSignal {
 }
 
 impl RuntimeComponents {
-    /// Adds one search provider, rejecting duplicate protocol identifiers.
+    /// Opens the runtime dependencies from their config sub-objects.
     ///
-    /// Each `FED_KEYCLOAK`/`FED_LDAP` protocol must be configured at most
-    /// once, because search filtering and resolution dispatch on the
-    /// protocol identifier.
-    fn push_search_provider<T>(
-        providers: &mut Vec<Arc<PrincipalSearchDiscovery>>,
-        provider: T,
-    ) -> anyhow::Result<()>
-    where
-        T: IPrincipalDiscovery<PrincipalSearchQuery, Output = PrincipalSearchPage>,
-    {
-        let protocol = provider.provider();
-        if providers.iter().any(|existing| existing.provider() == protocol) {
-            anyhow::bail!(PrincipalDiscoveryError::InvalidConfiguration(format!(
-                "search provider protocol `{protocol}` is already configured"
-            )));
-        }
-        providers.push(Arc::new(provider));
-        Ok(())
-    }
-
-    async fn open(config: &AuthguardConfig) -> anyhow::Result<Self> {
+    /// Each component package owns its own startup: storage and cache open
+    /// themselves, principal discovery is assembled by
+    /// [`PrincipalDiscoveryComponent`], and the policy runtime opens against
+    /// the shared repositories.
+    async fn open(config: &AuthguardConfig, metrics: MetricsRegistry) -> anyhow::Result<Self> {
         let cache = cache::open(&config.cache).await?;
         tracing::info!(
             authguard.cache.provider = %config.cache.provider,
@@ -336,140 +310,11 @@ impl RuntimeComponents {
             authguard.storage.provider = %config.storage.provider,
             "authorization storage is ready"
         );
-        let metrics = MetricsRegistry::default();
-        let jit = config
-            .auth
-            .principal_discovery
-            .jit
-            .enabled
-            .then(|| {
-                let jit = &config.auth.principal_discovery.jit;
-                JitPrincipalDiscovery::new(
-                    jit.discovery_id.clone(),
-                    jit.trusted_issuers.clone(),
-                    jit.allow_insecure_http,
-                )
-            })
-            .transpose()
-            .context("configure OIDC JIT Principal discovery")?;
-        let mut discoveries: Vec<Arc<PrincipalSearchDiscovery>> = Vec::new();
-        for keycloak in &config.auth.principal_discovery.federated.keycloak {
-            let mut provider = KeycloakPrincipalDiscoveryConfig::new(
-                keycloak.discovery_id.clone(),
-                keycloak.base_url.clone(),
-                keycloak.realm.clone(),
-            );
-            provider.issuer_url = (!keycloak.issuer.is_empty()).then(|| keycloak.issuer.clone());
-            provider.connect_timeout = keycloak.connect_timeout;
-            provider.request_timeout = keycloak.request_timeout;
-            provider.max_page_size = keycloak.max_page_size;
-            provider.allow_insecure_http = keycloak.allow_insecure_http;
-            let provider = KeycloakPrincipalDiscovery::with_client_credentials(
-                provider,
-                keycloak.client_id.clone(),
-                Self::credential(
-                    &keycloak.client_secret,
-                    &keycloak.client_secret_file,
-                    "Keycloak client secret",
-                )?,
-            )
-            .context("configure Keycloak Principal discovery")?;
-            Self::push_search_provider(&mut discoveries, provider)?;
-        }
-        for ldap in &config.auth.principal_discovery.federated.ldap {
-            let object_mapping = |mapping: &crate::config::LdapObjectMappingConfig| {
-                let mut mapped = LdapObjectMapping::new(
-                    mapping.search_base.clone(),
-                    mapping.object_filter.clone(),
-                    mapping.id_attribute.clone(),
-                    mapping.name_attribute.clone(),
-                    mapping.search_attributes.clone(),
-                );
-                mapped.display_name_attribute = mapping.display_name_attribute.clone();
-                mapped.email_attribute = mapping.email_attribute.clone();
-                mapped.enabled_attribute = mapping.enabled_attribute.clone();
-                mapped
-            };
-            let mut provider = LdapPrincipalDiscoveryConfig::new(
-                ldap.discovery_id.clone(),
-                ldap.url.clone(),
-                ldap.issuer.clone(),
-                ldap.base_dn.clone(),
-                ldap.bind_dn.clone(),
-                Self::credential(
-                    &ldap.bind_password,
-                    &ldap.bind_password_file,
-                    "LDAP bind password",
-                )?,
-                object_mapping(&ldap.user),
-                object_mapping(&ldap.group),
-            );
-            provider.connect_timeout = ldap.connect_timeout;
-            provider.request_timeout = ldap.request_timeout;
-            provider.max_page_size = ldap.max_page_size;
-            provider.allow_insecure = ldap.allow_insecure;
-            let provider = LdapPrincipalDiscovery::new(provider)
-                .context("configure LDAP Principal discovery")?;
-            Self::push_search_provider(&mut discoveries, provider)?;
-        }
-        for custom in &config.auth.principal_discovery.federated.custom {
-            let request = CustomRequestBinding {
-                path: custom.request.path.clone(),
-                text_param: custom.request.text_param.clone(),
-                offset_param: custom.request.offset_param.clone(),
-                limit_param: custom.request.limit_param.clone(),
-                external_id_param: custom.request.external_id_param.clone(),
-                body_template: custom.request.body_template.clone(),
-            };
-            let response = CustomResponseMapping {
-                array_path: custom.response.array_path.clone(),
-                id_attr: custom.response.id_attr.clone(),
-                display_name_attr: custom.response.display_name_attr.clone(),
-                username_attr: custom.response.username_attr.clone(),
-                email_attr: custom.response.email_attr.clone(),
-                enabled_attr: custom.response.enabled_attr.clone(),
-                kind_attr: custom.response.kind_attr.clone(),
-            };
-            let mut provider = CustomPrincipalDiscoveryConfig::new(
-                custom.discovery_id.clone(),
-                custom.url.clone(),
-                custom.issuer.clone(),
-                Self::credential(
-                    &custom.jwt_token,
-                    &custom.jwt_token_file,
-                    "custom JWT token",
-                )?,
-                request,
-                response,
-            );
-            provider.connect_timeout = custom.connect_timeout;
-            provider.request_timeout = custom.request_timeout;
-            provider.max_page_size = custom.max_page_size;
-            provider.allow_insecure_http = custom.allow_insecure_http;
-            let provider = CustomPrincipalDiscovery::new(provider)
-                .context("configure custom Principal discovery")?;
-            Self::push_search_provider(&mut discoveries, provider)?;
-        }
-        let federated_provider_count = discoveries.len();
-        let scim = config
-            .auth
-            .principal_discovery
-            .scim
-            .enabled
-            .then(|| {
-                let scim = &config.auth.principal_discovery.scim;
-                ScimPrincipalDiscovery::new(scim.discovery_id.clone(), scim.issuer.clone())
-            })
-            .transpose()
-            .context("configure SCIM Principal discovery")?;
-        let principals =
-            PrincipalHandler::new(repositories.principals.clone(), jit, discoveries, scim);
-        tracing::info!(
-            authguard.principal.jit_enabled = config.auth.principal_discovery.jit.enabled,
-            authguard.principal.federated_provider_count = federated_provider_count,
-            authguard.principal.scim_enabled = config.auth.principal_discovery.scim.enabled,
-            "principal discovery providers configured"
-        );
+        let principals = PrincipalDiscoveryComponent::new(
+            repositories.principals.clone(),
+            &config.auth.principal_discovery,
+        )?
+        .handler();
         let policy = PolicyHandler::open(
             repositories.policy,
             repositories.principals,
@@ -496,20 +341,6 @@ impl RuntimeComponents {
                 .context("configure direct access-context signing key")?,
         );
         Ok(Self { policy, principals, authorization, cache, metrics })
-    }
-
-    fn credential(value: &str, file: &str, name: &str) -> anyhow::Result<String> {
-        if !value.is_empty() {
-            return Ok(value.to_string());
-        }
-        let value = std::fs::read_to_string(file)
-            .with_context(|| format!("read {name} file"))?
-            .trim_end_matches(['\r', '\n'])
-            .to_string();
-        if value.is_empty() {
-            return Err(anyhow!("{name} file is empty"));
-        }
-        Ok(value)
     }
 }
 

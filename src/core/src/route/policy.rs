@@ -9,13 +9,13 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 
+use crate::apm::MetricsRegistry;
 use crate::handler::{PolicyHandler, PolicyHandlerError, PrincipalHandler};
 use crate::model::{Action, AuthorizationRequest, Policy, ResourceUrn, Role, RoleBinding};
 use crate::model::{
     ApiError, AuthorizePayload, AuthorizeResponse, ResourceCollectionResponse, ResourceResponse,
     StatusResponse,
 };
-use crate::utils::MetricsRegistry;
 
 #[derive(Clone)]
 struct PolicyRouteState {

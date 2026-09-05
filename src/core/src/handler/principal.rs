@@ -155,9 +155,8 @@ impl PrincipalHandler {
         if self.federated.is_empty() {
             return Err(PrincipalHandlerError::ProviderUnavailable);
         }
-        let selected =
-            Self::selected_search_providers(&self.federated, &query.provider_ids)
-                .map_err(PrincipalHandlerError::Discovery)?;
+        let selected = Self::selected_search_providers(&self.federated, &query.provider_ids)
+            .map_err(PrincipalHandlerError::Discovery)?;
         let mut tasks = JoinSet::new();
         for provider in selected {
             let query = query.clone();
@@ -167,10 +166,9 @@ impl PrincipalHandler {
 
         let mut pages = BTreeMap::new();
         while let Some(result) = tasks.join_next().await {
-            let (protocol, page) =
-                result.map_err(|error| PrincipalHandlerError::Discovery(
-                    PrincipalDiscoveryError::Task(error.to_string()),
-                ))??;
+            let (protocol, page) = result.map_err(|error| {
+                PrincipalHandlerError::Discovery(PrincipalDiscoveryError::Task(error.to_string()))
+            })??;
             pages.insert(protocol, page);
         }
 
@@ -206,9 +204,11 @@ impl PrincipalHandler {
             .federated
             .iter()
             .find(|provider| provider.provider() == reference.provider_id)
-            .ok_or_else(|| PrincipalHandlerError::Discovery(
-                PrincipalDiscoveryError::UnknownProvider(reference.provider_id.clone()),
-            ))?;
+            .ok_or_else(|| {
+                PrincipalHandlerError::Discovery(PrincipalDiscoveryError::UnknownProvider(
+                    reference.provider_id.clone(),
+                ))
+            })?;
         let external = provider
             .resolve_principal(reference)
             .await?
@@ -341,13 +341,11 @@ impl PrincipalHandler {
         filter
             .iter()
             .map(|protocol| {
-                let mut matching = providers
-                    .iter()
-                    .filter(|provider| provider.provider() == protocol)
-                    .cloned();
-                let selected = matching.next().ok_or_else(|| {
-                    PrincipalDiscoveryError::UnknownProvider(protocol.clone())
-                })?;
+                let mut matching =
+                    providers.iter().filter(|provider| provider.provider() == protocol).cloned();
+                let selected = matching
+                    .next()
+                    .ok_or_else(|| PrincipalDiscoveryError::UnknownProvider(protocol.clone()))?;
                 if matching.next().is_some() {
                     return Err(PrincipalDiscoveryError::InvalidConfiguration(format!(
                         "duplicate search provider protocol `{protocol}`"
@@ -365,10 +363,7 @@ impl PrincipalHandler {
     fn deduplicate_principals(principals: &mut Vec<PrincipalProjection>) {
         let mut unique = BTreeMap::new();
         for principal in principals.drain(..) {
-            let key = (
-                principal.reference.issuer.clone(),
-                principal.reference.external_id.clone(),
-            );
+            let key = (principal.reference.issuer.clone(), principal.reference.external_id.clone());
             unique.entry(key).or_insert(principal);
         }
         principals.extend(unique.into_values());

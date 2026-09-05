@@ -13,8 +13,8 @@ use opentelemetry_http::HeaderExtractor;
 use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
+use crate::apm::MetricsRegistry;
 use crate::model::ApiError;
-use crate::utils::MetricsRegistry;
 
 #[derive(Clone)]
 pub struct AdminAuthenticator {

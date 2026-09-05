@@ -12,7 +12,7 @@ use authguard_core::server::AuthguardServer;
 use authguard_core::storage::{
     PolicyRepository, PrincipalRepository, SqliteAuthorizationRepository,
 };
-use authguard_core::utils::MetricsRegistry;
+use authguard_core::MetricsRegistry;
 use authguard_core::{
     AccessContext, Action, AuthorizationConditionSpec, Effect, HttpRouteMatcher, Policy, Principal,
     PrincipalKind, PrincipalStatus, Role, RoleBinding,
