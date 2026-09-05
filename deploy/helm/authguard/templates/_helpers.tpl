@@ -48,6 +48,10 @@ app.kubernetes.io/component: server
 {{- default (printf "%s-jwt-jwks" (include "authguard.fullname" .)) .Values.authguardIntegration.jwt.localJWKS.existingConfigMap -}}
 {{- end -}}
 
+{{- define "authguard.businessTokenSecretName" -}}
+{{- default (printf "%s-business-token" (include "authguard.fullname" .)) .Values.authguard.businessToken.existingSecret -}}
+{{- end -}}
+
 {{- define "authguard.redisFullname" -}}
 {{- $redis := index .Values "redis-cluster" -}}
 {{- default (printf "%s-redis-cluster" .Release.Name | trunc 63 | trimSuffix "-") $redis.fullnameOverride -}}

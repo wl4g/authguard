@@ -68,6 +68,9 @@ User or workload
   -> Envoy removes client x-authguard-* headers and injects exactly one of:
        x-authguard-context       HMAC-SHA256-signed short-lived allow/deny URN context
        x-authguard-scope-token   short-lived opaque token for a large scope
+  -> when auth.business_token.enabled, Authguard also re-signs a short-lived
+       internal business JWT (RS256, authguardOrigin: true) and overwrites the
+       authorization header; business workloads verify with the public key only
   -> workload adapter IAccessContextResolver
        HeaderAccessContextResolver decodes the Envoy-injected context
        GrpcAccessContextResolver calls Authguard :8081 gRPC ResolveScope
@@ -94,6 +97,11 @@ and accepts no separate issuer, subject, group, or MFA claim headers.
 `auth.scope_delivery.direct_urn_limit` selects direct context versus scope token.
 Both forms are short lived, carry `policy_revision`, are action-bound, and fail closed when
 missing, expired, or mismatched.
+The optional `auth.business_token` re-signs an RS256 JWT on every ALLOW:
+`iss: authguard`, `sub: external_id`, `principal_id`, `authguard_group_ids`,
+`authguardOrigin: true`, `iat`/`exp` (TTL `scope_token_ttl`), plus copied scalar
+claims. The RSA private key stays in Authguard; Envoy's original JWT verification
+is unchanged, and disabled mode keeps the original identity token stripped.
 The two gRPC services have distinct listeners: Envoy Check uses `8080`, while
 SDK ResolveScope uses `8081`. The default NetworkPolicy independently restricts
 them to Envoy and `authguard.io/scope-client` selectors, so workloads cannot
@@ -143,7 +151,9 @@ src/core/src
   principal/
     mod.rs       shared discovery models, traits, and errors
     jit.rs       trusted OIDC just-in-time projection
-    federation/   Keycloak, LDAP, and configurable HTTP/JWT federated search
+    keycloak.rs  Keycloak Admin API search connector
+    ldap.rs      direct RFC 4511 LDAP connector
+    custom.rs    configurable HTTP/JWT in-house identity API connector
     scim.rs      RFC 7643 User/Group subset ingestion
   storage/      SQLite/PostgreSQL repositories and private row records
   cache/        Memory/Redis opaque scope-token context cache

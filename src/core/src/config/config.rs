@@ -102,14 +102,34 @@ pub struct AuthConfig {
     pub identity: IdentityConfig,
     pub scope_delivery: ScopeDeliveryConfig,
     pub principal_discovery: PrincipalDiscoveryConfig,
+    pub business_token: BusinessTokenConfig,
     pub admin_token: String,
+}
+
+/// Re-signing of the short-lived internal business JWT.
+///
+/// On every allowed check Authguard re-signs a JWT carrying
+/// `authguardOrigin: true` and overwrites the `authorization` header for the
+/// business microservice. Authguard holds the RSA private key; workloads only
+/// hold the paired public key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BusinessTokenConfig {
+    pub enabled: bool,
+    #[serde(with = "humantime_serde")]
+    pub ttl: Duration,
+    /// PKCS#8 PEM RSA private key, or `private_key_file` referencing a Secret.
+    pub private_key: String,
+    pub private_key_file: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PrincipalDiscoveryConfig {
     pub jit: JitPrincipalDiscoveryConfig,
-    pub federated: FederatedPrincipalDiscoveryConfig,
+    pub keycloak: Vec<KeycloakPrincipalDiscoveryConfig>,
+    pub ldap: Vec<LdapPrincipalDiscoveryConfig>,
+    pub custom: Vec<CustomPrincipalDiscoveryConfig>,
     pub scim: ScimPrincipalDiscoveryConfig,
 }
 
@@ -120,14 +140,6 @@ pub struct JitPrincipalDiscoveryConfig {
     pub discovery_id: String,
     pub trusted_issuers: Vec<String>,
     pub allow_insecure_http: bool,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct FederatedPrincipalDiscoveryConfig {
-    pub keycloak: Vec<KeycloakPrincipalDiscoveryConfig>,
-    pub ldap: Vec<LdapPrincipalDiscoveryConfig>,
-    pub custom: Vec<CustomPrincipalDiscoveryConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -418,6 +430,17 @@ impl Default for OtelConfig {
 impl Default for LoggingConfig {
     fn default() -> Self {
         Self { mode: "JSON".to_string(), level: "info,tower_http=info".to_string() }
+    }
+}
+
+impl Default for BusinessTokenConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            ttl: Duration::from_secs(60),
+            private_key: String::new(),
+            private_key_file: String::new(),
+        }
     }
 }
 

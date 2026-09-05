@@ -5,9 +5,21 @@
 //! stable key: `OpenID` Connect defines `iss` + `sub` as the only locally unique
 //! and never-reassigned identifier pair.
 //! <https://openid.net/specs/openid-connect-core-1_0.html#ClaimStability>
+//!
+//! Every discovery source is a flat sibling module here: JIT projection,
+//! SCIM ingestion, and the federated search connectors. Keycloak speaks its
+//! Admin REST API, LDAP speaks RFC 4511, and in-house systems (e.g. an
+//! enterprise DSP directory) are integrated through the configurable
+//! HTTP/JWT connector. There is no RFC standardizing search across
+//! heterogeneous identity stores, so each connector implements the
+//! protocol-neutral [`IPrincipalDiscovery`] contract directly instead of
+//! wrapping a shared protocol implementation.
+//! <https://www.rfc-editor.org/rfc/rfc4511.html>
 
-mod federation;
+mod custom;
 mod jit;
+mod keycloak;
+mod ldap;
 mod scim;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -22,10 +34,10 @@ use thiserror::Error;
 use crate::handler::PrincipalHandler;
 
 pub use crate::model::PrincipalKind;
-pub use federation::{
-    CustomPrincipalDiscovery, KeycloakPrincipalDiscovery, LdapPrincipalDiscovery,
-};
+pub use custom::CustomPrincipalDiscovery;
 pub use jit::{JitPrincipalDiscovery, PrincipalProjectionError};
+pub use keycloak::KeycloakPrincipalDiscovery;
+pub use ldap::LdapPrincipalDiscovery;
 pub use scim::{
     ScimGroupResource, ScimPrincipalDiscovery, ScimProjectionEvent, ScimRefreshRequest,
     ScimUserResource,
@@ -360,7 +372,7 @@ impl PrincipalDiscoveryComponent {
             .transpose()
             .context("configure OIDC JIT Principal discovery")?;
         let mut federated: Vec<Arc<PrincipalSearchDiscovery>> = Vec::new();
-        for keycloak in config.federated.keycloak.iter().filter(|entry| entry.enabled) {
+        for keycloak in config.keycloak.iter().filter(|entry| entry.enabled) {
             let secret = Self::credential(
                 &keycloak.client_secret,
                 &keycloak.client_secret_file,
@@ -374,7 +386,7 @@ impl PrincipalDiscoveryComponent {
             .context("configure Keycloak Principal discovery")?;
             Self::add_search_provider(&mut federated, provider)?;
         }
-        for ldap in config.federated.ldap.iter().filter(|entry| entry.enabled) {
+        for ldap in config.ldap.iter().filter(|entry| entry.enabled) {
             let password = Self::credential(
                 &ldap.bind_password,
                 &ldap.bind_password_file,
@@ -386,7 +398,7 @@ impl PrincipalDiscoveryComponent {
                 .context("configure LDAP Principal discovery")?;
             Self::add_search_provider(&mut federated, provider)?;
         }
-        for custom in config.federated.custom.iter().filter(|entry| entry.enabled) {
+        for custom in config.custom.iter().filter(|entry| entry.enabled) {
             let token =
                 Self::credential(&custom.jwt_token, &custom.jwt_token_file, "custom JWT token")?;
             let mut resolved = custom.clone();
@@ -445,7 +457,7 @@ impl PrincipalDiscoveryComponent {
     }
 
     /// Resolves one file-or-inline credential value.
-    fn credential(value: &str, file: &str, name: &str) -> anyhow::Result<String> {
+    pub(crate) fn credential(value: &str, file: &str, name: &str) -> anyhow::Result<String> {
         if !value.is_empty() {
             return Ok(value.to_string());
         }

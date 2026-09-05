@@ -97,17 +97,46 @@ authguard:
   config:
     auth:
       principal_discovery:
-        federated:
-          keycloak:
-            - client_secret: ""
-              client_secret_file: /etc/authguard/principal-discovery/keycloak-client-secret
-          ldap:
-            - bind_password: ""
-              bind_password_file: /etc/authguard/principal-discovery/ldap-bind-password
+        keycloak:
+          - client_secret: ""
+            client_secret_file: /etc/authguard/principal-discovery/keycloak-client-secret
+        ldap:
+          - bind_password: ""
+            bind_password_file: /etc/authguard/principal-discovery/ldap-bind-password
 ```
 
 These connectors run only for management-plane discovery/materialization; the
 authorization data path never waits on Keycloak or LDAP.
+
+## Business token
+
+On every allowed request Authguard can re-sign a short-lived internal business
+JWT (RS256) carrying `authguardOrigin: true` and overwrite the `authorization`
+header for the upstream microservice. The RSA private key stays in Authguard;
+business workloads verify with the paired public key only (a
+`BusinessTokenSigner` exposes it as PKCS#1 PEM for bootstrap tooling). Envoy
+still verifies the original client credential per its standard JWT/OIDC
+`SecurityPolicy`.
+
+Enable it and provide the PKCS#8 PEM private key, either in an existing Secret
+or inline (intended only for local rendering):
+
+```yaml
+authguard:
+  config:
+    auth:
+      business_token:
+        enabled: true
+        ttl: 60s
+  businessToken:
+    existingSecret: authguard-business-token   # key: rsa-private-key
+    # privateKey: |                            # alternative, local rendering only
+    #   -----BEGIN PRIVATE KEY-----
+```
+
+The chart injects `AUTHGUARD__AUTH__BUSINESS_TOKEN__PRIVATE_KEY` from the
+Secret; enabling the feature without a key fails rendering. Disabled (the
+default) keeps the original identity token stripped without replacement.
 
 ## Cache
 

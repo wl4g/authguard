@@ -82,6 +82,7 @@ async fn runtime(scope_delivery: ScopeDeliveryConfig) -> TestRuntime {
         IdentityConfig::default(),
         scope_delivery,
         AccessContextSigner::new(CONTEXT_SIGNING_KEY).expect("test signer"),
+        None,
     );
     TestRuntime { policy, principals, authorization, cache, metrics, repository }
 }

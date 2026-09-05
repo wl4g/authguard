@@ -26,10 +26,9 @@ src/core/src/
   principal/
     mod.rs               shared discovery models, traits, and errors
     jit.rs               trusted OIDC just-in-time projection
-    federation/
-      mod.rs             protocol-neutral federated search composition
-      keycloak.rs        Keycloak Admin API connector
-      ldap.rs            direct RFC 4511 LDAP connector
+    keycloak.rs          Keycloak Admin API search connector
+    ldap.rs              direct RFC 4511 LDAP connector
+    custom.rs            configurable HTTP/JWT in-house identity API connector
     scim.rs              RFC 7643 User/Group subset ingestion
   storage/               SQLite/PostgreSQL repositories and private row records
   cache/                 Memory/Redis opaque scope-token context cache
@@ -113,7 +112,12 @@ The identity ingress accepts only the configured JWT token header after Envoy
 has verified issuer, audience, signature, and expiry. JWT mode forwards the
 Bearer token; OIDC mode forwards Envoy's verified ID token. Authguard decodes
 claims from that verified token and never trusts separate client-controlled
-issuer, subject, group, or MFA claim headers.
+issuer, subject, group, or MFA claim headers. Optionally
+(`auth.business_token.enabled`) every ALLOW re-signs a short-lived internal
+business JWT (RS256, `authguardOrigin: true`) and overwrites the authorization
+header for the upstream microservice: the RSA private key stays in Authguard,
+business workloads verify with the paired public key only, and Envoy's standard
+JWT verification is unchanged.
 
 ## Run
 

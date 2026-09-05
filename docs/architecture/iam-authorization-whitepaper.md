@@ -1,4 +1,4 @@
-# Authguard - Enterprise IAM Authentication Authorization System Design
+# Authguard - Universal Enterprise IAM Authentication Resources Level Authorization System Design
 
 - **Status:** Architecture Baseline
 - **Date:** 2026-09-03
@@ -64,7 +64,71 @@ Envoy Proxy data plane, and one Authguard image. Authguard does not reimplement
 a general API gateway or copy evaluators into business services. Workloads only
 consume trusted access context through adapters.
 
-### 1.1 Minimal model
+### 1.1 Global physical call view
+
+- Control plane (B2B scenario Pre-Assign-Authz): an administrator grants Bob rights
+before Bob has ever accessed an application:
+
+```text
+Admin UI/API: "search Bob"
+  │  POST /adm/v1/principal-discovery/search          (parallel pull)
+  ▼
+federation fan-out:
+  KeycloakPrincipalDiscovery ─▶ Keycloak Admin API
+  LdapPrincipalDiscovery      ─▶ LDAP (RFC 4511)
+  CustomPrincipalDiscovery    ─▶ HTTP + pre-issued bearer JWT
+  │  candidates: (issuer, external_id) + display metadata, not materialized yet
+  ▼
+POST /adm/v1/principal-discovery/materialize
+  └─▶ server-side re-resolve (anti-spoofing) ─▶ upsert iam_principal
+POST /adm/v1/role-bindings
+  └─▶ iam_role_binding(effect + resource URN + conditions)
+
+converge on the same iam_principal:
+  SCIM push (RFC 7643/7644) ─▶ IdP lifecycle events (pre-provision / disable)
+  JIT projection (data plane) ─▶ first verified request
+```
+
+- Data plane (one business request from Bob):
+
+```text
+Bob ─ (Windows/macOS AD login with Kerberos TGT ─▶ SSO ─▶ IdP/DSP/Keycloak get access jwt token)
+  │
+  ▼
+Envoy Gateway: verify JWT (iss, aud, JWKS)
+  │
+  ▼ gRPC ext_authz
+Authguard:
+  · db: load policies from iam_principal projection + iam_role/binding
+  · route_matchers: validate method / path / query params / path params
+  · conditions: validate headers / MFA / trusted claims
+  │
+  ▼ ALLOW
+  ├─▶ small lists: x-authguard-context header (direct allow/deny URNs)
+  └─▶ large lists: x-authguard-scope-token ─▶ Redis IAuthorizationCache
+  └─▶ optional business JWT: Authguard re-signs an RS256 JWT carrying
+      `authguardOrigin: true` and overwrites the authorization header
+  │
+  ▼
+Envoy forwards the request
+  │
+  ▼
+Business Microservice
+  │  adapter SDK: IAccessContextResolver
+  │    HeaderAccessContextResolver ─▶ read direct header
+  │    GrpcAccessContextResolver   ─▶ Authguard ResolveScope (large lists)
+  │  optional: verify the business JWT with the Authguard public key
+  ▼
+SQL WHERE scope ─▶ row-level fine-grained data permissions
+```
+
+Both sides converge on the same `iam_principal`: control-plane pre-authorization
+and data-plane JIT projection materialize only the stable identifier and display
+metadata of a trusted identity. The data-plane hot path never calls back into an
+IdP / LDAP / SCIM; adapters fail closed when scope resolution or SQL compilation
+fails.
+
+### 1.2 Minimal model
 
 ```text
 principal(USER / WORKLOAD / GROUP)
@@ -97,7 +161,7 @@ Wildcard rules must remain small and predictable:
 This restriction is what makes binding patterns safe to compile into SQL
 predicates.
 
-### 1.2 A minimal authorization story
+### 1.3 A minimal authorization story
 
 Alice signs in through an OIDC provider. The provider proves Alice's identity;
 it does not decide which business resources she may access. After Envoy has
@@ -457,6 +521,15 @@ POST /adm/v1/role-bindings
 
 External candidates never become binding targets directly. Materialization
 produces the stable internal `principal_id` referenced by `iam_role_binding`.
+
+At most **one active connector per protocol** (`FED_KEYCLOAK`, `FED_LDAP`,
+`FED_CUSTOM`) is allowed; config validation rejects duplicates at startup. This
+keeps every search candidate unambiguous: each result carries its source
+`provider_id` + `issuer`, protocol dispatch resolves to exactly one source, and
+materialization re-resolves the candidate at that same source before a role
+binding is granted. A search still fans out across the *different* configured
+protocols in parallel and merges their pages, but each candidate row remains
+attributable to exactly one origin.
 
 ### 4.4 Action
 
@@ -1328,6 +1401,12 @@ stable identity and coarse claims, not large allow/deny URN lists; Authguard
 computes resource permissions for each request to avoid oversized JWTs, delayed
 revocation, and audience leakage.
 
+Downstream of that boundary, Authguard may re-sign its own internal business
+JWT (see §10): the original credential is verified by Envoy exactly as before,
+and only the ALLOW response rewrites the forwarded token. Authguard therefore
+stays a verifier-independent re-signer — it never accepts an unverified token
+and never asks Envoy to relax its JWT/OIDC policy.
+
 OIDC Core requires the `iss + sub` combination when an application needs a
 stable identifier. `sub` alone is only locally unique within one issuer. Authguard
 therefore maps verified `iss` to `iam_principal.issuer` and verified `sub` to
@@ -1407,6 +1486,33 @@ owned by `PolicyRuntime`. A background task refreshes it directly from the
 durable repository by revision. A Redis Cluster deployment serves only as the
 cross-replica scope-token store; scope-token cache misses or failures fail
 closed. Policies and Principals are never stored in the Memory/Redis cache.
+
+### 10.1 Internal business JWT
+
+Optionally (`auth.business_token.enabled`), every ALLOW re-signs a short-lived
+internal JWT for the business microservice and overwrites the `authorization`
+header (Envoy removes the original identity token first). The token is an
+RS256 compact JWT (`RSASSA-PKCS1-v1_5` with SHA-256, RFC 8017 § 8.2):
+
+- `iss: "authguard"` marks the re-signer, `authguardOrigin: true` marks
+  re-signed provenance — the client-issued token never carries this claim.
+- `sub` copies the verified external_id and `principal_id` names the local
+  Principal, so the microservice can map directly into the Authguard model.
+- `authguard_group_ids` carries the issuer-local stable group IDs.
+- `iat`/`exp` use `scope_token_ttl`, and scalar identity claims (e.g. tenant_id,
+  MFA state) are copied; `iss`/`sub`/`authguard_group_ids` are never overwritten
+  by client-supplied values.
+- The RSA private key (≥ 2048 bits, PKCS#8 PEM) lives only in Authguard —
+  injected via `AUTHGUARD__AUTH__BUSINESS_TOKEN__PRIVATE_KEY`. Business
+  workloads hold only the paired public key (PKCS#1 PEM for bootstrap tooling)
+  and verify with any standard JWT library; no Authguard SDK call is required.
+- Disabled (default) leaves the original identity token stripped without
+  replacement. Envoy's own JWT/OIDC verification (§9) is unchanged.
+
+The business JWT is an identity convenience for the workload, not an
+authorization decision: permission enforcement still comes from
+`x-authguard-context` / `x-authguard-scope-token`, which remain action-bound
+and fail closed.
 
 ## 11. Control-plane credential and initial policy
 
@@ -1492,7 +1598,9 @@ core/config  -- authguard.yaml loading, environment overrides, validation
 core/model        -- storage-independent authorization models, SQL scopes, and transport DTOs
 core/principal/mod.rs        -- discovery models, traits, and errors
 core/principal/jit.rs        -- trusted OIDC JIT projection
-core/principal/federation/   -- Keycloak, LDAP, and custom HTTP/JWT federated search connectors
+core/principal/keycloak.rs   -- Keycloak Admin API search connector
+core/principal/ldap.rs       -- direct RFC 4511 LDAP connector
+core/principal/custom.rs     -- configurable HTTP/JWT in-house identity API connector
 core/principal/scim.rs       -- RFC 7643 User/Group subset ingestion
 core/storage/record.rs       -- private SQLite/PostgreSQL row records
 core/utils        -- identity parsing, HTTP tuple-to-URN mapping, OTel, metrics

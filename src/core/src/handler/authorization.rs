@@ -29,8 +29,8 @@ use crate::cache::IAuthorizationCache;
 use crate::config::{IdentityConfig, ScopeDeliveryConfig};
 use crate::model::access_context_v1::access_context_service_server::AccessContextService;
 use crate::model::{
-    epoch_seconds, AccessContext, AccessContextInput, AccessContextSigner, ACCESS_CONTEXT_HEADER,
-    SCOPE_TOKEN_HEADER,
+    epoch_seconds, AccessContext, AccessContextInput, AccessContextSigner, BusinessTokenSigner,
+    ACCESS_CONTEXT_HEADER, SCOPE_TOKEN_HEADER,
 };
 use crate::model::{
     AuthorizationConditions, AuthorizationDecision, AuthorizationRequest, AuthorizationScope,
@@ -179,10 +179,16 @@ pub struct DefaultAuthorizationHandler {
     identity: IdentityConfig,
     scope_delivery: ScopeDeliveryConfig,
     direct_context_signer: AccessContextSigner,
+    /// Re-signs the internal business JWT when enabled; `None` strips the
+    /// original token header without replacement.
+    business_token_signer: Option<BusinessTokenSigner>,
 }
 
 impl DefaultAuthorizationHandler {
     #[must_use]
+    // The handler's startup wiring is one cohesive dependency set; a builder
+    // or parameter struct would only relocate the same fields.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         policy: PolicyHandler,
         principals: PrincipalHandler,
@@ -191,8 +197,18 @@ impl DefaultAuthorizationHandler {
         identity: IdentityConfig,
         scope_delivery: ScopeDeliveryConfig,
         direct_context_signer: AccessContextSigner,
+        business_token_signer: Option<BusinessTokenSigner>,
     ) -> Self {
-        Self { policy, principals, cache, metrics, identity, scope_delivery, direct_context_signer }
+        Self {
+            policy,
+            principals,
+            cache,
+            metrics,
+            identity,
+            scope_delivery,
+            direct_context_signer,
+            business_token_signer,
+        }
     }
 }
 
@@ -321,6 +337,7 @@ impl DefaultAuthorizationHandler {
             decision,
             authorization_scope,
             policy_revision,
+            identity,
         } = evaluation;
         let Some(scoped) = authorization_scope else {
             tracing::error!("allowed authorization evaluation omitted its resource scope");
@@ -336,6 +353,7 @@ impl DefaultAuthorizationHandler {
         let deny_urn_count = scoped.deny_resource_urns.len();
         let urn_count = allow_urn_count + deny_urn_count;
         let now = epoch_seconds();
+        let business_token = self.business_token(&identity, &principal_id);
         let direct_context = AccessContext::new(
             AccessContextInput {
                 principal_id,
@@ -362,7 +380,7 @@ impl DefaultAuthorizationHandler {
         };
         self.metrics.record_authorization(true, &decision.reason, started.elapsed().as_secs_f64());
         self.metrics.record_http(CHECK_ROUTE, "gRPC", 200);
-        let ok = self.allowed_http_response(&delivery);
+        let ok = self.allowed_http_response(&delivery, business_token.as_deref());
         self.metrics.record_scope_delivery(delivery.name());
         tracing::debug!(
             authguard.decision = "allow",
@@ -442,7 +460,11 @@ impl DefaultAuthorizationHandler {
         Ok(AccessDelivery::Token(token))
     }
 
-    fn allowed_http_response(&self, delivery: &AccessDelivery) -> OkHttpResponseBuilder {
+    fn allowed_http_response(
+        &self,
+        delivery: &AccessDelivery,
+        business_token: Option<&str>,
+    ) -> OkHttpResponseBuilder {
         let overwrite = Some(HeaderAppendAction::OverwriteIfExistsOrAdd);
         let mut response = OkHttpResponseBuilder::new();
         response.remove_header("authorization");
@@ -465,6 +487,12 @@ impl DefaultAuthorizationHandler {
                 response.remove_header(ACCESS_CONTEXT_HEADER);
                 response.add_header(SCOPE_TOKEN_HEADER, token, overwrite, false);
             }
+        }
+        if let Some(token) = business_token {
+            // The re-signed business JWT replaces the original IdP token so
+            // the upstream microservice receives only Authguard-issued
+            // identity (authguardOrigin: true) plus the access context.
+            response.add_header("authorization", format!("Bearer {token}"), overwrite, false);
         }
         response
     }
@@ -624,6 +652,7 @@ struct RequestEvaluation {
     decision: AuthorizationDecision,
     authorization_scope: Option<AuthorizationScope>,
     policy_revision: u64,
+    identity: RequestIdentity,
 }
 
 enum AccessDelivery {
@@ -827,7 +856,62 @@ impl DefaultAuthorizationHandler {
             decision,
             authorization_scope,
             policy_revision: snapshot.policy().revision,
+            identity,
         })
+    }
+
+    /// Re-signs the internal business JWT for the upstream microservice.
+    ///
+    /// The token carries `authguardOrigin: true`, the verified identity, and
+    /// the materialized principal id. It is signed with Authguard's RSA
+    /// private key (RS256), so the microservice verifies it with the paired
+    /// public key without calling back into Authguard.
+    fn business_token(&self, identity: &RequestIdentity, principal_id: &str) -> Option<String> {
+        let signer = self.business_token_signer.as_ref()?;
+        let now = epoch_seconds();
+        let claims = Self::business_token_claims(identity, principal_id, now, &self.scope_delivery);
+        let payload = serde_json::to_vec(&claims)
+            .map_err(|error| tracing::error!(%error, "failed to encode business token claims"))
+            .ok()?;
+        let token = signer
+            .sign(&payload)
+            .map_err(|error| tracing::error!(%error, "failed to sign business token"))
+            .ok()?;
+        tracing::debug!(
+            authguard.principal_id = principal_id,
+            authguard.business_token.ttl_seconds = self.scope_delivery.scope_token_ttl.as_secs(),
+            "re-signed internal business JWT"
+        );
+        Some(token)
+    }
+
+    /// Assembles the business JWT claims shared between the runtime and tests.
+    #[must_use]
+    pub(crate) fn business_token_claims(
+        identity: &RequestIdentity,
+        principal_id: &str,
+        now_epoch_seconds: u64,
+        scope_delivery: &ScopeDeliveryConfig,
+    ) -> serde_json::Value {
+        let mut claims = serde_json::Map::new();
+        claims.insert("iss".to_string(), json!("authguard"));
+        claims.insert("sub".to_string(), json!(identity.external_id));
+        claims.insert("principal_id".to_string(), json!(principal_id));
+        claims.insert("authguard_group_ids".to_string(), json!(identity.group_external_ids));
+        // Marker claim: this JWT was re-signed by Authguard, never the IdP.
+        claims.insert("authguardOrigin".to_string(), json!(true));
+        claims.insert("iat".to_string(), json!(now_epoch_seconds));
+        claims.insert(
+            "exp".to_string(),
+            json!(now_epoch_seconds.saturating_add(scope_delivery.scope_token_ttl.as_secs())),
+        );
+        for (name, value) in &identity.claims {
+            if matches!(name.as_str(), "iss" | "sub" | "authguard_group_ids") {
+                continue;
+            }
+            claims.insert(name.clone(), json!(value));
+        }
+        serde_json::Value::Object(claims)
     }
 
     fn new_scope_token() -> String {
@@ -902,6 +986,8 @@ mod tests {
     use tonic::metadata::MetadataMap;
 
     use super::{DefaultAuthorizationHandler, GrpcTraceContext};
+    use crate::config::ScopeDeliveryConfig;
+    use crate::utils::RequestIdentity;
 
     const GRPC_TRACE_ID: &str = "11111111111111111111111111111111";
     const HTTP_TRACE_ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -961,6 +1047,38 @@ mod tests {
 
         assert_eq!(source, "grpc_metadata");
         assert!(!span.span_context().is_valid());
+    }
+
+    #[test]
+    fn business_token_claims_mark_authguard_origin_and_keep_scalar_claims() {
+        let identity = RequestIdentity {
+            issuer: "https://id.example/realms/company".to_string(),
+            external_id: "user-1".to_string(),
+            group_external_ids: vec!["group-7".to_string()],
+            claims: std::collections::HashMap::from([
+                ("tenant_id".to_string(), "mycompany".to_string()),
+                ("mfa".to_string(), "true".to_string()),
+            ]),
+        };
+        let claims = DefaultAuthorizationHandler::business_token_claims(
+            &identity,
+            "principal-1",
+            1_700_000_000,
+            &ScopeDeliveryConfig::default(),
+        );
+
+        assert_eq!(claims["iss"], "authguard");
+        assert_eq!(claims["sub"], "user-1");
+        assert_eq!(claims["principal_id"], "principal-1");
+        assert_eq!(claims["authguard_group_ids"], serde_json::json!(["group-7"]));
+        assert_eq!(claims["authguardOrigin"], serde_json::json!(true));
+        assert_eq!(claims["iat"], serde_json::json!(1_700_000_000));
+        assert_eq!(claims["tenant_id"], "mycompany", "scalar claims are preserved");
+        assert_eq!(claims["mfa"], "true");
+        assert!(
+            claims.as_object().is_some_and(|object| object.contains_key("exp")),
+            "expiry claim present"
+        );
     }
 
     struct SelfTestData;

@@ -1,4 +1,4 @@
-# Authguard - 统一通用企业级 IAM 认证鉴权系统设计
+# Authguard - 企业级统一 IAM 认证+资源级鉴权系统设计
 
 - **状态：** Architecture Baseline
 - **日期：** 2026-09-03
@@ -38,7 +38,68 @@
 
 - 标准部署由 Envoy Gateway controller、其管理的 Envoy Proxy 数据面和单 Authguard 镜像组成。Authguard 不重复实现通用 API Gateway，也不在业务服务内复制 evaluator；业务服务只通过 adapter 消费 Envoy 转发的受信访问上下文。
 
-### 1.1 最小模型
+### 1.1 全局物理调用视图
+
+- 控制面（B2B 场景预授权）：管理员给新员工 Bob 预授权，此时 Bob 可能从未访问过应用：
+
+```text
+Admin UI/API: "search Bob"
+  │  POST /adm/v1/principal-discovery/search          (parallel pull)
+  ▼
+federation fan-out:
+  KeycloakPrincipalDiscovery ─▶ Keycloak Admin API
+  LdapPrincipalDiscovery      ─▶ LDAP (RFC 4511)
+  CustomPrincipalDiscovery    ─▶ HTTP + pre-issued bearer JWT
+  │  candidates: (issuer, external_id) + display metadata, not materialized yet
+  ▼
+POST /adm/v1/principal-discovery/materialize
+  └─▶ server-side re-resolve (anti-spoofing) ─▶ upsert iam_principal
+POST /adm/v1/role-bindings
+  └─▶ iam_role_binding(effect + resource URN + conditions)
+
+converge on the same iam_principal:
+  SCIM push (RFC 7643/7644) ─▶ IdP lifecycle events (pre-provision / disable)
+  JIT projection (data plane) ─▶ first verified request
+```
+
+- 数据面（Bob 的一次业务请求）：
+
+```text
+Bob ─ (Windows/macOS AD login with Kerberos TGT ─▶ SSO ─▶ IdP/DSP/Keycloak get access jwt token)
+  │
+  ▼
+Envoy Gateway: verify JWT (iss, aud, JWKS)
+  │
+  ▼ gRPC ext_authz
+Authguard:
+  · db: load policies from iam_principal projection + iam_role/binding
+  · route_matchers: validate method / path / query params / path params
+  · conditions: validate headers / MFA / trusted claims
+  │
+  ▼ ALLOW
+  ├─▶ small lists: x-authguard-context header (direct allow/deny URNs)
+  └─▶ large lists: x-authguard-scope-token ─▶ Redis IAuthorizationCache
+  └─▶ optional business JWT: Authguard 重签 RS256 JWT（携带
+      `authguardOrigin: true`）并覆盖 authorization 头
+  │
+  ▼
+Envoy forwards the request
+  │
+  ▼
+Business Microservice
+  │  adapter SDK: IAccessContextResolver
+  │    HeaderAccessContextResolver ─▶ read direct header
+  │    GrpcAccessContextResolver   ─▶ Authguard ResolveScope (large lists)
+  │  optional: 以 Authguard 公钥验证 business JWT
+  ▼
+SQL WHERE scope ─▶ row-level fine-grained data permissions
+```
+
+两侧收敛到同一个 `iam_principal`：控制面预授权与数据面 JIT 投影都只物化受信身份的稳定
+标识与展示元数据；数据面热路径绝不回调 IdP / LDAP / SCIM，adapter 解析或编译失败即
+fail closed。
+
+### 1.2 最小模型
 
 ```text
 principal(USER / WORKLOAD / GROUP)
@@ -70,7 +131,7 @@ Wildcard 规则必须保持小而可预测：
 
 这个限制是 Resource Adapter 能把 role binding 安全编译成 SQL predicate 的前提。
 
-### 1.2 一个最小授权故事
+### 1.3 一个最小授权故事
 
 Alice 通过 OIDC Provider 登录。Provider 只证明“这是 Alice”，不决定 Alice
 能访问哪些业务资源。Envoy 验证 token 后，Authguard 对受信外部身份执行 JIT 投影：
@@ -379,7 +440,12 @@ POST /adm/v1/role-bindings
 外部 candidate 不能直接成为 binding target。物化后得到稳定的内部 `principal_id`，
 由 `iam_role_binding` 引用。
 
-### 4.4 Action
+每种协议最多允许**一个 active connector**（`FED_KEYCLOAK` / `FED_LDAP` /
+`FED_CUSTOM`），配置校验在启动时拒绝重复条目，保证每个搜索结果候选无歧义：
+每条结果携带来源 `provider_id` + `issuer`，协议分发必然命中唯一 source，
+物化（materialize）时在同一 source 重新 resolve 后才允许授予 role binding。
+管理员搜索仍会并行扇出到不同协议并合并分页结果，但每条候选都能归因到
+唯一的来源。
 
 Action 表示“要做什么”，使用点分隔命名，如：
 
@@ -1171,6 +1237,10 @@ Authguard 对受信 token 只做 claim 解码，不把 payload decode 描述为�
 Gateway。登录 Access Token 只携带稳定身份与粗粒度 claims，不携带大量 allow/deny URN；
 资源权限由 Authguard 针对当前请求实时计算，避免 JWT 过大、权限撤销延迟和 audience 越界。
 
+在该边界下游，Authguard 可重签自己的内部业务 JWT（见 §10）：原始凭据仍由 Envoy 按
+标准验证，只有 ALLOW 响应会改写转发给业务服务的 token。因此 Authguard 始终是“验签
+无关的重签者”——绝不接受未验证 token，也绝不要求 Envoy 放宽其 JWT/OIDC 策略。
+
 OIDC Core 要求需要稳定用户标识时使用 `iss + sub` 组合；`sub` 只在单个 issuer 内局部
 唯一。因此 Authguard 把已验证 `iss` 写入 `iam_principal.issuer`，把已验证 `sub`
 写入 `iam_principal.external_id`；email 与 username 只作为可变展示元数据。
@@ -1232,6 +1302,27 @@ workload 不能调用签发 direct context/scope token 的 Envoy Check listener�
 后台按 revision 直接从 durable repository 刷新。Redis Cluster 只作为跨副本
 scope-token store；scope-token miss 或 cache 故障时 fail closed。policy 与 Principal
 均不进入 Memory/Redis cache。
+
+### 10.1 内部业务 JWT
+
+可选（`auth.business_token.enabled`）开启后，每个 ALLOW 都为业务微服务重签一枚短期
+内部 JWT 并覆盖 `authorization` 头（Envoy 先移除原始身份 token）。格式为 RS256
+compact JWT（`RSASSA-PKCS1-v1_5` + SHA-256，RFC 8017 § 8.2）：
+
+- `iss: "authguard"` 标记重签者，`authguardOrigin: true` 标记重签来源——客户端原始
+  token 绝不携带该 claim。
+- `sub` 复制已验证的 external_id，`principal_id` 对应本地 Principal，微服务可直接
+  映射进 Authguard 模型。
+- `authguard_group_ids` 携带 issuer-local 稳定 group ID。
+- `iat`/`exp` 沿用 `scope_token_ttl`，并复制原 token 的标量身份 claims（如
+  tenant_id、MFA 状态）；`iss`/`sub`/`authguard_group_ids` 不会被客户端值覆盖。
+- RSA 私钥（≥ 2048 bits，PKCS#8 PEM）仅存于 Authguard，经
+  `AUTHGUARD__AUTH__BUSINESS_TOKEN__PRIVATE_KEY` 注入。业务 workload 只持有配对公钥
+  （PKCS#1 PEM，供引导工具使用），用任意标准 JWT 库验签，无需调用 Authguard SDK。
+- 禁用（默认）时维持仅移除身份 token 的现状。Envoy 自身的 JWT/OIDC 验证（§9）不变。
+
+业务 JWT 只是给 workload 的身份便利，不是授权判定：权限强制仍由 action 绑定且 fail
+closed 的 `x-authguard-context` / `x-authguard-scope-token` 完成。
 
 ## 11. 控制面凭证与初始策略
 
@@ -1312,7 +1403,9 @@ core/config  -- authguard.yaml 加载、环境覆盖和校验
 core/model        -- 与存储无关的授权模型、SQL-scope 语义及 HTTP/gRPC DTO
 core/principal/mod.rs        -- discovery 公共模型、trait 与 error
 core/principal/jit.rs        -- 受信 OIDC JIT (Just-In-Time) 投影
-core/principal/federation/   -- Keycloak、LDAP 与 custom HTTP/JWT 联邦搜索 connector
+core/principal/keycloak.rs   -- Keycloak Admin API 搜索 connector
+core/principal/ldap.rs       -- 直接 RFC 4511 LDAP connector
+core/principal/custom.rs     -- 配置化 HTTP/JWT 自研身份 API connector
 core/principal/scim.rs       -- RFC 7643 User/Group 子集 ingestion
 core/storage/record.rs       -- SQLite/PostgreSQL 私有 row record
 core/utils        -- identity 解析、HTTP tuple-to-URN 映射、OTel 与 metrics

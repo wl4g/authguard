@@ -1,10 +1,10 @@
 use anyhow::bail;
 
 use super::{
-    AuthguardConfig, CacheConfig, CustomPrincipalDiscoveryConfig, IdentityConfig,
-    JitPrincipalDiscoveryConfig, KeycloakPrincipalDiscoveryConfig, LdapPrincipalDiscoveryConfig,
-    MgmtConfig, PrincipalDiscoveryConfig, RedisClusterConfig, ScimPrincipalDiscoveryConfig,
-    ScopeDeliveryConfig, ServerConfig, StorageConfig,
+    AuthguardConfig, BusinessTokenConfig, CacheConfig, CustomPrincipalDiscoveryConfig,
+    IdentityConfig, JitPrincipalDiscoveryConfig, KeycloakPrincipalDiscoveryConfig,
+    LdapPrincipalDiscoveryConfig, MgmtConfig, PrincipalDiscoveryConfig, RedisClusterConfig,
+    ScimPrincipalDiscoveryConfig, ScopeDeliveryConfig, ServerConfig, StorageConfig,
 };
 
 impl AuthguardConfig {
@@ -19,6 +19,7 @@ impl AuthguardConfig {
         validate_scope_delivery(&self.auth.scope_delivery)?;
         validate_identity(&self.auth.identity)?;
         validate_principal_discovery(&self.auth.principal_discovery)?;
+        validate_business_token(&self.auth.business_token)?;
         validate_storage(&self.storage)?;
         validate_cache(&self.cache)?;
         Ok(())
@@ -123,16 +124,32 @@ fn validate_identity(identity: &IdentityConfig) -> anyhow::Result<()> {
 
 fn validate_principal_discovery(config: &PrincipalDiscoveryConfig) -> anyhow::Result<()> {
     validate_jit(&config.jit)?;
-    for keycloak in config.federated.keycloak.iter().filter(|entry| entry.enabled) {
+    let keycloak: Vec<_> = config.keycloak.iter().filter(|entry| entry.enabled).collect();
+    let ldap: Vec<_> = config.ldap.iter().filter(|entry| entry.enabled).collect();
+    let custom: Vec<_> = config.custom.iter().filter(|entry| entry.enabled).collect();
+    validate_unique_protocol(keycloak.len(), "FED_KEYCLOAK")?;
+    validate_unique_protocol(ldap.len(), "FED_LDAP")?;
+    validate_unique_protocol(custom.len(), "FED_CUSTOM")?;
+    for keycloak in keycloak {
         validate_keycloak(keycloak)?;
     }
-    for ldap in config.federated.ldap.iter().filter(|entry| entry.enabled) {
+    for ldap in ldap {
         validate_ldap(ldap)?;
     }
-    for custom in config.federated.custom.iter().filter(|entry| entry.enabled) {
+    for custom in custom {
         validate_custom(custom)?;
     }
     validate_scim(&config.jit, &config.scim)
+}
+
+/// Each protocol runs at most one active connector: search candidates carry
+/// their source `(provider_id, issuer)`, and dispatch by protocol must resolve
+/// to exactly one source.
+fn validate_unique_protocol(active_entries: usize, protocol: &str) -> anyhow::Result<()> {
+    if active_entries > 1 {
+        bail!("at most one enabled `{protocol}` principal discovery entry is allowed");
+    }
+    Ok(())
 }
 
 fn validate_jit(jit: &JitPrincipalDiscoveryConfig) -> anyhow::Result<()> {
@@ -218,6 +235,21 @@ fn validate_custom(custom: &CustomPrincipalDiscoveryConfig) -> anyhow::Result<()
         || custom.max_page_size == 0
     {
         bail!("custom principal discovery timeouts and max_page_size must be positive");
+    }
+    Ok(())
+}
+
+fn validate_business_token(token: &BusinessTokenConfig) -> anyhow::Result<()> {
+    if !token.enabled {
+        return Ok(());
+    }
+    if token.ttl.is_zero() {
+        bail!("auth.business_token.ttl must be positive when enabled");
+    }
+    if token.private_key.is_empty() == token.private_key_file.is_empty() {
+        bail!(
+            "auth.business_token requires exactly one of private_key or private_key_file when enabled"
+        );
     }
     Ok(())
 }

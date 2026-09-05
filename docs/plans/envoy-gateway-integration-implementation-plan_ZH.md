@@ -46,7 +46,9 @@ src/core/src/handler/principal.rs  Principal 投影/discovery 用例
 src/core/src/handler/management.rs  health、readiness、status 与 metrics 用例
 src/core/src/principal/mod.rs  discovery 公共模型、trait 与 error
 src/core/src/principal/jit.rs  受信 OIDC JIT 投影
-src/core/src/principal/federation/  Keycloak、LDAP 与配置化 HTTP/JWT 联邦搜索
+src/core/src/principal/keycloak.rs  Keycloak Admin API 搜索 connector
+src/core/src/principal/ldap.rs      直接 RFC 4511 LDAP connector
+src/core/src/principal/custom.rs    配置化 HTTP/JWT 自研身份 API connector
 src/core/src/principal/scim.rs  RFC 7643 User/Group 子集 ingestion
 src/core/src/model       与存储无关的授权模型、SQL-scope 语义及 HTTP/gRPC DTO
 src/core/src/storage     SQLite/PostgreSQL repository；row record 收敛在 record.rs

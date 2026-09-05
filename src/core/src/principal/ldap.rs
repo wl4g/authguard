@@ -555,10 +555,6 @@ impl IPrincipalDiscovery<PrincipalSearchQuery> for LdapPrincipalDiscovery {
         query: PrincipalSearchQuery,
     ) -> Result<Self::Output, PrincipalDiscoveryError> {
         validate_search_query(&query)?;
-        if !query.provider_ids.is_empty() && !query.provider_ids.contains(&self.config.discovery_id)
-        {
-            return Ok(PrincipalSearchPage::default());
-        }
         let users = Self::supports_kind(&query, PrincipalKind::User);
         let groups = Self::supports_kind(&query, PrincipalKind::Group);
         match (users, groups) {
@@ -810,13 +806,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn provider_and_kind_selection_prevent_unnecessary_directory_searches() {
+    async fn kind_selection_prevents_unnecessary_directory_searches() {
         let fake = Arc::new(FakeLdapSearchClient::default());
         let provider =
             LdapPrincipalDiscovery::with_client(&config(), fake.clone()).expect("provider");
-        let mut other_provider = PrincipalSearchQuery::new("alice");
-        other_provider.provider_ids.insert("other-directory".to_string());
-        assert!(provider.discover(other_provider).await.expect("filtered").principals.is_empty());
 
         let mut workloads = PrincipalSearchQuery::new("job-runner");
         workloads.kinds.insert(PrincipalKind::Workload);

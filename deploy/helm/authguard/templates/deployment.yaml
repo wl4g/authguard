@@ -4,6 +4,9 @@
 {{- if and (eq (lower .Values.authguard.config.cache.provider) "memory") (gt (int .Values.authguard.replicaCount) 1) -}}
 {{- fail "authguard.config.cache.provider=Memory supports only one Authguard replica; use Redis before increasing authguard.replicaCount" -}}
 {{- end }}
+{{- if and .Values.authguard.config.auth.business_token.enabled (not .Values.authguard.businessToken.existingSecret) (not .Values.authguard.businessToken.privateKey) -}}
+{{- fail "authguard.config.auth.business_token.enabled requires authguard.businessToken.existingSecret or authguard.businessToken.privateKey" -}}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,6 +29,7 @@ spec:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         checksum/access-context-key: {{ .Values.authguard.accessContext | toJson | sha256sum }}
+        checksum/business-token-key: {{ .Values.authguard.businessToken | toJson | sha256sum }}
         {{- with .Values.authguard.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -73,6 +77,13 @@ spec:
                 secretKeyRef:
                   name: {{ default (printf "%s-admin" (include "authguard.fullname" .)) .Values.authguard.admin.existingSecret }}
                   key: {{ .Values.authguard.admin.key }}
+            {{- end }}
+            {{- if and .Values.authguard.config.auth.business_token.enabled (or .Values.authguard.businessToken.existingSecret .Values.authguard.businessToken.privateKey) }}
+            - name: AUTHGUARD__AUTH__BUSINESS_TOKEN__PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "authguard.businessTokenSecretName" . }}
+                  key: {{ .Values.authguard.businessToken.key }}
             {{- end }}
             {{- with .Values.authguard.storage.existingSecret }}
             - name: AUTHGUARD__STORAGE__POSTGRES__URL

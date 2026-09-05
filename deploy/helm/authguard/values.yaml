@@ -126,6 +126,12 @@ authguard:
     existingSecret: ""
     key: hmac-key
     signingKey: ""
+  businessToken:
+    # RSA private key (PKCS#8 PEM) re-signing the internal business JWT.
+    # Business workloads only hold the paired public key.
+    existingSecret: ""
+    key: rsa-private-key
+    privateKey: ""
   principalDiscovery:
     # Optional Secret whose keys are referenced through connector `*_file`
     # settings under config.auth.principal_discovery.
@@ -188,17 +194,22 @@ authguard:
           discovery_id: verified-oidc
           trusted_issuers: [https://idp.example.com/realms/example-corp]
           allow_insecure_http: false
-        federated:
-          # Each connector entry supports `enabled: false`; production-grade
-          # commented examples live in etc/authguard.yaml.
-          keycloak: []
-          ldap: []
-          custom: []
+        # keycloak/ldap/custom are flat siblings of jit/scim; each entry
+        # supports `enabled: false`. Production-grade commented examples
+        # live in etc/authguard.yaml.
+        keycloak: []
+        ldap: []
+        custom: []
         scim:
           enabled: false
           discovery_id: corporate-scim
           # Must exactly equal the OIDC `iss`; SCIM externalId should equal OIDC `sub`.
           issuer: https://idp.example.com/realms/example-corp
+      business_token:
+        enabled: false
+        ttl: 60s
+        private_key: ""
+        private_key_file: ""
       admin_token: ""
     storage:
       backend: sqlite

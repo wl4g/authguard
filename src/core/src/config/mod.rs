@@ -4,13 +4,13 @@ mod settings;
 mod validation;
 
 pub use settings::{
-    AuthConfig, AuthguardConfig, CacheConfig, CustomPrincipalDiscoveryConfig,
-    CustomRequestBindingConfig, CustomResponseMappingConfig, FederatedPrincipalDiscoveryConfig,
-    HealthConfig, IdentityConfig, JitPrincipalDiscoveryConfig, KeycloakPrincipalDiscoveryConfig,
-    LdapObjectMappingConfig, LdapPrincipalDiscoveryConfig, LoggingConfig, MemoryCacheConfig,
-    MetricsConfig, MgmtConfig, OtelConfig, PerformanceConfig, PostgresConfig,
-    PrincipalDiscoveryConfig, RedisClusterConfig, RequestConfig, ResponseConfig,
-    ScimPrincipalDiscoveryConfig, ScopeDeliveryConfig, ServerConfig, SqliteConfig, StorageConfig,
+    AuthConfig, AuthguardConfig, BusinessTokenConfig, CacheConfig, CustomPrincipalDiscoveryConfig,
+    CustomRequestBindingConfig, CustomResponseMappingConfig, HealthConfig, IdentityConfig,
+    JitPrincipalDiscoveryConfig, KeycloakPrincipalDiscoveryConfig, LdapObjectMappingConfig,
+    LdapPrincipalDiscoveryConfig, LoggingConfig, MemoryCacheConfig, MetricsConfig, MgmtConfig,
+    OtelConfig, PerformanceConfig, PostgresConfig, PrincipalDiscoveryConfig, RedisClusterConfig,
+    RequestConfig, ResponseConfig, ScimPrincipalDiscoveryConfig, ScopeDeliveryConfig, ServerConfig,
+    SqliteConfig, StorageConfig,
 };
 
 #[cfg(test)]
@@ -97,17 +97,16 @@ mod tests {
     #[test]
     fn validates_file_backed_federated_discovery_credentials() {
         let mut config = AuthguardConfig::default();
-        config.auth.principal_discovery.federated.keycloak =
-            vec![KeycloakPrincipalDiscoveryConfig {
-                enabled: true,
-                discovery_id: "corporate-keycloak".to_string(),
-                base_url: "https://id.example.com".to_string(),
-                issuer: "https://id.example.com/realms/corporate".to_string(),
-                realm: "corporate".to_string(),
-                client_id: "authguard-principal-discovery".to_string(),
-                client_secret_file: "/run/secrets/keycloak-client-secret".to_string(),
-                ..KeycloakPrincipalDiscoveryConfig::default()
-            }];
+        config.auth.principal_discovery.keycloak = vec![KeycloakPrincipalDiscoveryConfig {
+            enabled: true,
+            discovery_id: "corporate-keycloak".to_string(),
+            base_url: "https://id.example.com".to_string(),
+            issuer: "https://id.example.com/realms/corporate".to_string(),
+            realm: "corporate".to_string(),
+            client_id: "authguard-principal-discovery".to_string(),
+            client_secret_file: "/run/secrets/keycloak-client-secret".to_string(),
+            ..KeycloakPrincipalDiscoveryConfig::default()
+        }];
         let object_mapping = LdapObjectMappingConfig {
             object_filter: "(objectClass=inetOrgPerson)".to_string(),
             id_attribute: "entryUUID".to_string(),
@@ -115,7 +114,7 @@ mod tests {
             search_attributes: vec!["uid".to_string(), "mail".to_string()],
             ..LdapObjectMappingConfig::default()
         };
-        config.auth.principal_discovery.federated.ldap = vec![LdapPrincipalDiscoveryConfig {
+        config.auth.principal_discovery.ldap = vec![LdapPrincipalDiscoveryConfig {
             enabled: true,
             discovery_id: "corporate-ldap".to_string(),
             url: "ldaps://ldap.example.com:636".to_string(),
@@ -132,7 +131,7 @@ mod tests {
             },
             ..LdapPrincipalDiscoveryConfig::default()
         }];
-        config.auth.principal_discovery.federated.custom = vec![CustomPrincipalDiscoveryConfig {
+        config.auth.principal_discovery.custom = vec![CustomPrincipalDiscoveryConfig {
             enabled: true,
             discovery_id: "dsp-directory".to_string(),
             url: "https://dsp.example.com/identity".to_string(),
@@ -143,7 +142,7 @@ mod tests {
 
         config.validate().expect("file-backed connector credentials are valid");
 
-        config.auth.principal_discovery.federated.keycloak[0].client_secret =
+        config.auth.principal_discovery.keycloak[0].client_secret =
             "ambiguous-inline-secret".to_string();
         assert!(config.validate().is_err());
     }
@@ -152,13 +151,55 @@ mod tests {
     fn skips_disabled_federated_connector_entries() {
         let mut config = AuthguardConfig::default();
         // Incomplete on purpose: a disabled entry must not be validated.
-        config.auth.principal_discovery.federated.keycloak =
+        config.auth.principal_discovery.keycloak =
             vec![KeycloakPrincipalDiscoveryConfig::default()];
-        config.auth.principal_discovery.federated.ldap =
-            vec![LdapPrincipalDiscoveryConfig::default()];
-        config.auth.principal_discovery.federated.custom =
-            vec![CustomPrincipalDiscoveryConfig::default()];
+        config.auth.principal_discovery.ldap = vec![LdapPrincipalDiscoveryConfig::default()];
+        config.auth.principal_discovery.custom = vec![CustomPrincipalDiscoveryConfig::default()];
 
         config.validate().expect("disabled federated entries are skipped");
+    }
+
+    #[test]
+    fn rejects_multiple_enabled_connectors_of_one_protocol() {
+        let keycloak = |discovery_id: &str| KeycloakPrincipalDiscoveryConfig {
+            enabled: true,
+            discovery_id: discovery_id.to_string(),
+            base_url: "https://sso.example.com".to_string(),
+            realm: "example-corp".to_string(),
+            client_id: "authguard-search".to_string(),
+            client_secret: "not-logged-secret".to_string(),
+            ..KeycloakPrincipalDiscoveryConfig::default()
+        };
+
+        // Two enabled connectors of the same protocol are ambiguous by
+        // definition: search candidates must map to exactly one source.
+        let mut config = AuthguardConfig::default();
+        config.auth.principal_discovery.keycloak =
+            vec![keycloak("corporate-keycloak"), keycloak("partner-keycloak")];
+        assert!(config.validate().is_err());
+
+        // One per protocol stays valid and unambiguous.
+        config.auth.principal_discovery.keycloak = vec![keycloak("corporate-keycloak")];
+        config.validate().expect("one enabled connector per protocol is valid");
+    }
+
+    #[test]
+    fn validates_business_token_configuration() {
+        let mut config = AuthguardConfig::default();
+        config.validate().expect("business token is disabled by default");
+
+        config.auth.business_token.enabled = true;
+        config.auth.business_token.private_key = "not a real key".to_string();
+        config.auth.business_token.ttl = Duration::ZERO;
+        assert!(config.validate().is_err(), "positive ttl is required");
+
+        config.auth.business_token.ttl = Duration::from_secs(60);
+        config.validate().expect("inline private key is valid");
+
+        config.auth.business_token.private_key_file = "/run/secrets/business-token-key".to_string();
+        assert!(config.validate().is_err(), "exactly one key source is required");
+
+        config.auth.business_token.private_key.clear();
+        config.validate().expect("file-backed private key is valid");
     }
 }

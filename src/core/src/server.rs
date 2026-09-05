@@ -10,7 +10,7 @@ use crate::config::AuthguardConfig;
 use crate::handler::{
     DefaultAuthorizationHandler, ManagementHandler, PolicyHandler, PrincipalHandler,
 };
-use crate::model::AccessContextSigner;
+use crate::model::{AccessContextSigner, BusinessTokenSigner};
 use crate::principal::PrincipalDiscoveryComponent;
 use crate::route::{AuthorizationRoutes, ManagementRoutes};
 use crate::storage;
@@ -330,6 +330,7 @@ impl RuntimeComponents {
             authguard.policy.role_binding_count = policy_snapshot.role_bindings.len(),
             "authorization policy runtime is ready"
         );
+        let business_token_signer = Self::open_business_token_signer(&config.auth.business_token)?;
         let authorization = DefaultAuthorizationHandler::new(
             policy.clone(),
             principals.clone(),
@@ -339,8 +340,30 @@ impl RuntimeComponents {
             config.auth.scope_delivery.clone(),
             AccessContextSigner::from_env()
                 .context("configure direct access-context signing key")?,
+            business_token_signer,
         );
         Ok(Self { policy, principals, authorization, cache, metrics })
+    }
+
+    /// Opens the RS256 business-token signer from its file-or-inline key.
+    ///
+    /// Disabled configuration yields `None` and the original identity token is
+    /// simply stripped. The private key never leaves this process; business
+    /// workloads only hold the paired public key.
+    fn open_business_token_signer(
+        config: &crate::config::BusinessTokenConfig,
+    ) -> anyhow::Result<Option<BusinessTokenSigner>> {
+        if !config.enabled {
+            return Ok(None);
+        }
+        let private_key_pem = crate::principal::PrincipalDiscoveryComponent::credential(
+            &config.private_key,
+            &config.private_key_file,
+            "business token RSA private key",
+        )?;
+        BusinessTokenSigner::new(&private_key_pem)
+            .context("configure business token RSA signing key")
+            .map(Some)
     }
 }
 

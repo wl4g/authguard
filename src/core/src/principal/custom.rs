@@ -357,9 +357,6 @@ impl IPrincipalDiscovery<PrincipalSearchQuery> for CustomPrincipalDiscovery {
         query: PrincipalSearchQuery,
     ) -> Result<Self::Output, PrincipalDiscoveryError> {
         validate_search_query(&query)?;
-        if !query.provider_ids.is_empty() && !query.provider_ids.contains(&self.provider_id) {
-            return Ok(PrincipalSearchPage::default());
-        }
         let search_users = Self::supports_kind(&query, PrincipalKind::User)
             || Self::supports_kind(&query, PrincipalKind::Workload);
         let search_groups = Self::supports_kind(&query, PrincipalKind::Group);
