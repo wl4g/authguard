@@ -226,6 +226,14 @@ where
     /// synchronization returns `SCIM`.
     fn provider(&self) -> &'static str;
 
+    /// Returns the configured provider identity (`discovery_id`) stamped as
+    /// the `provider_id` of every projection this provider produces.
+    ///
+    /// The protocol string is only a capability label; the `provider_id` is
+    /// the value callers echo back when re-resolving or materializing a
+    /// search candidate.
+    fn provider_id(&self) -> &str;
+
     /// Executes one discovery operation.
     ///
     /// # Errors

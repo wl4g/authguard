@@ -464,6 +464,7 @@ strongly typed contract rather than one tagged request with unsupported modes:
 ```text
 IPrincipalDiscovery<Input>
   provider() -> 'static str              -- JIT / SCIM / FED_KEYCLOAK / FED_LDAP / FED_CUSTOM
+  provider_id() -> &str                  -- configured discovery_id stamped on projections
   Discover(input: Input) -> Output
   ResolvePrincipal(reference) -> Option<PrincipalProjection>
 
@@ -525,10 +526,13 @@ produces the stable internal `principal_id` referenced by `iam_role_binding`.
 At most **one active connector per protocol** (`FED_KEYCLOAK`, `FED_LDAP`,
 `FED_CUSTOM`) is allowed; config validation rejects duplicates at startup. This
 keeps every search candidate unambiguous: each result carries its source
-`provider_id` + `issuer`, protocol dispatch resolves to exactly one source, and
-materialization re-resolves the candidate at that same source before a role
-binding is granted. A search still fans out across the *different* configured
-protocols in parallel and merges their pages, but each candidate row remains
+`provider_id` + `issuer`, where `provider_id` is the connector's configured
+`discovery_id` (the protocol label only identifies the connector type, e.g.
+for search filtering). Because one connector is configured per protocol, that
+discovery id still resolves to exactly one source, and materialization
+re-resolves the candidate at that same source before a role binding is
+granted. A search still fans out across the *different* configured protocols
+in parallel and merges their pages, but each candidate row remains
 attributable to exactly one origin.
 
 ### 4.4 Action

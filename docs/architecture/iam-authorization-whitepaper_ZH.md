@@ -387,6 +387,7 @@ discovery 同时覆盖受信 JIT 身份、联邦搜索和 SCIM 子集生命周�
 ```text
 IPrincipalDiscovery<Input>
   provider() -> 'static str              -- JIT / SCIM / FED_KEYCLOAK / FED_LDAP / FED_CUSTOM
+  provider_id() -> &str                  -- 配置的 discovery_id，写入每条投影
   Discover(input: Input) -> Output
   ResolvePrincipal(reference) -> Option<PrincipalProjection>
 
@@ -442,10 +443,12 @@ POST /adm/v1/role-bindings
 
 每种协议最多允许**一个 active connector**（`FED_KEYCLOAK` / `FED_LDAP` /
 `FED_CUSTOM`），配置校验在启动时拒绝重复条目，保证每个搜索结果候选无歧义：
-每条结果携带来源 `provider_id` + `issuer`，协议分发必然命中唯一 source，
-物化（materialize）时在同一 source 重新 resolve 后才允许授予 role binding。
-管理员搜索仍会并行扇出到不同协议并合并分页结果，但每条候选都能归因到
-唯一的来源。
+每条结果携带来源 `provider_id` + `issuer`，其中 `provider_id` 是该
+connector 配置的 `discovery_id`（协议标签只标识 connector 类型，例如用于
+搜索过滤）。由于每种协议只配置一个 connector，该 discovery id 仍然唯一
+对应一个 source，物化（materialize）时在同一 source 重新 resolve 后才
+允许授予 role binding。管理员搜索仍会并行扇出到不同协议并合并分页结果，
+但每条候选都能归因到唯一的来源。
 
 Action 表示“要做什么”，使用点分隔命名，如：
 

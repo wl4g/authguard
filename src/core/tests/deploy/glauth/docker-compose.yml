@@ -1,0 +1,44 @@
+# =============================================================================
+#  GLAuth IT middleware for Authguard principal-discovery E2E tests.
+#
+#  Serves a small deterministic directory at dc=example,dc=com:
+#
+#    users   cn={jdoe,asmith,bwilson},ou={group},ou=users,dc=example,dc=com
+#            (service bind identity: cn=svc-authguard,ou=Users,...)
+#    groups  ou={Engineering,Sales},ou=groups,dc=example,dc=com
+#
+#  All bind credentials are password123. The host port 3389 avoids the
+#  rootless-podman restriction on ports below 1024 and mirrors the flowgent
+#  deployment convention.
+#
+#  Usage (from this directory):
+#
+#    docker compose up -d
+#
+#  The LDAP service is then available at ldap://localhost:3389. The test file
+#  src/core/tests/principal_discovery_it.rs connects only when
+#  AUTHGUARD_IT_LDAP_URL is set.
+# =============================================================================
+
+services:
+  glauth:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/glauth:v2.5.0
+    container_name: authguard-it-glauth
+    restart: "no"
+    ports:
+      - "3389:389" # host port >= 1024 for rootless podman compatibility
+    volumes:
+      - ./config.cfg:/app/config/config.cfg:ro
+    # The wl4g glauth image ships a minimal busybox (no ldapsearch/wget), so
+    # the readiness probe reads /proc/net/tcp6: glauth binds [::]:389 and the
+    # dual-stack listener line carries the hex port 0185.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          while read -r line; do case "$$line" in *:0185*) exit 0;; esac; done
+          < /proc/net/tcp6; exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s

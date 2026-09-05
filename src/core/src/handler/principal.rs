@@ -203,7 +203,7 @@ impl PrincipalHandler {
         let provider = self
             .federated
             .iter()
-            .find(|provider| provider.provider() == reference.provider_id)
+            .find(|provider| provider.provider_id() == reference.provider_id)
             .ok_or_else(|| {
                 PrincipalHandlerError::Discovery(PrincipalDiscoveryError::UnknownProvider(
                     reference.provider_id.clone(),
@@ -521,10 +521,117 @@ impl PrincipalHandler {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+
+    use async_trait::async_trait;
 
     use super::PrincipalHandler;
-    use crate::model::PrincipalKind;
-    use crate::principal::{ExternalPrincipalRef, PrincipalProjection};
+    use crate::model::{Principal, PrincipalKind, PrincipalStatus};
+    use crate::principal::{
+        ExternalPrincipalRef, IPrincipalDiscovery, PrincipalDiscoveryError, PrincipalProjection,
+        PrincipalSearchPage, PrincipalSearchQuery,
+    };
+    use crate::storage::PrincipalRepository;
+
+    /// Minimal search provider for the materialize dispatch regression test:
+    /// the protocol label and the configured `discovery_id` are different
+    /// strings, mirroring a production deployment such as the example
+    /// `discovery_id: corporate-ldap` under protocol `FED_LDAP`.
+    struct StubProvider;
+
+    #[async_trait]
+    impl IPrincipalDiscovery<PrincipalSearchQuery> for StubProvider {
+        type Output = PrincipalSearchPage;
+
+        fn provider(&self) -> &'static str {
+            "FED_LDAP"
+        }
+
+        fn provider_id(&self) -> &'static str {
+            "corporate-ldap"
+        }
+
+        async fn discover(
+            &self,
+            _query: PrincipalSearchQuery,
+        ) -> Result<Self::Output, PrincipalDiscoveryError> {
+            Ok(PrincipalSearchPage::default())
+        }
+
+        async fn resolve_principal(
+            &self,
+            reference: &ExternalPrincipalRef,
+        ) -> Result<Option<PrincipalProjection>, PrincipalDiscoveryError> {
+            if reference.provider_id != self.provider_id() {
+                return Err(PrincipalDiscoveryError::UnknownProvider(
+                    reference.provider_id.clone(),
+                ));
+            }
+            Ok(Some(PrincipalProjection {
+                reference: reference.clone(),
+                kind: PrincipalKind::User,
+                display_name: "Jane Doe".to_string(),
+                username: Some("jdoe".to_string()),
+                email: None,
+                enabled: true,
+                attributes: BTreeMap::new(),
+            }))
+        }
+    }
+
+    #[derive(Default)]
+    struct StubRepository {
+        upserted: Mutex<Vec<Principal>>,
+    }
+
+    #[async_trait]
+    impl PrincipalRepository for StubRepository {
+        async fn upsert(&self, principal: &Principal) -> anyhow::Result<Principal> {
+            self.upserted.lock().expect("stub lock").push(principal.clone());
+            Ok(principal.clone())
+        }
+
+        async fn get(&self, _id: &str) -> anyhow::Result<Option<Principal>> {
+            Ok(None)
+        }
+
+        async fn find_by_external_key(
+            &self,
+            _issuer: &str,
+            _external_id: &str,
+        ) -> anyhow::Result<Option<Principal>> {
+            Ok(None)
+        }
+
+        async fn find_by_external_keys(
+            &self,
+            _issuer: &str,
+            _external_ids: &[String],
+        ) -> anyhow::Result<Vec<Principal>> {
+            Ok(Vec::new())
+        }
+
+        async fn list(
+            &self,
+            _query: &str,
+            _after_id: Option<&str>,
+            _limit: u32,
+        ) -> anyhow::Result<Vec<Principal>> {
+            Ok(Vec::new())
+        }
+
+        async fn update_status(
+            &self,
+            _id: &str,
+            _status: PrincipalStatus,
+        ) -> anyhow::Result<Option<Principal>> {
+            Ok(None)
+        }
+
+        async fn delete(&self, _id: &str) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+    }
 
     #[test]
     fn stable_ids_are_issuer_scoped() {
@@ -565,5 +672,34 @@ mod tests {
             attributes: BTreeMap::new(),
         };
         assert_eq!(projection.clone().identity_key(), projection.identity_key());
+    }
+
+    /// `materialize` must dispatch on the configured `discovery_id` echoed by
+    /// search results, not on the protocol label. Search results from a
+    /// production deployment with `discovery_id: corporate-ldap` carry that
+    /// id, and materializing them with the protocol string previously failed
+    /// with `UnknownProvider`.
+    #[tokio::test]
+    async fn materialize_dispatches_on_discovery_id_not_protocol() {
+        let repository = Arc::new(StubRepository::default());
+        let federated = vec![Arc::new(StubProvider)
+            as Arc<dyn IPrincipalDiscovery<PrincipalSearchQuery, Output = PrincipalSearchPage>>];
+        let handler = PrincipalHandler::new(repository.clone(), None, federated, None);
+        let reference = ExternalPrincipalRef {
+            provider_id: "corporate-ldap".to_string(),
+            issuer: "https://ldap.example.com".to_string(),
+            external_id: "jdoe".to_string(),
+        };
+        let materialized = handler.materialize(&reference).await.expect("materialize");
+        assert_eq!(materialized.external_id, "jdoe");
+        assert_eq!(materialized.attributes["provider_id"], "corporate-ldap");
+        {
+            let upserted = repository.upserted.lock().expect("stub lock");
+            assert_eq!(upserted.len(), 1);
+        }
+        assert!(handler
+            .materialize(&ExternalPrincipalRef { provider_id: "FED_LDAP".to_string(), ..reference })
+            .await
+            .is_err());
     }
 }

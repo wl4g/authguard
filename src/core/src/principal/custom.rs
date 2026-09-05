@@ -352,6 +352,10 @@ impl IPrincipalDiscovery<PrincipalSearchQuery> for CustomPrincipalDiscovery {
         "FED_CUSTOM"
     }
 
+    fn provider_id(&self) -> &str {
+        &self.provider_id
+    }
+
     async fn discover(
         &self,
         query: PrincipalSearchQuery,

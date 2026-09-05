@@ -140,6 +140,10 @@ impl IPrincipalDiscovery<ScimRefreshRequest> for ScimPrincipalDiscovery {
         "SCIM"
     }
 
+    fn provider_id(&self) -> &str {
+        &self.discovery_id
+    }
+
     async fn discover(
         &self,
         request: ScimRefreshRequest,

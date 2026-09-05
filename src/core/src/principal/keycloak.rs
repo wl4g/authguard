@@ -398,6 +398,10 @@ impl IPrincipalDiscovery<PrincipalSearchQuery> for KeycloakPrincipalDiscovery {
         "FED_KEYCLOAK"
     }
 
+    fn provider_id(&self) -> &str {
+        &self.provider_id
+    }
+
     async fn discover(
         &self,
         query: PrincipalSearchQuery,

@@ -1,0 +1,69 @@
+# =============================================================================
+#  Keycloak 26.7.0 IT middleware for Authguard principal-discovery E2E tests.
+#
+#  Runs Keycloak with the preview feature set enabled so the SCIM API
+#  (scimApiEnabled, see the realm bootstrap) is mounted. The bootstrap
+#  service provisions, via the Admin REST API, exactly one test realm:
+#
+#    realm          authguard-it
+#    client         authguard-it  (confidential service account)
+#    roles          realm-management: view-users, query-users, query-groups,
+#                   manage-users (the latter for SCIM user upserts)
+#    users          adalwin, bchen, ckumar   (all with the password "test1234")
+#    groups         growth-team, ops-team
+#    audience       {frontend}/realms/authguard-it/scim/v2
+#
+#  Usage (from this directory):
+#
+#    docker compose up -d
+#    docker compose logs -f bootstrap   # wait for "realm bootstrap complete"
+#
+#  The management API is then available at http://localhost:8080/ (admin /
+#  admin-password) and the SCIM API at
+#  http://localhost:8080/realms/authguard-it/scim/v2.
+#
+#  The test file src/core/tests/principal_discovery_it.rs connects to the
+#  exported ports only when AUTHGUARD_IT_KEYCLOAK_URL is set.
+# =============================================================================
+
+services:
+  keycloak:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/keycloak:26.7.0
+    container_name: authguard-it-keycloak
+    restart: "no"
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin-password
+      KC_DB: dev-file
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: localhost
+    command:
+      - start-dev
+      - --features=preview
+      - --http-port=8080
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          /opt/keycloak/bin/kcadm.sh config credentials --server
+          http://localhost:8080 --realm master --user admin --password
+          admin-password > /dev/null 2>&1 && /opt/keycloak/bin/kcadm.sh get
+          realms/master --server http://localhost:8080 > /dev/null 2>&1
+          || exit 1
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+
+  bootstrap:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/keycloak:26.7.0
+    container_name: authguard-it-keycloak-bootstrap
+    restart: "no"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "/tmp/bootstrap.sh"]
+    volumes:
+      - ./bootstrap.sh:/tmp/bootstrap.sh:ro

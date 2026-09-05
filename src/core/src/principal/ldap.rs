@@ -550,6 +550,10 @@ impl IPrincipalDiscovery<PrincipalSearchQuery> for LdapPrincipalDiscovery {
         "FED_LDAP"
     }
 
+    fn provider_id(&self) -> &str {
+        &self.config.discovery_id
+    }
+
     async fn discover(
         &self,
         query: PrincipalSearchQuery,

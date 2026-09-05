@@ -125,6 +125,10 @@ impl IPrincipalDiscovery<VerifiedOidcPrincipal> for JitPrincipalDiscovery {
         "JIT"
     }
 
+    fn provider_id(&self) -> &str {
+        &self.provider_id
+    }
+
     async fn discover(
         &self,
         input: VerifiedOidcPrincipal,
