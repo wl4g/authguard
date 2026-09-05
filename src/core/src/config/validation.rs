@@ -33,9 +33,9 @@ impl AuthguardConfig {
         if replica_count == 0 {
             bail!("AUTHGUARD_REPLICA_COUNT must be positive");
         }
-        if replica_count > 1 && self.storage.backend.eq_ignore_ascii_case("sqlite") {
+        if replica_count > 1 && self.storage.provider.eq_ignore_ascii_case("SQLite") {
             bail!(
-                "storage.backend=sqlite supports only one Authguard replica; use PostgreSQL for multi-replica deployments"
+                "storage.provider=SQLite supports only one Authguard replica; use PostgreSQL for multi-replica deployments"
             );
         }
         if replica_count > 1 && self.cache.provider.eq_ignore_ascii_case("memory") {
@@ -173,6 +173,35 @@ fn validate_principal_discovery(config: &PrincipalDiscoveryConfig) -> anyhow::Re
             }
         }
     }
+    for custom in &config.federated.custom {
+        if custom.discovery_id.trim().is_empty()
+            || custom.url.trim().is_empty()
+            || custom.issuer.trim().is_empty()
+            || (custom.jwt_token.is_empty() == custom.jwt_token_file.is_empty())
+        {
+            bail!(
+                "each custom principal discovery requires id, URL, issuer and exactly one of jwt_token or jwt_token_file"
+            );
+        }
+        if custom.request.path.trim().is_empty()
+            || custom.request.text_param.trim().is_empty()
+            || custom.request.offset_param.trim().is_empty()
+            || custom.request.limit_param.trim().is_empty()
+            || custom.request.external_id_param.trim().is_empty()
+            || custom.response.id_attr.trim().is_empty()
+            || custom.response.display_name_attr.trim().is_empty()
+        {
+            bail!(
+                "custom principal discovery requires request path, query parameter names and response id/display-name attributes"
+            );
+        }
+        if custom.connect_timeout.is_zero()
+            || custom.request_timeout.is_zero()
+            || custom.max_page_size == 0
+        {
+            bail!("custom principal discovery timeouts and max_page_size must be positive");
+        }
+    }
     if config.scim.enabled
         && (config.scim.discovery_id.trim().is_empty() || config.scim.issuer.trim().is_empty())
     {
@@ -196,9 +225,9 @@ fn validate_storage(storage: &StorageConfig) -> anyhow::Result<()> {
     if storage.policy_max_staleness < storage.policy_refresh_interval {
         bail!("storage.policy_max_staleness must be at least policy_refresh_interval");
     }
-    match storage.backend.to_ascii_lowercase().as_str() {
+    match storage.provider.to_ascii_lowercase().as_str() {
         "sqlite" if storage.sqlite.url.trim().is_empty() => {
-            bail!("storage.sqlite.url is required for the sqlite backend");
+            bail!("storage.sqlite.url is required for the sqlite provider");
         }
         "sqlite" if storage.sqlite.max_connections == 0 => {
             bail!("storage.sqlite.max_connections must be positive");
@@ -207,7 +236,7 @@ fn validate_storage(storage: &StorageConfig) -> anyhow::Result<()> {
             bail!("storage.sqlite.connect_timeout must be positive");
         }
         "postgres" if storage.postgres.url.trim().is_empty() => {
-            bail!("storage.postgres.url is required for the postgres backend");
+            bail!("storage.postgres.url is required for the postgres provider");
         }
         "postgres" if storage.postgres.max_connections == 0 => {
             bail!("storage.postgres.max_connections must be positive");
@@ -215,8 +244,8 @@ fn validate_storage(storage: &StorageConfig) -> anyhow::Result<()> {
         "postgres" if storage.postgres.connect_timeout.is_zero() => {
             bail!("storage.postgres.connect_timeout must be positive");
         }
-        "sqlite" | "postgres" => {}
-        backend => bail!("storage.backend must be sqlite or postgres, got `{backend}`"),
+        "SQLite" | "postgres" => {}
+        provider => bail!("storage.provider must be SQLite or postgres, got `{provider}`"),
     }
     Ok(())
 }

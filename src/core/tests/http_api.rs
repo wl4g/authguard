@@ -73,7 +73,7 @@ async fn runtime(scope_delivery: ScopeDeliveryConfig) -> TestRuntime {
     )
     .expect("JIT discovery");
     let scim = ScimPrincipalDiscovery::new("corporate-scim", ISSUER).expect("SCIM discovery");
-    let principals = PrincipalHandler::new(repository.clone(), Some(jit), None, Some(scim));
+    let principals = PrincipalHandler::new(repository.clone(), Some(jit), Vec::new(), Some(scim));
     let authorization = DefaultAuthorizationHandler::new(
         policy.clone(),
         principals.clone(),
@@ -343,7 +343,7 @@ async fn same_external_id_from_two_issuers_resolves_to_distinct_principals() {
 #[tokio::test]
 async fn unprojected_group_is_ignored_when_jit_discovery_is_disabled() {
     let runtime = runtime(ScopeDeliveryConfig::default()).await;
-    let principals = PrincipalHandler::new(runtime.repository.clone(), None, None, None);
+    let principals = PrincipalHandler::new(runtime.repository.clone(), None, Vec::new(), None);
     let identity = authguard_core::utils::RequestIdentity {
         issuer: ISSUER.to_string(),
         external_id: "alice".to_string(),

@@ -4,8 +4,9 @@ mod settings;
 mod validation;
 
 pub use settings::{
-    AuthConfig, AuthguardConfig, CacheConfig, FederatedPrincipalDiscoveryConfig, HealthConfig,
-    IdentityConfig, JitPrincipalDiscoveryConfig, KeycloakPrincipalDiscoveryConfig,
+    AuthConfig, AuthguardConfig, CacheConfig, CustomPrincipalDiscoveryConfig,
+    CustomRequestBindingConfig, CustomResponseMappingConfig, FederatedPrincipalDiscoveryConfig,
+    HealthConfig, IdentityConfig, JitPrincipalDiscoveryConfig, KeycloakPrincipalDiscoveryConfig,
     LdapObjectMappingConfig, LdapPrincipalDiscoveryConfig, LoggingConfig, MemoryCacheConfig,
     MetricsConfig, MgmtConfig, OtelConfig, PerformanceConfig, PostgresConfig,
     PrincipalDiscoveryConfig, RedisClusterConfig, RequestConfig, ResponseConfig,
@@ -17,8 +18,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        AuthguardConfig, KeycloakPrincipalDiscoveryConfig, LdapObjectMappingConfig,
-        LdapPrincipalDiscoveryConfig, PerformanceConfig, ServerConfig,
+        AuthguardConfig, CustomPrincipalDiscoveryConfig, KeycloakPrincipalDiscoveryConfig,
+        LdapObjectMappingConfig, LdapPrincipalDiscoveryConfig, PerformanceConfig, ServerConfig,
     };
 
     #[test]
@@ -27,7 +28,7 @@ mod tests {
         config.validate().expect("valid");
         assert_eq!(config.server.service_name, "authguard");
         assert_eq!(config.mgmt.port, 9091);
-        assert_eq!(config.storage.backend, "sqlite");
+        assert_eq!(config.storage.provider, "SQLite");
         assert_eq!(config.cache.provider, "Memory");
         assert_eq!(config.cache.memory.max_capacity, 65_535);
     }
@@ -50,7 +51,7 @@ mod tests {
     #[test]
     fn rejects_removed_file_storage_and_cache_providers() {
         let mut file_storage = AuthguardConfig::default();
-        file_storage.storage.backend = "file".to_string();
+        file_storage.storage.provider = "file".to_string();
         assert!(file_storage.validate().is_err());
 
         let mut file_cache = AuthguardConfig::default();
@@ -59,9 +60,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_process_local_backends_in_multi_replica_deployments() {
+    fn rejects_process_local_providers_in_multi_replica_deployments() {
         let mut memory = AuthguardConfig::default();
-        memory.storage.backend = "postgres".to_string();
+        memory.storage.provider = "postgres".to_string();
         assert!(memory.validate_deployment(2).is_err());
 
         let mut sqlite = AuthguardConfig::default();
@@ -69,7 +70,7 @@ mod tests {
         assert!(sqlite.validate_deployment(2).is_err());
 
         let mut shared = AuthguardConfig::default();
-        shared.storage.backend = "postgres".to_string();
+        shared.storage.provider = "postgres".to_string();
         shared.cache.provider = "Redis".to_string();
         assert!(shared.validate_deployment(2).is_ok());
         assert!(shared.validate_deployment(0).is_err());
@@ -129,6 +130,14 @@ mod tests {
             },
             ..LdapPrincipalDiscoveryConfig::default()
         }];
+        config.auth.principal_discovery.federated.custom =
+            vec![CustomPrincipalDiscoveryConfig {
+                discovery_id: "dsp-directory".to_string(),
+                url: "https://dsp.example.com/identity".to_string(),
+                issuer: "https://dsp.example.com".to_string(),
+                jwt_token_file: "/run/secrets/dsp-jwt".to_string(),
+                ..CustomPrincipalDiscoveryConfig::default()
+            }];
 
         config.validate().expect("file-backed connector credentials are valid");
 

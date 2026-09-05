@@ -1,4 +1,4 @@
-# Authguard 通用企业级 IAM 授权白皮书
+# Authguard - 统一通用企业级 IAM 授权系统设计
 
 - **状态：** Architecture Baseline
 - **日期：** 2026-09-03
@@ -7,36 +7,36 @@
 
 ## 1. 摘要
 
-本文定义一套通用、独立、企业级的资源授权架构。它不绑定任何具体业务系统；业务系统只需要把自身对象抽象成受保护资源，通过统一 Resource URN、action、role、role binding、condition 与业务资源 adapter 完成权限控制。
+- 本文定义一套通用、独立、企业级的资源授权架构。它不绑定任何具体业务系统；业务微服务只需要把自身对象抽象成受保护资源，通过统一 Resource URN、action、role、role binding、condition 与业务端 adapter SDK 完成权限控制。
 
-Authguard 是深度集成 Envoy Gateway 的独立授权平面。Envoy Gateway 负责入口、OIDC/JWT 认证、路由和流量治理；Authguard 把传统企业 RBAC 与面向资源的 URN 授权合并为同一套模型，使 external authorization 数据面和业务 adapter 可以用同一套 policy 回答两个问题：
+- Authguard 是深度集成 Envoy Gateway 的独立授权平面。Envoy Gateway 负责入口、OIDC/JWT 认证、路由和流量治理；Authguard 把传统企业 RBAC 与面向资源的 URN 授权合并为同一套模型，使 external authorization 数据面和业务 adapter 可以用同一套 policy 回答两个问题：
 
-1. 当前 Principal 是否能对某个具体资源执行某个 action？
-2. 当前 Principal 在业务服务数据库查询中能看到哪些资源行？
+  1. 当前 Principal 是否能对某个具体资源执行某个 action？
+  2. 当前 Principal 在业务服务数据库查询中能看到哪些资源行？
 
-从 2B / 2C 的多账号、多角色、多资源访问控制管理角度看，Authguard 更适合 2B 与 2B2C 系统。核心边界不是业务标签，而是系统是否存在多人或多个系统主体协作，且不同主体在同一团队、租户或资源集合内承担不同角色、拥有不同资源访问范围。企业客户增长分析任务、企业 SaaS、云资源平台、数据平台、供应链/采购、企业资金管理等场景通常具备这些特征。2C 系统也可以使用同一 URN 模型，尤其是商家后台、平台运营、客服、风控、审计等复杂后台；但如果只是“消费者只能访问自己的订单”这类简单所有权过滤，直接字段条件通常足够，完整 IAM 授权平面会偏重。
+- 从 B2B / B2C 场景的多账号、多角色、多资源访问控制管理角度看，Authguard 更适合 2B 与 2B2C 系统。核心边界不是业务标签，而是系统是否存在多人或多个系统主体协作，且不同主体在同一团队、租户或资源集合内承担不同角色、拥有不同资源访问范围。企业客户增长分析任务、企业 SaaS、云资源平台、数据平台、供应链/采购、企业资金管理等场景通常具备这些特征。2C 系统也可以使用同一 URN 模型，尤其是商家后台、平台运营、客服、风控、审计等复杂后台；但如果只是“消费者只能访问自己的订单”这类简单所有权过滤，直接字段条件通常足够，完整 IAM 授权平面会偏重。
 
-核心结论：
+- 核心结论：
 
-- 认证只回答“调用方是谁”。
-- 授权只回答“调用方能对哪个资源执行什么动作”。
-- `iam_principal` 是外部系统已认证身份在授权侧的投影，不保存认证凭据。
-- `USER`、`WORKLOAD`、`GROUP` 统一为 Principal；OIDC 身份必须以
-  `(issuer, external_id)` 唯一识别，其中 `external_id` 为 `sub`。禁止使用裸
-  `sub`、email 或 username 作为身份唯一键。
-- 权限动作使用 `iam_action`，角色使用 `iam_role`，角色动作关系使用
-  `iam_role_action`，授权关系使用 `iam_role_binding`。
-- `IPrincipalDiscovery<Input>` 统一可信 JIT 投影、管理面联邦搜索和 RFC 7643
-  User/Group 子集 ingestion。
-  三条路径都规范化并幂等物化同一条 `iam_principal`；数据面仅可对已验证身份执行本地
-  JIT，联邦搜索和 SCIM ingestion 不进入数据面鉴权依赖链。
-- 资源身份使用基于 RFC 8141 URN 语法风格的 `urn:iam:...` 统一资源名称。
-- IAM 核心不维护 `iam_resource` 资源表；资源真相由业务系统自己的表维护。
-- request 四元组只用于 route/resource matcher，不作为资源权限模型本身。
-- 资源列表查询由业务 Resource Adapter 将 action 对应的 `AuthorizationScope` 编译成
-  业务 SQL scope。
+  - 认证只回答“调用方是谁”。
+  - 授权只回答“调用方能对哪个资源执行什么动作”。
+  - `iam_principal` 是外部系统已认证身份在授权侧的投影，不保存认证凭据。
+  - `USER`、`WORKLOAD`、`GROUP` 统一为 Principal；OIDC 身份必须以
+    `(issuer, external_id)` 唯一识别，其中 `external_id` 为 `sub`。禁止使用裸
+    `sub`、email 或 username 作为身份唯一键。
+  - 权限动作使用 `iam_action`，角色使用 `iam_role`，角色动作关系使用
+    `iam_role_action`，授权关系使用 `iam_role_binding`。
+  - `IPrincipalDiscovery<Input>` 统一可信 JIT (Just-In-Time) 投影、管理面联邦搜索和 RFC 7643
+    User/Group 子集 ingestion。
+    三条路径都规范化并幂等物化同一条 `iam_principal`；数据面仅可对已验证身份执行本地
+    JIT，联邦搜索和 SCIM ingestion 不进入数据面鉴权依赖链。
+  - 资源身份使用基于 RFC 8141 URN 语法风格的 `urn:iam:...` 统一资源名称。
+  - IAM 核心不维护 `iam_resource` 资源表；资源真相由业务系统自己的表维护。
+  - request 四元组只用于 route/resource matcher，不作为资源权限模型本身。
+  - 资源列表查询由业务 Resource Adapter 将 action 对应的 `AuthorizationScope` 编译成
+    业务 SQL scope。
 
-标准部署由 Envoy Gateway controller、其管理的 Envoy Proxy 数据面和单 Authguard 镜像组成。Authguard 不重复实现通用 API Gateway，也不在业务服务内复制 evaluator；业务服务只通过 adapter 消费 Envoy 转发的受信访问上下文。
+- 标准部署由 Envoy Gateway controller、其管理的 Envoy Proxy 数据面和单 Authguard 镜像组成。Authguard 不重复实现通用 API Gateway，也不在业务服务内复制 evaluator；业务服务只通过 adapter 消费 Envoy 转发的受信访问上下文。
 
 ### 1.1 最小模型
 
@@ -123,7 +123,7 @@ parent_urns  = [
 
 - 接收 Envoy Gateway 已验证的 OIDC/JWT user、service account 与 workload identity。
 - 支持 principal、role、role binding、action catalog、condition 与 route/resource matcher。
-- 通过可信 JIT 投影、管理面联邦搜索和 RFC 7643 User/Group 子集 ingestion 发现 Principal，
+- 通过可信 JIT (Just-In-Time) 投影、管理面联邦搜索和 RFC 7643 User/Group 子集 ingestion 发现 Principal，
   无需预加载 IdP 全量账号。
 - 支持平台级、租户/组织/域级、资源级授权。
 - 支持 GitHub 风格的 organization/repository 授权体验，但不绑定 GitHub 领域模型。
@@ -258,14 +258,35 @@ ID 规范化为同一个二元组。`issuer` 使用该来源配置的 canonical 
 
 Authguard 在统一的 `IPrincipalDiscovery<Input>` 公共边界后实现三条互补的身份进入路径：
 
-1. **可信 JIT 投影：** Envoy 验证 user/workload token 后，Authguard 以
+1. **可信 JIT (Just-In-Time) 投影：** Envoy 验证 user/workload token 后，Authguard 以
    `(issuer, external_id)` 幂等 upsert。只记录真正访问过受保护应用的身份。
-2. **管理面联邦搜索：** 管理员从已配置的 discovery source 搜索候选人；随服务发布的
+2. **管理面联邦搜索：** 管理员在 Authguard UI/API 为员工账号、机器/service account
+   或其他 workload 账号配置权限策略时，通常不知道外部认证标识符（OIDC `sub`、
+   LDAP `entryUUID` 等）。管理员从已配置的 discovery source 搜索候选人；随服务发布的
    connector 包括 Keycloak Admin API（也可看到由 Keycloak 从 LDAP/AD 联邦而来的身份）
-   和直接 RFC 4511 LDAP。选中后由服务端重新 resolve，再物化 Principal 并创建 role binding。
+   和直接 RFC 4511 LDAP。选中后由服务端按稳定引用重新 resolve，再物化 Principal 并
+   创建 role binding。
 3. **SCIM 子集 ingestion：** 已实现 adapter 接收 RFC 7643 User/Group 的有界字段，
    并将 user/group upsert 或 delete 事件规范化为相同 Principal 投影。delete 会将
    已投影 Principal 标记为 `DISABLED`。
+
+联邦搜索需要覆盖账号标识符；`GROUP` 同样被搜索，但目的只是取回 group name/path
+等展示元数据，供管理员在绑定 UI 中辨认候选者。稳定授权键始终是不可变的
+`issuer + external_id`（如 `group:<UUID>`），绝不使用搜索结果里的展示名称。
+搜索发现并展示外部 group，绝不把 Keycloak group、realm role 等外部对象复制成
+Authguard 的第二套授权策略权威源。
+
+三种模式适用不同授权场景，差异是结构性的。**JIT 投影**天然适配 2C 互联网平台的
+个人用户授权：2C 场景天然是单所有者模型——用户之间不存在多人协作与不同权限的
+共享数据，每个用户只拥有自己的数据，也不存在管理员为每个用户预先逐一授权的
+过程。所有用户请求都经过同一个网关，因此首次注册/登录的已验证请求就是
+Authguard 第一次观察到该身份的时机，JIT 当即物化 Principal，无需 provisioning
+管道，也无需全量预加载目录。物化后的 Principal 同时支撑网关之后的纵深防御：
+后端业务微服务可基于 Authguard 注入的 access context 做二次鉴权，将其编译为
+SQL scope，使消费者只能 CRUD 自己的数据行。**SCIM ingestion 与联邦搜索**适配
+2B 企业内部场景，结构正好相反：员工与 workload/service account 在不同权限下
+协作，由管理员预先授权（往往早于账号首次登录），账号生命周期由 IdP/HR 系统
+集中管理——联邦搜索负责找到外部标识符，SCIM 负责应用推送来的生命周期变化。
 
 JIT + 联邦搜索是互联网平台的默认主路径，即使外部身份达到亿级，Authguard 也只保存
 真正访问受保护应用或获得 binding 的 Principal。SCIM 子集 ingestion 按需启用，
@@ -304,29 +325,43 @@ discovery 同时覆盖受信 JIT 身份、联邦搜索和 SCIM 子集生命周�
 
 ```text
 IPrincipalDiscovery<Input>
+  provider() -> 'static str              -- JIT / SCIM / FED_KEYCLOAK / FED_LDAP / FED_CUSTOM
   Discover(input: Input) -> Output
+  ResolvePrincipal(reference) -> Option<PrincipalProjection>
 
 JitPrincipalDiscovery
-  IPrincipalDiscovery<VerifiedPrincipalInput> -> PrincipalProjection
+  IPrincipalDiscovery<VerifiedOidcPrincipal> -> PrincipalProjection
 
-FederatedPrincipalDiscovery
-  IPrincipalDiscovery<PrincipalSearchInput> -> PrincipalCandidatePage
-  shipped connectors: Keycloak Admin API and direct RFC 4511 LDAP
+KeycloakPrincipalDiscovery
+  IPrincipalDiscovery<PrincipalSearchQuery> -> PrincipalSearchPage
+  Keycloak Admin API connector, provider = FED_KEYCLOAK
+
+LdapPrincipalDiscovery
+  IPrincipalDiscovery<PrincipalSearchQuery> -> PrincipalSearchPage
+  RFC 4511 connector, provider = FED_LDAP
+
+CustomPrincipalDiscovery
+  IPrincipalDiscovery<PrincipalSearchQuery> -> PrincipalSearchPage
+  配置化 HTTP + bearer-JWT connector, provider = FED_CUSTOM
+  以配置映射 request/response schema，集成企业内部自研系统
 
 ScimPrincipalDiscovery
-  IPrincipalDiscovery<ScimProvisioningInput> -> PrincipalProjectionChange
-  Refresh(input: ScimRefreshInput) -> PrincipalProjectionChange
+  IPrincipalDiscovery<ScimRefreshRequest> -> ScimProjectionEvent
+  Refresh(input: ScimRefreshRequest) -> ScimProjectionEvent
 ```
 
 每种实现只验证自己的强类型输入，并产出包含 canonical `issuer`、`external_id`、`kind`、
 来源标识和有界元数据的强类型结果，用于统一 upsert `iam_principal`。storage 和
-authorization handler 只消费规范化投影，不感知 OIDC、Keycloak、LDAP、云 IAM 或 SCIM
-原始 payload。控制面流程为：
+authorization handler 只消费规范化投影，不感知 OIDC、Keycloak、LDAP、custom HTTP、
+云 IAM 或 SCIM 原始 payload。控制面流程为：
 
 源码 API 注释链接当前实现的规范依据：JIT identity projection 链接 OpenID
-Connect Core，Keycloak connector 链接 Keycloak Admin/User Storage 文档，SCIM 数据
-规范化链接 RFC 7643 与 RFC 7644。这些链接用于界定协议责任，不表示
-Authguard 已提供完整 RFC 7644 Server，也不是数据面运行依赖。
+Connect Core，Keycloak connector 链接 Keycloak Admin/User Storage 文档，LDAP
+connector 链接 RFC 4511（协议）与 RFC 4515（过滤器）、RFC 2696（分页），SCIM 数据
+规范化链接 RFC 7643 与 RFC 7644。custom connector 没有外部标准可引用：它是
+企业内部自研系统（如企业 DSP 目录）的逃生通道——其 vendor API 没有公开协议，
+通过配置化的 URL/请求/响应绑定加预签发 bearer JWT 完成映射。这些链接用于界定
+协议责任，不表示 Authguard 已提供完整 RFC 7644 Server，也不是数据面运行依赖。
 
 ```text
 GET  /adm/v1/principals
@@ -346,7 +381,7 @@ POST /adm/v1/role-bindings
 
 ### 4.4 Action
 
-Action 表示“要做什么”，使用点分隔命名：
+Action 表示“要做什么”，使用点分隔命名，如：
 
 ```text
 resource.read
@@ -1145,15 +1180,21 @@ Principal 按需进入 Authguard：
 - 可信 JIT 投影在 Principal 第一次合法请求后幂等记录它。互联网场景无需导入几千万乃至
   上亿个从未被授权、也从未访问应用的账号。
 - 联邦搜索支持管理员给尚未访问应用的 user、workload 或 group 提前授权。协议无关的
-  `FederatedPrincipalDiscovery` 归一化来源候选结果，Authguard 在写入前由服务端重新
-  resolve。
+  `KeycloakPrincipalDiscovery` / `LdapPrincipalDiscovery` /
+  `CustomPrincipalDiscovery` 归一化来源候选结果，Authguard 在写入前由服务端重新
+  resolve；custom connector 用配置化的 URL/请求/响应绑定加预签发 bearer JWT 集成
+  企业内部自研系统（如 DSP 目录）。
 - SCIM 子集 ingestion 通过 `ScimPrincipalDiscovery` 接收规范化的 RFC 7643 User/Group
   upsert/delete 变化，用于企业预开户和快速停用，同时保持按需启用和增量处理；它不是
   RFC 7644 Server。
 
+JIT 对应 2C 互联网个人用户的按需授权；联邦搜索与 SCIM 对应 2B 企业内员工与
+workload/service account 的集中预授权与生命周期集成。
+
 Keycloak 可以联邦 LDAP/Active Directory，并通过自身管理搜索暴露这些用户；这不是
 OIDC 标准能力。通用 OIDC 不定义“管理员搜索 issuer 全量用户”的协议。Authguard 同时
-提供直接 LDAP connector，未来云 IAM connector 也复用同一边界；它们均只用于控制面。
+提供直接 LDAP connector 与配置化 HTTP/JWT custom connector（覆盖企业内部自研
+系统），未来云 IAM connector 也复用同一边界；它们均只用于控制面。
 运行时鉴权始终从 repository 读取本地
 `iam_principal`，并使用不可变策略快照与受信 token claims；IdP/LDAP 故障不得进入
 数据面依赖链。Principal 不写入 `IAuthorizationCache`。
@@ -1205,7 +1246,7 @@ ingestion。
 的鉴权热路径始终只读不可变 L1 快照。多副本生产部署使用 PostgreSQL 与 Redis Cluster，
 业务 OIDC/JWT 不得复用为控制面凭证。
 
-## 12. Flowgent 映射示例
+## 12. [Sigbot](https://github.com/flowgent-labs/flowgent) 集成示例
 
 | Flowgent 概念 | 通用 IAM 概念 |
 |---|---|
@@ -1233,7 +1274,7 @@ ingestion。
 
 这里 `agent-flow` 只是受保护资源示例，不是 IAM 模型内置概念。
 
-## 13. Sigbot Core 映射示例
+## 13. [Sigbot](https://github.com/sigbot-projects/sigbot-core) 集成示例
 
 | Sigbot 概念 | 通用 IAM 概念 |
 |---|---|
@@ -1270,8 +1311,8 @@ core/cache   -- Memory/Redis opaque scope-token context 缓存
 core/config  -- authguard.yaml 加载、环境覆盖和校验
 core/model        -- 与存储无关的授权模型、SQL-scope 语义及 HTTP/gRPC DTO
 core/principal/mod.rs        -- discovery 公共模型、trait 与 error
-core/principal/jit.rs        -- 受信 OIDC JIT 投影
-core/principal/federation/   -- 联邦搜索编排以及 Keycloak、LDAP connector
+core/principal/jit.rs        -- 受信 OIDC JIT (Just-In-Time) 投影
+core/principal/federation/   -- Keycloak、LDAP 与 custom HTTP/JWT 联邦搜索 connector
 core/principal/scim.rs       -- RFC 7643 User/Group 子集 ingestion
 core/storage/record.rs       -- SQLite/PostgreSQL 私有 row record
 core/utils        -- identity 解析、HTTP tuple-to-URN 映射、OTel 与 metrics

@@ -128,6 +128,7 @@ pub struct JitPrincipalDiscoveryConfig {
 pub struct FederatedPrincipalDiscoveryConfig {
     pub keycloak: Vec<KeycloakPrincipalDiscoveryConfig>,
     pub ldap: Vec<LdapPrincipalDiscoveryConfig>,
+    pub custom: Vec<CustomPrincipalDiscoveryConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,6 +182,52 @@ pub struct LdapObjectMappingConfig {
     pub search_attributes: Vec<String>,
 }
 
+/// Serde form of a configurable in-house identity API connector.
+///
+/// The connector speaks plain HTTP(S) with a static bearer JWT and maps the
+/// vendor request/response schema in configuration, so no code is needed to
+/// integrate enterprise systems such as an in-house DSP directory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CustomPrincipalDiscoveryConfig {
+    pub discovery_id: String,
+    pub url: String,
+    pub issuer: String,
+    pub jwt_token: String,
+    pub jwt_token_file: String,
+    pub request: CustomRequestBindingConfig,
+    pub response: CustomResponseMappingConfig,
+    #[serde(with = "humantime_serde")]
+    pub connect_timeout: Duration,
+    #[serde(with = "humantime_serde")]
+    pub request_timeout: Duration,
+    pub max_page_size: u32,
+    pub allow_insecure_http: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CustomRequestBindingConfig {
+    pub path: String,
+    pub text_param: String,
+    pub offset_param: String,
+    pub limit_param: String,
+    pub external_id_param: String,
+    pub body_template: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CustomResponseMappingConfig {
+    pub array_path: String,
+    pub id_attr: String,
+    pub display_name_attr: String,
+    pub username_attr: Option<String>,
+    pub email_attr: Option<String>,
+    pub enabled_attr: Option<String>,
+    pub kind_attr: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ScimPrincipalDiscoveryConfig {
@@ -213,7 +260,7 @@ pub struct IdentityConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct StorageConfig {
-    pub backend: String,
+    pub provider: String,
     pub bootstrap_policy: Option<Policy>,
     #[serde(with = "humantime_serde")]
     pub policy_refresh_interval: Duration,
@@ -466,6 +513,51 @@ impl Default for LdapObjectMappingConfig {
     }
 }
 
+impl Default for CustomPrincipalDiscoveryConfig {
+    fn default() -> Self {
+        Self {
+            discovery_id: String::new(),
+            url: String::new(),
+            issuer: String::new(),
+            jwt_token: String::new(),
+            jwt_token_file: String::new(),
+            request: CustomRequestBindingConfig::default(),
+            response: CustomResponseMappingConfig::default(),
+            connect_timeout: Duration::from_secs(3),
+            request_timeout: Duration::from_secs(5),
+            max_page_size: 100,
+            allow_insecure_http: false,
+        }
+    }
+}
+
+impl Default for CustomRequestBindingConfig {
+    fn default() -> Self {
+        Self {
+            path: "/search".to_string(),
+            text_param: "search".to_string(),
+            offset_param: "offset".to_string(),
+            limit_param: "limit".to_string(),
+            external_id_param: "id".to_string(),
+            body_template: None,
+        }
+    }
+}
+
+impl Default for CustomResponseMappingConfig {
+    fn default() -> Self {
+        Self {
+            array_path: String::new(),
+            id_attr: "id".to_string(),
+            display_name_attr: "displayName".to_string(),
+            username_attr: None,
+            email_attr: None,
+            enabled_attr: None,
+            kind_attr: None,
+        }
+    }
+}
+
 impl Default for ScimPrincipalDiscoveryConfig {
     fn default() -> Self {
         Self {
@@ -490,7 +582,7 @@ impl Default for ScopeDeliveryConfig {
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
-            backend: "sqlite".to_string(),
+            provider: "SQLite".to_string(),
             bootstrap_policy: None,
             policy_refresh_interval: Duration::from_secs(5),
             policy_max_staleness: Duration::from_secs(30),

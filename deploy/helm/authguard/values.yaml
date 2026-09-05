@@ -191,6 +191,9 @@ authguard:
         federated:
           keycloak: []
           ldap: []
+          # In-house identity systems (e.g. an enterprise DSP directory)
+          # integrate via configurable request/response mapping + bearer JWT.
+          custom: []
         scim:
           enabled: false
           discovery_id: corporate-scim

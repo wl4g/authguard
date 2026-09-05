@@ -206,7 +206,7 @@ fn policy() -> Policy {
         id: "default".to_string(),
         revision: 1,
         name: "Customer growth authorization".to_string(),
-        description: "Cross-backend normalized IAM contract".to_string(),
+        description: "Cross-provider normalized IAM contract".to_string(),
         actions: vec![
             Action {
                 identifier: "customer-growth.job.read".to_string(),

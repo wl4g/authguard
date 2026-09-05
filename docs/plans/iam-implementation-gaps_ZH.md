@@ -45,10 +45,12 @@
 
 ### 2.2 联邦 connector 覆盖范围
 
-当前实际发布的 federated connector 是 Keycloak；Keycloak 可间接搜索其 LDAP/AD
-federation 用户。尚未发布直接 LDAP、AWS/GCP IAM 或自研 IdP connector。扩展实现应继续
-遵循 `IPrincipalDiscovery<Input>` 与 `IPrincipalResolver`，不得把来源协议泄漏到 handler
-或 storage。
+当前实际发布的 federated connector 为：Keycloak（可间接搜索其 LDAP/AD federation
+用户）、直接 RFC 4511 LDAP，以及配置化 HTTP + bearer-JWT 的
+`CustomPrincipalDiscovery`（覆盖企业内部自研系统，如 DSP 目录）。尚未发布
+AWS/GCP 等云 IAM connector。扩展实现应继续遵循 `IPrincipalDiscovery<Input>` 统一
+契约（`provider()` 标识协议、`discover` 执行搜索、`resolve_principal` 服务端重新
+解析），不得把来源协议泄漏到 handler 或 storage。
 
 ## 3. 条件与策略能力缺口
 

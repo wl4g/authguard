@@ -16,8 +16,9 @@ Authguard 负责 Envoy extAuth gRPC 请求到 action/Resource URN 的映射、�
 
 Principal 通过统一的泛型 `IPrincipalDiscovery<Input>` 边界进入 Authguard：可信 JIT 投影处理首次
 合法访问，控制面联邦搜索支持管理员在首次登录前授权，SCIM 子集 ingestion 接收可选的
-企业生命周期变化。随服务发布的联邦 connector 同时支持 Keycloak Admin API（包括由
-Keycloak 从 LDAP/AD 联邦而来的身份）与直接 RFC 4511 LDAP 搜索。当前 SCIM 实现是
+企业生命周期变化。随服务发布的联邦 connector 支持 Keycloak Admin API（包括由
+Keycloak 从 LDAP/AD 联邦而来的身份）、直接 RFC 4511 LDAP 搜索，以及配置化
+HTTP + bearer-JWT connector 集成企业内部自研身份系统。当前 SCIM 实现是
 RFC 7643 User/Group 子集的增量 ingestion adapter，
 不是完整 RFC 7644 SCIM Server。三种方式都规范化并幂等写入同一张
 `iam_principal`，不会建立协议专属账号表。
@@ -60,7 +61,9 @@ policy 都不进入 Memory/Redis cache。
 IAM administrator
   -> IPrincipalDiscovery<Input>
        JitPrincipalDiscovery        受信身份首次访问
-       FederatedPrincipalDiscovery  管理面联邦搜索（Keycloak Admin API 或 LDAP）
+       KeycloakPrincipalDiscovery   管理面联邦搜索（Keycloak Admin API）
+       LdapPrincipalDiscovery       管理面联邦搜索（直接 RFC 4511 LDAP）
+       CustomPrincipalDiscovery     管理面联邦搜索（配置化 HTTP + JWT）
        ScimPrincipalDiscovery       RFC 7643 User/Group 子集 ingestion
   -> 幂等物化 iam_principal
   -> Authguard /adm/v1/** (policy 与 role-binding control plane)
@@ -114,7 +117,7 @@ src/core/src
   principal/
     mod.rs       discovery 公共模型、trait 与 error
     jit.rs       受信 OIDC JIT 投影
-    federation/   联邦搜索编排以及 Keycloak、LDAP connector
+    federation/   Keycloak、LDAP 与配置化 HTTP/JWT 联邦搜索
     scim.rs      RFC 7643 User/Group 子集 ingestion
   storage/      SQLite/PostgreSQL repository 与私有 row record
   cache/        Memory/Redis opaque scope-token context cache

@@ -121,8 +121,8 @@ impl JitPrincipalDiscovery {
 impl IPrincipalDiscovery<VerifiedOidcPrincipal> for JitPrincipalDiscovery {
     type Output = PrincipalProjection;
 
-    fn id(&self) -> &str {
-        &self.provider_id
+    fn provider(&self) -> &'static str {
+        "JIT"
     }
 
     async fn discover(
@@ -133,6 +133,15 @@ impl IPrincipalDiscovery<VerifiedOidcPrincipal> for JitPrincipalDiscovery {
             provider_id: self.provider_id.clone(),
             message: error.to_string(),
         })
+    }
+
+    async fn resolve_principal(
+        &self,
+        _reference: &ExternalPrincipalRef,
+    ) -> Result<Option<PrincipalProjection>, PrincipalDiscoveryError> {
+        Err(PrincipalDiscoveryError::InvalidQuery(
+            "JIT projection does not search external identity stores".to_string(),
+        ))
     }
 }
 

@@ -69,6 +69,29 @@ auth:
     federated:
       keycloak: []
       ldap: []
+      # In-house identity systems (e.g. an enterprise DSP directory) integrate
+      # through configurable request/response mapping plus a bearer JWT.
+      # custom:
+      #   - discovery_id: dsp-directory
+      #     url: https://dsp.example.com/identity
+      #     issuer: https://dsp.example.com
+      #     jwt_token: ""  # or jwt_token_file: /run/secrets/dsp-jwt
+      #     request:
+      #       path: api/v1/users/{kind}/search
+      #       text_param: search
+      #       offset_param: offset
+      #       limit_param: limit
+      #       external_id_param: id
+      #       # body_template: '{"query":"{{search}}","offset":{{offset}},"limit":{{limit}},"kind":"{{kind}}"}'
+      #     response:
+      #       array_path: /items
+      #       id_attr: id
+      #       display_name_attr: display_name
+      #       username_attr: username
+      #       email_attr: email
+      #       enabled_attr: enabled
+      #       kind_attr: kind
+      custom: []
     scim:
       enabled: false
       discovery_id: corporate-scim
@@ -78,9 +101,7 @@ auth:
   admin_token: ""
 
 storage:
-  # SQLite is the zero-dependency single-replica backend. PostgreSQL is required
-  # for durable multi-replica policy administration.
-  backend: sqlite
+  provider: SQLite
   bootstrap_policy: null
   policy_refresh_interval: 5s
   # Readiness fails when no complete policy refresh succeeds within this window.

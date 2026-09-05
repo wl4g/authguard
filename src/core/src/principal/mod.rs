@@ -19,9 +19,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 pub use crate::model::PrincipalKind;
-pub use federation::{
-    FederatedPrincipalDiscovery, KeycloakPrincipalDiscovery, LdapPrincipalDiscovery,
-};
+pub use federation::{CustomPrincipalDiscovery, KeycloakPrincipalDiscovery, LdapPrincipalDiscovery};
 pub use jit::{JitPrincipalDiscovery, PrincipalProjectionError};
 pub use scim::{
     ScimGroupResource, ScimPrincipalDiscovery, ScimProjectionEvent, ScimRefreshRequest,
@@ -69,6 +67,8 @@ pub struct PrincipalSearchQuery {
     pub text: String,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub kinds: BTreeSet<PrincipalKind>,
+    /// Provider protocol identifiers such as `FED_KEYCLOAK`, `FED_LDAP`, or
+    /// `FED_CUSTOM`. When empty, all configured providers are searched.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub provider_ids: BTreeSet<String>,
     pub per_provider_limit: u32,
@@ -104,6 +104,33 @@ pub struct PrincipalSearchPage {
     pub principals: Vec<PrincipalProjection>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub next_cursors: BTreeMap<String, String>,
+}
+
+/// Validates the shared search-request bounds before any provider I/O.
+///
+/// Every federated provider enforces the same text and page-size limits, so
+/// the check is defined once next to the query type.
+pub(crate) fn validate_search_query(
+    query: &PrincipalSearchQuery,
+) -> Result<(), PrincipalDiscoveryError> {
+    if query.text.trim().is_empty() {
+        return Err(PrincipalDiscoveryError::InvalidQuery(
+            "search text must not be empty".to_string(),
+        ));
+    }
+    if query.text.len() > PrincipalSearchQuery::MAX_TEXT_BYTES {
+        return Err(PrincipalDiscoveryError::InvalidQuery(format!(
+            "search text must not exceed {} bytes",
+            PrincipalSearchQuery::MAX_TEXT_BYTES
+        )));
+    }
+    if !(1..=PrincipalSearchQuery::MAX_PAGE_SIZE).contains(&query.per_provider_limit) {
+        return Err(PrincipalDiscoveryError::InvalidQuery(format!(
+            "per_provider_limit must be between 1 and {}",
+            PrincipalSearchQuery::MAX_PAGE_SIZE
+        )));
+    }
+    Ok(())
 }
 
 /// Principal claims supplied only after an upstream OIDC verifier has
@@ -162,6 +189,12 @@ pub enum PrincipalDiscoveryError {
 ///
 /// JIT projection, federated search, and SCIM synchronization share this
 /// contract without being forced into one operation-specific interface.
+///
+/// A search-capable implementation (Keycloak Admin REST, LDAP per RFC 4511,
+/// cloud IAM, or a custom enterprise identity API) re-resolves a selected
+/// search result through [`IPrincipalDiscovery::resolve_principal`] so the
+/// management API never trusts client-supplied candidate data.
+/// <https://www.rfc-editor.org/rfc/rfc4511.html>
 #[async_trait]
 pub trait IPrincipalDiscovery<Input>: Send + Sync + 'static
 where
@@ -169,7 +202,12 @@ where
 {
     type Output: Send + 'static;
 
-    fn id(&self) -> &str;
+    /// Identifies the discovery provider protocol.
+    ///
+    /// Federated search connectors return `FED_KEYCLOAK`, `FED_LDAP`, or
+    /// `FED_CUSTOM`; the JIT projection returns `JIT` and SCIM
+    /// synchronization returns `SCIM`.
+    fn provider(&self) -> &'static str;
 
     /// Executes one discovery operation.
     ///
@@ -177,12 +215,8 @@ where
     ///
     /// Returns validation, authentication, transport, or protocol errors.
     async fn discover(&self, input: Input) -> Result<Self::Output, PrincipalDiscoveryError>;
-}
 
-/// Narrow capability for resolving one stable external identity.
-#[async_trait]
-pub trait IPrincipalResolver: Send + Sync + 'static {
-    /// Re-resolves a stable external Principal reference.
+    /// Re-resolves one stable external Principal reference at the source.
     ///
     /// # Errors
     ///
@@ -193,27 +227,12 @@ pub trait IPrincipalResolver: Send + Sync + 'static {
     ) -> Result<Option<PrincipalProjection>, PrincipalDiscoveryError>;
 }
 
-/// Search-capable source that can re-resolve a selected result.
+/// Search-capable external identity source: bounded search plus re-resolution.
 ///
-/// Implementations may use Keycloak Admin REST, LDAP (RFC 4511), cloud IAM,
-/// or a custom enterprise identity API. This protocol-neutral composition
-/// avoids coupling the authorization service to a directory product.
-/// <https://www.rfc-editor.org/rfc/rfc4511.html>
-pub trait IPrincipalSearchDiscovery:
-    IPrincipalDiscovery<PrincipalSearchQuery, Output = PrincipalSearchPage> + IPrincipalResolver
-where
-    Self: Send + Sync + 'static,
-{
-}
-
-impl<T> IPrincipalSearchDiscovery for T where
-    T: IPrincipalDiscovery<PrincipalSearchQuery, Output = PrincipalSearchPage>
-        + IPrincipalResolver
-        + Send
-        + Sync
-        + 'static
-{
-}
+/// A pure type alias for the trait-object spelling; connectors implement
+/// [`IPrincipalDiscovery`] with `PrincipalSearchQuery` input directly.
+pub type PrincipalSearchDiscovery =
+    dyn IPrincipalDiscovery<PrincipalSearchQuery, Output = PrincipalSearchPage>;
 
 /// Supplies a short-lived bearer token for a federated provider's management API.
 #[async_trait]
@@ -334,6 +353,135 @@ impl LdapPrincipalDiscoveryConfig {
             request_timeout: Duration::from_secs(5),
             max_page_size: PrincipalSearchQuery::MAX_PAGE_SIZE,
             allow_insecure: false,
+        }
+    }
+}
+
+/// Request binding for one custom in-house identity API.
+///
+/// Query parameters transport the runtime search/resolve values; the optional
+/// body template is rendered for POST requests with the same placeholder
+/// values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomRequestBinding {
+    pub path: String,
+    /// Query parameter carrying the search text (e.g. `search`).
+    pub text_param: String,
+    /// Query parameter carrying the 0-based page offset (e.g. `offset`).
+    pub offset_param: String,
+    /// Query parameter carrying the page size (e.g. `limit`).
+    pub limit_param: String,
+    /// Query parameter carrying the external ID during resolve (e.g. `id`).
+    pub external_id_param: String,
+    /// Optional JSON body template for POST requests.
+    pub body_template: Option<String>,
+}
+
+impl CustomRequestBinding {
+    /// Placeholder names rendered in `{{name}}` tokens of the path and the
+    /// optional body template.
+    pub const SEARCH_PLACEHOLDER: &'static str = "search";
+    pub const OFFSET_PLACEHOLDER: &'static str = "offset";
+    pub const LIMIT_PLACEHOLDER: &'static str = "limit";
+    pub const KIND_PLACEHOLDER: &'static str = "kind";
+    pub const EXTERNAL_ID_PLACEHOLDER: &'static str = "external_id";
+
+    #[must_use]
+    pub fn new(
+        path: impl Into<String>,
+        text_param: impl Into<String>,
+        offset_param: impl Into<String>,
+        limit_param: impl Into<String>,
+        external_id_param: impl Into<String>,
+    ) -> Self {
+        Self {
+            path: path.into(),
+            text_param: text_param.into(),
+            offset_param: offset_param.into(),
+            limit_param: limit_param.into(),
+            external_id_param: external_id_param.into(),
+            body_template: None,
+        }
+    }
+}
+
+/// Response attribute mapping for one custom in-house identity API.
+///
+/// `array_path` selects the result array inside the JSON payload with a
+/// JSON-pointer path such as `/data/items`; an empty path means the payload is
+/// itself the array. `<https://www.rfc-editor.org/rfc/rfc6901.html>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomResponseMapping {
+    pub array_path: String,
+    pub id_attr: String,
+    pub display_name_attr: String,
+    pub username_attr: Option<String>,
+    pub email_attr: Option<String>,
+    pub enabled_attr: Option<String>,
+    pub kind_attr: Option<String>,
+}
+
+impl CustomResponseMapping {
+    #[must_use]
+    pub fn new(
+        id_attr: impl Into<String>,
+        display_name_attr: impl Into<String>,
+    ) -> Self {
+        Self {
+            array_path: String::new(),
+            id_attr: id_attr.into(),
+            display_name_attr: display_name_attr.into(),
+            username_attr: None,
+            email_attr: None,
+            enabled_attr: None,
+            kind_attr: None,
+        }
+    }
+}
+
+/// Connection, request, and response settings for one custom in-house
+/// identity API (e.g. an enterprise DSP user system).
+///
+/// The connector requires no proprietary protocol: the operator maps the
+/// vendor's request binding and response attribute names in configuration,
+/// and the connector speaks plain HTTP(S) with a static bearer JWT.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomPrincipalDiscoveryConfig {
+    pub provider_id: String,
+    pub url: String,
+    /// Stable namespace used with the source's immutable external ID.
+    pub issuer: String,
+    /// Pre-issued bearer JWT for the in-house identity API.
+    pub jwt_token: String,
+    pub request: CustomRequestBinding,
+    pub response: CustomResponseMapping,
+    pub connect_timeout: Duration,
+    pub request_timeout: Duration,
+    pub max_page_size: u32,
+    pub allow_insecure_http: bool,
+}
+
+impl CustomPrincipalDiscoveryConfig {
+    #[must_use]
+    pub fn new(
+        provider_id: impl Into<String>,
+        url: impl Into<String>,
+        issuer: impl Into<String>,
+        jwt_token: impl Into<String>,
+        request: CustomRequestBinding,
+        response: CustomResponseMapping,
+    ) -> Self {
+        Self {
+            provider_id: provider_id.into(),
+            url: url.into(),
+            issuer: issuer.into(),
+            jwt_token: jwt_token.into(),
+            request,
+            response,
+            connect_timeout: Duration::from_secs(3),
+            request_timeout: Duration::from_secs(5),
+            max_page_size: PrincipalSearchQuery::MAX_PAGE_SIZE,
+            allow_insecure_http: false,
         }
     }
 }

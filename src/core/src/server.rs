@@ -11,9 +11,11 @@ use crate::handler::{
 };
 use crate::model::AccessContextSigner;
 use crate::principal::{
-    FederatedPrincipalDiscovery, IPrincipalSearchDiscovery, JitPrincipalDiscovery,
-    KeycloakPrincipalDiscovery, KeycloakPrincipalDiscoveryConfig, LdapObjectMapping,
-    LdapPrincipalDiscovery, LdapPrincipalDiscoveryConfig, ScimPrincipalDiscovery,
+    CustomPrincipalDiscovery, CustomPrincipalDiscoveryConfig, CustomRequestBinding,
+    CustomResponseMapping, IPrincipalDiscovery, JitPrincipalDiscovery, KeycloakPrincipalDiscovery,
+    KeycloakPrincipalDiscoveryConfig, LdapObjectMapping, LdapPrincipalDiscovery,
+    LdapPrincipalDiscoveryConfig, PrincipalDiscoveryError, PrincipalSearchDiscovery,
+    PrincipalSearchPage, PrincipalSearchQuery, ScimPrincipalDiscovery,
 };
 use crate::route::{AuthorizationRoutes, ManagementRoutes};
 use crate::storage;
@@ -58,13 +60,14 @@ impl AuthguardServer {
         let telemetry = init_telemetry(&self.config.telemetry_config())?;
         tracing::info!(
             service.name = %self.config.server.service_name,
-            authguard.storage.backend = %self.config.storage.backend,
+            authguard.storage.provider = %self.config.storage.provider,
             authguard.cache.provider = %self.config.cache.provider,
             authguard.management.enabled = self.config.mgmt.enabled,
             authguard.principal.jit_enabled = self.config.auth.principal_discovery.jit.enabled,
             authguard.principal.federated_provider_count =
                 self.config.auth.principal_discovery.federated.keycloak.len()
-                    + self.config.auth.principal_discovery.federated.ldap.len(),
+                    + self.config.auth.principal_discovery.federated.ldap.len()
+                    + self.config.auth.principal_discovery.federated.custom.len(),
             authguard.principal.scim_enabled = self.config.auth.principal_discovery.scim.enabled,
             "starting Authguard runtime"
         );
@@ -300,6 +303,28 @@ impl ProcessShutdownSignal {
 }
 
 impl RuntimeComponents {
+    /// Adds one search provider, rejecting duplicate protocol identifiers.
+    ///
+    /// Each `FED_KEYCLOAK`/`FED_LDAP` protocol must be configured at most
+    /// once, because search filtering and resolution dispatch on the
+    /// protocol identifier.
+    fn push_search_provider<T>(
+        providers: &mut Vec<Arc<PrincipalSearchDiscovery>>,
+        provider: T,
+    ) -> anyhow::Result<()>
+    where
+        T: IPrincipalDiscovery<PrincipalSearchQuery, Output = PrincipalSearchPage>,
+    {
+        let protocol = provider.provider();
+        if providers.iter().any(|existing| existing.provider() == protocol) {
+            anyhow::bail!(PrincipalDiscoveryError::InvalidConfiguration(format!(
+                "search provider protocol `{protocol}` is already configured"
+            )));
+        }
+        providers.push(Arc::new(provider));
+        Ok(())
+    }
+
     async fn open(config: &AuthguardConfig) -> anyhow::Result<Self> {
         let cache = cache::open(&config.cache).await?;
         tracing::info!(
@@ -308,7 +333,7 @@ impl RuntimeComponents {
         );
         let repositories = storage::open(&config.storage).await?;
         tracing::info!(
-            authguard.storage.backend = %config.storage.backend,
+            authguard.storage.provider = %config.storage.provider,
             "authorization storage is ready"
         );
         let metrics = MetricsRegistry::default();
@@ -327,7 +352,7 @@ impl RuntimeComponents {
             })
             .transpose()
             .context("configure OIDC JIT Principal discovery")?;
-        let mut discoveries: Vec<Arc<dyn IPrincipalSearchDiscovery>> = Vec::new();
+        let mut discoveries: Vec<Arc<PrincipalSearchDiscovery>> = Vec::new();
         for keycloak in &config.auth.principal_discovery.federated.keycloak {
             let mut provider = KeycloakPrincipalDiscoveryConfig::new(
                 keycloak.discovery_id.clone(),
@@ -339,18 +364,17 @@ impl RuntimeComponents {
             provider.request_timeout = keycloak.request_timeout;
             provider.max_page_size = keycloak.max_page_size;
             provider.allow_insecure_http = keycloak.allow_insecure_http;
-            discoveries.push(Arc::new(
-                KeycloakPrincipalDiscovery::with_client_credentials(
-                    provider,
-                    keycloak.client_id.clone(),
-                    Self::credential(
-                        &keycloak.client_secret,
-                        &keycloak.client_secret_file,
-                        "Keycloak client secret",
-                    )?,
-                )
-                .context("configure Keycloak Principal discovery")?,
-            ));
+            let provider = KeycloakPrincipalDiscovery::with_client_credentials(
+                provider,
+                keycloak.client_id.clone(),
+                Self::credential(
+                    &keycloak.client_secret,
+                    &keycloak.client_secret_file,
+                    "Keycloak client secret",
+                )?,
+            )
+            .context("configure Keycloak Principal discovery")?;
+            Self::push_search_provider(&mut discoveries, provider)?;
         }
         for ldap in &config.auth.principal_discovery.federated.ldap {
             let object_mapping = |mapping: &crate::config::LdapObjectMappingConfig| {
@@ -384,16 +408,49 @@ impl RuntimeComponents {
             provider.request_timeout = ldap.request_timeout;
             provider.max_page_size = ldap.max_page_size;
             provider.allow_insecure = ldap.allow_insecure;
-            discoveries.push(Arc::new(
-                LdapPrincipalDiscovery::new(provider)
-                    .context("configure LDAP Principal discovery")?,
-            ));
+            let provider = LdapPrincipalDiscovery::new(provider)
+                .context("configure LDAP Principal discovery")?;
+            Self::push_search_provider(&mut discoveries, provider)?;
+        }
+        for custom in &config.auth.principal_discovery.federated.custom {
+            let request = CustomRequestBinding {
+                path: custom.request.path.clone(),
+                text_param: custom.request.text_param.clone(),
+                offset_param: custom.request.offset_param.clone(),
+                limit_param: custom.request.limit_param.clone(),
+                external_id_param: custom.request.external_id_param.clone(),
+                body_template: custom.request.body_template.clone(),
+            };
+            let response = CustomResponseMapping {
+                array_path: custom.response.array_path.clone(),
+                id_attr: custom.response.id_attr.clone(),
+                display_name_attr: custom.response.display_name_attr.clone(),
+                username_attr: custom.response.username_attr.clone(),
+                email_attr: custom.response.email_attr.clone(),
+                enabled_attr: custom.response.enabled_attr.clone(),
+                kind_attr: custom.response.kind_attr.clone(),
+            };
+            let mut provider = CustomPrincipalDiscoveryConfig::new(
+                custom.discovery_id.clone(),
+                custom.url.clone(),
+                custom.issuer.clone(),
+                Self::credential(
+                    &custom.jwt_token,
+                    &custom.jwt_token_file,
+                    "custom JWT token",
+                )?,
+                request,
+                response,
+            );
+            provider.connect_timeout = custom.connect_timeout;
+            provider.request_timeout = custom.request_timeout;
+            provider.max_page_size = custom.max_page_size;
+            provider.allow_insecure_http = custom.allow_insecure_http;
+            let provider = CustomPrincipalDiscovery::new(provider)
+                .context("configure custom Principal discovery")?;
+            Self::push_search_provider(&mut discoveries, provider)?;
         }
         let federated_provider_count = discoveries.len();
-        let federated = (!discoveries.is_empty())
-            .then(|| FederatedPrincipalDiscovery::new(discoveries))
-            .transpose()
-            .context("configure federated Principal discovery")?;
         let scim = config
             .auth
             .principal_discovery
@@ -406,7 +463,7 @@ impl RuntimeComponents {
             .transpose()
             .context("configure SCIM Principal discovery")?;
         let principals =
-            PrincipalHandler::new(repositories.principals.clone(), jit, federated, scim);
+            PrincipalHandler::new(repositories.principals.clone(), jit, discoveries, scim);
         tracing::info!(
             authguard.principal.jit_enabled = config.auth.principal_discovery.jit.enabled,
             authguard.principal.federated_provider_count = federated_provider_count,

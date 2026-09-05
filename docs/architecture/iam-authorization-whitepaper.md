@@ -1,4 +1,4 @@
-# Authguard Enterprise IAM Authorization Whitepaper
+# Authguard Enterprise IAM Authorization System Design
 
 - **Status:** Architecture Baseline
 - **Date:** 2026-09-03
@@ -7,23 +7,22 @@
 
 ## 1. Summary
 
-This document defines a generic, standalone, enterprise-grade resource
+- This document defines a generic, standalone, enterprise-grade resource
 authorization architecture. It is not bound to any business system. A business
-system only needs to expose its objects as protected resources, then authorize
-them through Resource URNs, actions, roles, role bindings, conditions, and resource
-adapters.
+microservice only needs to expose its objects as protected resources, then authorize
+them through Resource URNs, actions, roles, role bindings, conditions, and authguard adapters SDK.
 
-Authguard is a standalone authorization plane designed for deep Envoy Gateway
+- Authguard is a standalone authorization plane designed for deep Envoy Gateway
 integration. Envoy Gateway owns ingress, OIDC/JWT authentication, routing, and
 traffic policy. Authguard combines enterprise RBAC with resource-oriented URN
 role bindings so the external-authorization data plane and business adapters can answer
 two questions with one policy model:
 
-1. May this Principal perform this action on this concrete resource?
-2. Which resource rows may this Principal see inside a business service database
-   query?
+  1. May this Principal perform this action on this concrete resource?
+  2. Which resource rows may this Principal see inside a business service database
+     query?
 
-From a B2B/B2C access-management perspective, Authguard is most suitable for
+- From a B2B/B2C scenario access-management perspective, Authguard is most suitable for
 B2B and B2B2C systems. The practical boundary is not the business label; it is
 whether multiple people or system principals collaborate while holding different
 roles and different resource scopes inside the same team, tenant, or resource
@@ -35,32 +34,32 @@ audit back offices. For a simple rule such as "a consumer may only access their
 own orders", direct field predicates are usually enough and a full IAM
 authorization plane may be heavier than necessary.
 
-Core decisions:
+- Core decisions:
 
-- Authentication answers "who is calling".
-- Authorization answers "which action can the caller perform on which resource".
-- `iam_principal` is an authorization-side projection of an identity already
-  authenticated by an external system; it never stores credentials.
-- `USER`, `WORKLOAD`, and `GROUP` are one Principal abstraction. OIDC identities
-  are uniquely identified by `(issuer, external_id)`, where `external_id` is
-  the `sub` claim. A bare `sub`, email address, or username is never an identity
-  key.
-- Actions use `iam_action`, roles use `iam_role`, role composition uses
-  `iam_role_action`, and assignments use `iam_role_binding`.
-- `IPrincipalDiscovery<Input>` unifies trusted JIT projection, control-plane federated
-  search, and RFC 7643 User/Group subset ingestion. All three paths normalize and idempotently
-  materialize the same `iam_principal` record. The data plane may perform local
-  JIT for an already verified identity; federated search and SCIM ingestion do
-  not participate in a data-plane authorization decision.
-- Resource identity uses an internal `urn:iam:...` Resource URN based on the
-  RFC 8141 URN syntax style.
-- IAM core does not maintain an `iam_resource` table. Business tables remain the
-  source of truth for resource existence, attributes, and lifecycle.
-- Request tuples are route/resource matchers, not the resource permission model.
-- Resource listing is handled by business Resource Adapters that compile the
-  action-specific `AuthorizationScope` into SQL scopes.
+  - Authentication answers "who is calling".
+  - Authorization answers "which action can the caller perform on which resource".
+  - `iam_principal` is an authorization-side projection of an identity already
+    authenticated by an external system; it never stores credentials.
+  - `USER`, `WORKLOAD`, and `GROUP` are one Principal abstraction. OIDC identities
+    are uniquely identified by `(issuer, external_id)`, where `external_id` is
+    the `sub` claim. A bare `sub`, email address, or username is never an identity
+    key.
+  - Actions use `iam_action`, roles use `iam_role`, role composition uses
+    `iam_role_action`, and assignments use `iam_role_binding`.
+  - `IPrincipalDiscovery<Input>` unifies trusted JIT (Just-In-Time) projection, control-plane federated
+    search, and RFC 7643 User/Group subset ingestion. All three paths normalize and idempotently
+    materialize the same `iam_principal` record. The data plane may perform local
+    JIT for an already verified identity; federated search and SCIM ingestion do
+    not participate in a data-plane authorization decision.
+  - Resource identity uses an internal `urn:iam:...` Resource URN based on the
+    RFC 8141 URN syntax style.
+  - IAM core does not maintain an `iam_resource` table. Business tables remain the
+    source of truth for resource existence, attributes, and lifecycle.
+  - Request tuples are route/resource matchers, not the resource permission model.
+  - Resource listing is handled by business Resource Adapters that compile the
+    action-specific `AuthorizationScope` into SQL scopes.
 
-The standard deployment consists of the Envoy Gateway controller, its managed
+- The standard deployment consists of the Envoy Gateway controller, its managed
 Envoy Proxy data plane, and one Authguard image. Authguard does not reimplement
 a general API gateway or copy evaluators into business services. Workloads only
 consume trusted access context through adapters.
@@ -154,7 +153,7 @@ requested job. The request is allowed.
 - Accept Envoy Gateway-verified OIDC/JWT user and workload identities.
 - Support principals, roles, role bindings, action catalogs, conditions, and
   route/resource matchers.
-- Discover Principals through trusted JIT projection, control-plane federated
+- Discover Principals through trusted JIT (Just-In-Time) projection, control-plane federated
   search, and RFC 7643 User/Group subset ingestion without requiring an IdP-wide
   preload.
 - Support platform, tenant/domain, and resource-level authorization.
@@ -309,17 +308,47 @@ role-binding keys.
 Authguard implements three complementary acquisition paths behind one public
 `IPrincipalDiscovery<Input>` boundary:
 
-1. **Trusted JIT projection:** after Envoy verifies a user or workload token,
+1. **Trusted JIT (Just-In-Time) projection:** after Envoy verifies a user or workload token,
    Authguard idempotently upserts the `(issuer, external_id)` projection. This
    records only identities that actually use protected applications.
-2. **Control-plane federated search:** an administrator searches a configured
-   discovery source. Authguard ships a Keycloak Admin API connector (which also
-   exposes identities federated by Keycloak from LDAP/AD) and a direct RFC 4511
-   LDAP connector. Authguard re-resolves a selected candidate server-side before
+2. **Control-plane federated search:** when an administrator configures a
+   policy in the Authguard UI/API for an employee account, a machine/service
+   account, or another workload account, they normally do not know the external
+   authentication identifier (OIDC `sub`, LDAP `entryUUID`, and so on). The
+   administrator searches a configured discovery source. Authguard ships a
+   Keycloak Admin API connector (which also exposes identities federated by
+   Keycloak from LDAP/AD) and a direct RFC 4511 LDAP connector. Authguard
+   re-resolves a selected candidate server-side by its stable reference before
    materializing the Principal and creating a role binding.
 3. **SCIM-subset ingestion:** the implemented adapter accepts bounded RFC 7643
    User/Group fields and normalizes user/group upserts or delete events into the
    same Principal projection. Delete marks an existing projection `DISABLED`.
+
+Federated search must cover account identifiers; `GROUP` is searched as well,
+but only to fetch display metadata such as group name/path so administrators
+can recognize candidates in the binding UI. The stable authorization key is
+always the immutable `issuer + external_id` (for example `group:<UUID>`), never
+a display name from search results. Search discovers and displays external
+groups; it never copies Keycloak groups, realm roles, or similar external
+objects into a second authorization-policy authority inside Authguard.
+
+The three modes suit different authorization scenarios, and the difference is
+structural. **JIT projection** fits 2C Internet consumer authorization. A
+consumer flow is single-owner by nature: users do not collaborate in teams
+with differing permissions, each user owns only their own data, and there is
+no administrator who pre-assigns rights before access happens. Every consumer
+request traverses the same gateway, so the first verified register/login is
+the moment Authguard first observes the identity — JIT materializes the
+Principal then and there, with no provisioning pipeline and no full-directory
+preload. That Principal also enables defense in depth behind the gateway: the
+business microservice can double-check authorization from the context
+Authguard injects, compiling it into a SQL scope so a consumer can only CRUD
+their own rows. **SCIM ingestion and federated search** fit 2B enterprise
+scenarios, where the shape is the opposite: employees and workload/service
+accounts collaborate under differing permissions, an administrator grants
+rights — often before the account has ever logged in — and the IdP/HR system
+centrally owns the account lifecycle: federated search finds the external
+identifier, SCIM applies pushed lifecycle changes.
 
 JIT plus federated search is the default for Internet platforms, including
 identity populations of hundreds of millions: Authguard stores only Principals
@@ -370,30 +399,46 @@ strongly typed contract rather than one tagged request with unsupported modes:
 
 ```text
 IPrincipalDiscovery<Input>
+  provider() -> 'static str              -- JIT / SCIM / FED_KEYCLOAK / FED_LDAP / FED_CUSTOM
   Discover(input: Input) -> Output
+  ResolvePrincipal(reference) -> Option<PrincipalProjection>
 
 JitPrincipalDiscovery
-  IPrincipalDiscovery<VerifiedPrincipalInput> -> PrincipalProjection
+  IPrincipalDiscovery<VerifiedOidcPrincipal> -> PrincipalProjection
 
-FederatedPrincipalDiscovery
-  IPrincipalDiscovery<PrincipalSearchInput> -> PrincipalCandidatePage
-  shipped connectors: Keycloak Admin API and direct RFC 4511 LDAP
+KeycloakPrincipalDiscovery
+  IPrincipalDiscovery<PrincipalSearchQuery> -> PrincipalSearchPage
+  Keycloak Admin API connector, provider = FED_KEYCLOAK
+
+LdapPrincipalDiscovery
+  IPrincipalDiscovery<PrincipalSearchQuery> -> PrincipalSearchPage
+  RFC 4511 connector, provider = FED_LDAP
+
+CustomPrincipalDiscovery
+  IPrincipalDiscovery<PrincipalSearchQuery> -> PrincipalSearchPage
+  Configurable HTTP + bearer-JWT connector, provider = FED_CUSTOM
+  request/response schema mapped in configuration for in-house systems
 
 ScimPrincipalDiscovery
-  IPrincipalDiscovery<ScimProvisioningInput> -> PrincipalProjectionChange
-  Refresh(input: ScimRefreshInput) -> PrincipalProjectionChange
+  IPrincipalDiscovery<ScimRefreshRequest> -> ScimProjectionEvent
+  Refresh(input: ScimRefreshRequest) -> ScimProjectionEvent
 ```
 
 Each implementation validates only its own input and produces a strongly typed
 result containing the canonical `issuer`, `external_id`, `kind`, source
 identifier, and bounded metadata needed to upsert `iam_principal`. Storage and
 authorization handlers consume the normalized projection rather than any OIDC,
-Keycloak, LDAP, cloud-IAM, or SCIM payload. The control-plane flow is:
+Keycloak, LDAP, custom HTTP, cloud-IAM, or SCIM payload. The control-plane flow is:
 
 Source-level API documentation links the standards governing each implemented
 boundary: JIT identity projection links OpenID Connect Core, the Keycloak
-connector links Keycloak Admin/User Storage documentation, and SCIM data
-normalization links RFC 7643 and RFC 7644. These links delimit protocol
+connector links Keycloak Admin/User Storage documentation, the LDAP connector
+links RFC 4511 (protocol), RFC 4515 (filters), and RFC 2696 (paging), and SCIM
+data normalization links RFC 7643 and RFC 7644. The custom connector has no
+external standard to cite; it is the escape hatch for in-house systems (e.g. an
+enterprise DSP directory) whose vendor API has no public protocol, mapped
+through configurable URL/request/response bindings plus a pre-issued bearer JWT.
+These links delimit protocol
 responsibility; they neither claim a complete RFC 7644 server nor create a
 data-plane dependency.
 
@@ -415,7 +460,7 @@ produces the stable internal `principal_id` referenced by `iam_role_binding`.
 
 ### 4.4 Action
 
-Action means "what to do" and uses dot-separated names:
+Action means "what to do" and uses dot-separated names, e.g:
 
 ```text
 resource.read
@@ -1295,8 +1340,11 @@ Principal acquisition is deliberately sparse:
   of accounts that never receive an Authguard binding.
 - Federated search lets an administrator pre-authorize a user, workload, or
   group that has not accessed the application. The protocol-neutral
-  `FederatedPrincipalDiscovery` normalizes source candidates, and Authguard
-  re-resolves the selected candidate before insertion.
+  `KeycloakPrincipalDiscovery` / `LdapPrincipalDiscovery` /
+  `CustomPrincipalDiscovery` connectors normalize source candidates, and
+  Authguard re-resolves the selected candidate before insertion. The custom
+  connector maps an in-house system's request/response schema in configuration
+  and authenticates with a pre-issued bearer JWT.
 - SCIM-subset ingestion accepts normalized RFC 7643 User/Group upsert/delete
   changes through `ScimPrincipalDiscovery`. It supports enterprise
   pre-provisioning and prompt disablement while remaining incremental and
@@ -1304,7 +1352,8 @@ Principal acquisition is deliberately sparse:
 
 Keycloak can federate LDAP/Active Directory and expose those users through its
 administration search. Generic OIDC itself does not define an administrative
-user-search protocol. Authguard also ships a direct LDAP connector; future
+user-search protocol. Authguard also ships a direct LDAP connector and a
+configurable HTTP/JWT custom connector for in-house systems; future
 cloud-IAM connectors use the same boundary. Every connector is confined to the
 control plane. Every runtime authorization request
 loads local `iam_principal` state from the repository and uses an immutable
@@ -1313,9 +1362,13 @@ enter the data-plane dependency chain. Principals are not stored in
 `IAuthorizationCache`.
 
 All three implementations use the generic `IPrincipalDiscovery<Input>` contract
-and converge on the same `iam_principal` upsert. JIT plus federated search remains
-the minimal/default Internet deployment; enabling the implemented SCIM adapter
-does not add SCIM or an external directory to the runtime authorization path.
+and converge on the same `iam_principal` upsert. JIT projection targets 2C
+Internet consumer authorization with on-demand materialization; federated
+search and SCIM ingestion target 2B enterprise authorization for centrally
+managed employees and workload/service accounts. JIT plus federated search
+remains the minimal/default Internet deployment; enabling the implemented SCIM
+adapter does not add SCIM or an external directory to the runtime authorization
+path.
 
 ## 10. Workload access context
 
@@ -1371,7 +1424,7 @@ repository revision while every hot authorization path reads only its immutable 
 snapshot. Multi-replica production uses PostgreSQL plus Redis Cluster. Workload
 OIDC/JWT credentials must not be reused for control-plane access.
 
-## 12. Flowgent mapping example
+## 12. Example of [Flowgent](https://github.com/flowgent-labs/flowgent)
 
 | Flowgent concept | Generic IAM concept |
 |---|---|
@@ -1400,7 +1453,7 @@ Route matcher example:
 `agent-flow` is only an example protected resource type. It is not built into
 the IAM model.
 
-## 13. Sigbot Core mapping example
+## 13. Example of [Sigbot](https://github.com/sigbot-projects/sigbot-core) integration
 
 | Sigbot concept | Generic IAM concept |
 |---|---|
@@ -1439,7 +1492,7 @@ core/config  -- authguard.yaml loading, environment overrides, validation
 core/model        -- storage-independent authorization models, SQL scopes, and transport DTOs
 core/principal/mod.rs        -- discovery models, traits, and errors
 core/principal/jit.rs        -- trusted OIDC JIT projection
-core/principal/federation/   -- federated search composition, Keycloak, and LDAP connectors
+core/principal/federation/   -- Keycloak, LDAP, and custom HTTP/JWT federated search connectors
 core/principal/scim.rs       -- RFC 7643 User/Group subset ingestion
 core/storage/record.rs       -- private SQLite/PostgreSQL row records
 core/utils        -- identity parsing, HTTP tuple-to-URN mapping, OTel, metrics

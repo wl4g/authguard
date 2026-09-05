@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::model::PrincipalKind;
 use crate::principal::{
-    ExternalPrincipalRef, IPrincipalDiscovery, IPrincipalResolver, LdapObjectMapping,
+    validate_search_query, ExternalPrincipalRef, IPrincipalDiscovery, LdapObjectMapping,
     LdapPrincipalDiscoveryConfig, PrincipalDiscoveryError, PrincipalProjection,
     PrincipalSearchPage, PrincipalSearchQuery,
 };
@@ -347,27 +347,6 @@ impl LdapPrincipalDiscovery {
         PrincipalDiscoveryError::InvalidConfiguration(format!("LDAP {}", message.into()))
     }
 
-    fn validate_query(query: &PrincipalSearchQuery) -> Result<(), PrincipalDiscoveryError> {
-        if query.text.trim().is_empty() {
-            return Err(PrincipalDiscoveryError::InvalidQuery(
-                "search text must not be empty".to_string(),
-            ));
-        }
-        if query.text.len() > PrincipalSearchQuery::MAX_TEXT_BYTES {
-            return Err(PrincipalDiscoveryError::InvalidQuery(format!(
-                "search text must not exceed {} bytes",
-                PrincipalSearchQuery::MAX_TEXT_BYTES
-            )));
-        }
-        if !(1..=PrincipalSearchQuery::MAX_PAGE_SIZE).contains(&query.per_provider_limit) {
-            return Err(PrincipalDiscoveryError::InvalidQuery(format!(
-                "per_provider_limit must be between 1 and {}",
-                PrincipalSearchQuery::MAX_PAGE_SIZE
-            )));
-        }
-        Ok(())
-    }
-
     fn supports_kind(query: &PrincipalSearchQuery, kind: PrincipalKind) -> bool {
         query.kinds.is_empty() || query.kinds.contains(&kind)
     }
@@ -567,15 +546,15 @@ impl LdapPrincipalDiscovery {
 impl IPrincipalDiscovery<PrincipalSearchQuery> for LdapPrincipalDiscovery {
     type Output = PrincipalSearchPage;
 
-    fn id(&self) -> &str {
-        &self.config.provider_id
+    fn provider(&self) -> &'static str {
+        "FED_LDAP"
     }
 
     async fn discover(
         &self,
         query: PrincipalSearchQuery,
     ) -> Result<Self::Output, PrincipalDiscoveryError> {
-        Self::validate_query(&query)?;
+        validate_search_query(&query)?;
         if !query.provider_ids.is_empty() && !query.provider_ids.contains(&self.config.provider_id)
         {
             return Ok(PrincipalSearchPage::default());
@@ -618,10 +597,7 @@ impl IPrincipalDiscovery<PrincipalSearchQuery> for LdapPrincipalDiscovery {
             (false, false) => Ok(PrincipalSearchPage::default()),
         }
     }
-}
 
-#[async_trait]
-impl IPrincipalResolver for LdapPrincipalDiscovery {
     async fn resolve_principal(
         &self,
         reference: &ExternalPrincipalRef,

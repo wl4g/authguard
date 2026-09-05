@@ -1,16 +1,18 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Instant;
+
+use tokio::task::JoinSet;
 
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
 use crate::model::{Principal, PrincipalKind, PrincipalStatus};
 use crate::principal::{
-    ExternalPrincipal, ExternalPrincipalRef, FederatedPrincipalDiscovery, IPrincipalDiscovery,
-    IPrincipalResolver, JitPrincipalDiscovery, PrincipalDiscoveryError, PrincipalSearchPage,
-    PrincipalSearchQuery, ScimPrincipalDiscovery, ScimProjectionEvent, ScimRefreshRequest,
-    VerifiedOidcPrincipal,
+    validate_search_query, ExternalPrincipal, ExternalPrincipalRef, IPrincipalDiscovery,
+    JitPrincipalDiscovery, PrincipalDiscoveryError, PrincipalProjection, PrincipalSearchDiscovery,
+    PrincipalSearchPage, PrincipalSearchQuery, ScimPrincipalDiscovery, ScimProjectionEvent,
+    ScimRefreshRequest, VerifiedOidcPrincipal,
 };
 use crate::storage::{PrincipalReferenced, PrincipalRepository};
 use crate::utils::RequestIdentity;
@@ -47,7 +49,7 @@ pub enum PrincipalHandlerError {
 pub struct PrincipalHandler {
     repository: Arc<dyn PrincipalRepository>,
     jit: Option<JitPrincipalDiscovery>,
-    federated: Option<FederatedPrincipalDiscovery>,
+    federated: Vec<Arc<PrincipalSearchDiscovery>>,
     scim: Option<ScimPrincipalDiscovery>,
 }
 
@@ -56,7 +58,7 @@ impl PrincipalHandler {
     pub fn new(
         repository: Arc<dyn PrincipalRepository>,
         jit: Option<JitPrincipalDiscovery>,
-        federated: Option<FederatedPrincipalDiscovery>,
+        federated: Vec<Arc<PrincipalSearchDiscovery>>,
         scim: Option<ScimPrincipalDiscovery>,
     ) -> Self {
         Self { repository, jit, federated, scim }
@@ -149,19 +151,46 @@ impl PrincipalHandler {
         let provider_filter_count = query.provider_ids.len();
         let kind_filter_count = query.kinds.len();
         let requested_page_size = query.per_provider_limit;
-        let provider = self.federated.as_ref().ok_or(PrincipalHandlerError::ProviderUnavailable)?;
-        let page = provider.discover(query).await.map_err(PrincipalHandlerError::Discovery)?;
+        validate_search_query(&query).map_err(PrincipalHandlerError::Discovery)?;
+        if self.federated.is_empty() {
+            return Err(PrincipalHandlerError::ProviderUnavailable);
+        }
+        let selected =
+            Self::selected_search_providers(&self.federated, &query.provider_ids)
+                .map_err(PrincipalHandlerError::Discovery)?;
+        let mut tasks = JoinSet::new();
+        for provider in selected {
+            let query = query.clone();
+            let protocol = provider.provider();
+            tasks.spawn(async move { provider.discover(query).await.map(|page| (protocol, page)) });
+        }
+
+        let mut pages = BTreeMap::new();
+        while let Some(result) = tasks.join_next().await {
+            let (protocol, page) =
+                result.map_err(|error| PrincipalHandlerError::Discovery(
+                    PrincipalDiscoveryError::Task(error.to_string()),
+                ))??;
+            pages.insert(protocol, page);
+        }
+
+        let mut aggregate = PrincipalSearchPage::default();
+        for page in pages.into_values() {
+            aggregate.principals.extend(page.principals);
+            aggregate.next_cursors.extend(page.next_cursors);
+        }
+        Self::deduplicate_principals(&mut aggregate.principals);
         tracing::info!(
             authguard.principal.discovery = "federation",
             authguard.principal.provider_filter_count = provider_filter_count,
             authguard.principal.kind_filter_count = kind_filter_count,
             authguard.principal.requested_page_size = requested_page_size,
-            authguard.principal.result_count = page.principals.len(),
-            authguard.principal.next_cursor_count = page.next_cursors.len(),
+            authguard.principal.result_count = aggregate.principals.len(),
+            authguard.principal.next_cursor_count = aggregate.next_cursors.len(),
             duration_seconds = started.elapsed().as_secs_f64(),
             "federated principal search completed"
         );
-        Ok(page)
+        Ok(aggregate)
     }
 
     /// Re-resolves a selected external candidate and persists its local projection.
@@ -173,12 +202,18 @@ impl PrincipalHandler {
         &self,
         reference: &ExternalPrincipalRef,
     ) -> Result<Principal, PrincipalHandlerError> {
-        let provider = self.federated.as_ref().ok_or(PrincipalHandlerError::ProviderUnavailable)?;
+        let provider = self
+            .federated
+            .iter()
+            .find(|provider| provider.provider() == reference.provider_id)
+            .ok_or_else(|| PrincipalHandlerError::Discovery(
+                PrincipalDiscoveryError::UnknownProvider(reference.provider_id.clone()),
+            ))?;
         let external = provider
             .resolve_principal(reference)
             .await?
             .ok_or_else(|| PrincipalHandlerError::NotFound(reference.external_id.clone()))?;
-        self.upsert_external(external, "federation").await
+        self.upsert_external(external, provider.provider()).await
     }
 
     /// Applies one normalized SCIM provisioning event to the local projection.
@@ -195,14 +230,14 @@ impl PrincipalHandler {
     ) -> Result<Option<Principal>, PrincipalHandlerError> {
         match event {
             ScimProjectionEvent::Upsert(external) => {
-                self.upsert_external(external, "scim").await.map(Some)
+                self.upsert_external(external, "SCIM").await.map(Some)
             }
             ScimProjectionEvent::Delete(reference) => {
                 let Some(principal) =
                     self.find_external(&reference.issuer, &reference.external_id).await?
                 else {
                     tracing::debug!(
-                        authguard.principal.discovery = "scim",
+                        authguard.principal.discovery = "SCIM",
                         authguard.principal.operation = "disable",
                         "SCIM deletion referenced an unknown principal projection"
                     );
@@ -292,6 +327,53 @@ impl PrincipalHandler {
         Ok(())
     }
 
+    /// Selects providers for a search, enforcing the duplicate-protocol rule.
+    ///
+    /// An empty filter selects all configured providers. An unknown filter
+    /// value fails the whole search instead of silently returning nothing.
+    fn selected_search_providers(
+        providers: &[Arc<PrincipalSearchDiscovery>],
+        filter: &BTreeSet<String>,
+    ) -> Result<Vec<Arc<PrincipalSearchDiscovery>>, PrincipalDiscoveryError> {
+        if filter.is_empty() {
+            return Ok(providers.to_vec());
+        }
+        filter
+            .iter()
+            .map(|protocol| {
+                let mut matching = providers
+                    .iter()
+                    .filter(|provider| provider.provider() == protocol)
+                    .cloned();
+                let selected = matching.next().ok_or_else(|| {
+                    PrincipalDiscoveryError::UnknownProvider(protocol.clone())
+                })?;
+                if matching.next().is_some() {
+                    return Err(PrincipalDiscoveryError::InvalidConfiguration(format!(
+                        "duplicate search provider protocol `{protocol}`"
+                    )));
+                }
+                Ok(selected)
+            })
+            .collect()
+    }
+
+    /// Deduplicates merged results by the stable `(issuer, external_id)` key.
+    ///
+    /// Cursors are per-provider and are preserved untouched; only principals
+    /// from overlapping provider result sets are collapsed.
+    fn deduplicate_principals(principals: &mut Vec<PrincipalProjection>) {
+        let mut unique = BTreeMap::new();
+        for principal in principals.drain(..) {
+            let key = (
+                principal.reference.issuer.clone(),
+                principal.reference.external_id.clone(),
+            );
+            unique.entry(key).or_insert(principal);
+        }
+        principals.extend(unique.into_values());
+    }
+
     async fn resolve_or_project(
         &self,
         verified: VerifiedOidcPrincipal,
@@ -302,7 +384,7 @@ impl PrincipalHandler {
         }
         let projector = self.jit.as_ref().ok_or(PrincipalHandlerError::ProviderUnavailable)?;
         let external = projector.discover(verified).await?;
-        self.upsert_external(external, "jit").await
+        self.upsert_external(external, "JIT").await
     }
 
     async fn resolve_optional_group(
@@ -319,7 +401,7 @@ impl PrincipalHandler {
             return Ok(None);
         };
         let external = discovery.discover(verified).await?;
-        self.upsert_external(external, "jit").await.map(Some)
+        self.upsert_external(external, "JIT").await.map(Some)
     }
 
     async fn find_external(
@@ -443,7 +525,11 @@ impl PrincipalHandler {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::PrincipalHandler;
+    use crate::model::PrincipalKind;
+    use crate::principal::{ExternalPrincipalRef, PrincipalProjection};
 
     #[test]
     fn stable_ids_are_issuer_scoped() {
@@ -465,5 +551,24 @@ mod tests {
             PrincipalHandler::namespaced_group_external_id("group:analysts"),
             "group:analysts"
         );
+    }
+
+    #[test]
+    fn principal_projection_identity_key_is_cloneable() {
+        let reference = ExternalPrincipalRef {
+            provider_id: "FED_KEYCLOAK".to_string(),
+            issuer: "https://id.example.com/realms/customer-growth".to_string(),
+            external_id: "user-42".to_string(),
+        };
+        let projection = PrincipalProjection {
+            reference,
+            kind: PrincipalKind::User,
+            display_name: "Alice Analyst".to_string(),
+            username: Some("alice".to_string()),
+            email: Some("alice@example.com".to_string()),
+            enabled: true,
+            attributes: BTreeMap::new(),
+        };
+        assert_eq!(projection.clone().identity_key(), projection.identity_key());
     }
 }

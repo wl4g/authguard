@@ -46,7 +46,7 @@ src/core/src/handler/principal.rs  Principal 投影/discovery 用例
 src/core/src/handler/management.rs  health、readiness、status 与 metrics 用例
 src/core/src/principal/mod.rs  discovery 公共模型、trait 与 error
 src/core/src/principal/jit.rs  受信 OIDC JIT 投影
-src/core/src/principal/federation.rs  联邦搜索与 Keycloak connector
+src/core/src/principal/federation/  Keycloak、LDAP 与配置化 HTTP/JWT 联邦搜索
 src/core/src/principal/scim.rs  RFC 7643 User/Group 子集 ingestion
 src/core/src/model       与存储无关的授权模型、SQL-scope 语义及 HTTP/gRPC DTO
 src/core/src/storage     SQLite/PostgreSQL repository；row record 收敛在 record.rs
@@ -127,9 +127,11 @@ OIDC/JWT。当前真实 API 为：
 | `POST /adm/v1/authorize` | 运维/调试用显式 URN 决策 |
 | `GET /adm/v1/status` | 查询 policy revision 与资源计数 |
 
-当前随服务发布的联邦 connector 是 Keycloak；LDAP/AD 用户可通过 Keycloak federation
-间接搜索。SCIM 路径是 RFC 7643 User/Group 子集的增量 ingestion adapter，不是完整
-RFC 7644 SCIM Server，也不提供 `/scim/v2/Users` 或 `/scim/v2/Groups`。
+当前随服务发布的联邦 connector 为 Keycloak、直接 RFC 4511 LDAP，以及配置化
+HTTP + bearer-JWT 的 custom connector（集成企业自研身份系统）；LDAP/AD 用户也可
+通过 Keycloak federation 间接搜索。SCIM 路径是 RFC 7643 User/Group 子集的增量
+ingestion adapter，不是完整 RFC 7644 SCIM Server，也不提供 `/scim/v2/Users` 或
+`/scim/v2/Groups`。
 
 ## 5. HTTP tuple 到 URN
 
@@ -163,10 +165,12 @@ Action 由 matcher 所属的 `iam_action` 提供，不在 matcher 中重复保�
 
 所需上下文缺失时条件不匹配。当前不声称支持 time window 或 resource-tag condition。
 
-`IPrincipalDiscovery<Input>` 统一三条路径：
+`IPrincipalDiscovery<Input>` 统一这些路径：
 
 - `JitPrincipalDiscovery`：已验证 OIDC `(iss, sub)` 的按需本地投影；
-- `FederatedPrincipalDiscovery`：有界并发搜索，当前实际 connector 为 Keycloak；
+- `KeycloakPrincipalDiscovery`：Keycloak Admin API 有界并发搜索（`FED_KEYCLOAK`）；
+- `LdapPrincipalDiscovery`：直接 RFC 4511 LDAP 搜索（`FED_LDAP`）；
+- `CustomPrincipalDiscovery`：配置化 URL/请求/响应映射 + bearer JWT 的企业自研系统搜索（`FED_CUSTOM`）；
 - `ScimPrincipalDiscovery`：RFC 7643 User/Group 子集 upsert/delete normalization。
 
 联邦搜索和 SCIM ingestion 只在控制面运行；extAuth 热路径只读取本地 Principal

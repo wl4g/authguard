@@ -75,6 +75,11 @@ pub enum ScimProjectionEvent {
 ///
 /// It only normalizes protocol resources. Persistence and authorization-cache
 /// invalidation remain the handler's responsibility.
+///
+/// SCIM is the industry-standard provisioning protocol and is widely adopted
+/// across identity vendors: AWS IAM Identity Center supports automatic user
+/// provisioning via SCIM, for example:
+/// <https://docs.aws.amazon.com/singlesignon/latest/userguide/provision-automatically.html>
 #[derive(Debug, Clone)]
 pub struct ScimPrincipalDiscovery {
     discovery_id: String,
@@ -131,8 +136,8 @@ impl ScimPrincipalDiscovery {
 impl IPrincipalDiscovery<ScimRefreshRequest> for ScimPrincipalDiscovery {
     type Output = ScimProjectionEvent;
 
-    fn id(&self) -> &str {
-        &self.discovery_id
+    fn provider(&self) -> &'static str {
+        "SCIM"
     }
 
     async fn discover(
@@ -192,6 +197,15 @@ impl IPrincipalDiscovery<ScimRefreshRequest> for ScimPrincipalDiscovery {
                 Ok(ScimProjectionEvent::Delete(reference))
             }
         }
+    }
+
+    async fn resolve_principal(
+        &self,
+        _reference: &ExternalPrincipalRef,
+    ) -> Result<Option<PrincipalProjection>, PrincipalDiscoveryError> {
+        Err(PrincipalDiscoveryError::InvalidQuery(
+            "SCIM ingestion does not search external identity stores".to_string(),
+        ))
     }
 }
 

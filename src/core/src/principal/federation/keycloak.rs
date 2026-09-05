@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 
 use crate::model::PrincipalKind;
 use crate::principal::{
-    BearerTokenProvider, ExternalPrincipalRef, IPrincipalDiscovery, IPrincipalResolver,
+    validate_search_query, BearerTokenProvider, ExternalPrincipalRef, IPrincipalDiscovery,
     KeycloakPrincipalDiscoveryConfig, PrincipalDiscoveryError, PrincipalProjection,
     PrincipalSearchPage, PrincipalSearchQuery,
 };
@@ -394,8 +394,8 @@ impl KeycloakPrincipalDiscovery {
 impl IPrincipalDiscovery<PrincipalSearchQuery> for KeycloakPrincipalDiscovery {
     type Output = PrincipalSearchPage;
 
-    fn id(&self) -> &str {
-        &self.provider_id
+    fn provider(&self) -> &'static str {
+        "FED_KEYCLOAK"
     }
 
     async fn discover(
@@ -425,10 +425,7 @@ impl IPrincipalDiscovery<PrincipalSearchQuery> for KeycloakPrincipalDiscovery {
             (false, false) => Ok(PrincipalSearchPage::default()),
         }
     }
-}
 
-#[async_trait]
-impl IPrincipalResolver for KeycloakPrincipalDiscovery {
     async fn resolve_principal(
         &self,
         reference: &ExternalPrincipalRef,
@@ -603,27 +600,6 @@ fn parse_endpoint(
         )));
     }
     Ok(url)
-}
-
-fn validate_search_query(query: &PrincipalSearchQuery) -> Result<(), PrincipalDiscoveryError> {
-    if query.text.trim().is_empty() {
-        return Err(PrincipalDiscoveryError::InvalidQuery(
-            "search text must not be empty".to_string(),
-        ));
-    }
-    if query.text.len() > PrincipalSearchQuery::MAX_TEXT_BYTES {
-        return Err(PrincipalDiscoveryError::InvalidQuery(format!(
-            "search text must not exceed {} bytes",
-            PrincipalSearchQuery::MAX_TEXT_BYTES
-        )));
-    }
-    if !(1..=PrincipalSearchQuery::MAX_PAGE_SIZE).contains(&query.per_provider_limit) {
-        return Err(PrincipalDiscoveryError::InvalidQuery(format!(
-            "per_provider_limit must be between 1 and {}",
-            PrincipalSearchQuery::MAX_PAGE_SIZE
-        )));
-    }
-    Ok(())
 }
 
 fn build_client(
@@ -948,7 +924,7 @@ mod tests {
         )
         .expect("provider");
         let existing = ExternalPrincipalRef {
-            provider_id: provider.id().to_string(),
+            provider_id: "corporate-keycloak".to_string(),
             issuer: provider.issuer.clone(),
             external_id: "user-42".to_string(),
         };
@@ -969,7 +945,7 @@ mod tests {
         )
         .expect("provider");
         let reference = ExternalPrincipalRef {
-            provider_id: provider.id().to_string(),
+            provider_id: "corporate-keycloak".to_string(),
             issuer: provider.issuer.clone(),
             external_id: "group:growth-team-id".to_string(),
         };
@@ -1086,7 +1062,7 @@ mod tests {
         )
         .expect("provider");
         let reference = ExternalPrincipalRef {
-            provider_id: provider.id().to_string(),
+            provider_id: "corporate-keycloak".to_string(),
             issuer: "https://attacker.example/realms/customer-growth".to_string(),
             external_id: "user-42".to_string(),
         };

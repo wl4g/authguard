@@ -22,8 +22,9 @@ Principals enter Authguard through one generic `IPrincipalDiscovery<Input>` boun
 JIT projection handles first valid access, control-plane federated search lets
 administrators authorize before first login, and SCIM-subset ingestion accepts
 optional enterprise lifecycle changes. The shipped federated connectors support
-both Keycloak Admin API search (including identities federated by Keycloak from
-LDAP/AD) and direct RFC 4511 LDAP search.
+Keycloak Admin API search (including identities federated by Keycloak from
+LDAP/AD), direct RFC 4511 LDAP search, and a configurable HTTP + bearer-JWT
+connector for in-house identity systems.
 The SCIM implementation is an incremental ingestion adapter for a subset of RFC
 7643 User and Group data, not a complete RFC 7644 SCIM server. All three paths
 normalize and idempotently write the same `iam_principal` table; no
@@ -75,7 +76,9 @@ User or workload
 IAM administrator
   -> IPrincipalDiscovery<Input>
        JitPrincipalDiscovery        first use of a trusted identity
-       FederatedPrincipalDiscovery  control-plane search (Keycloak Admin API or LDAP)
+       KeycloakPrincipalDiscovery   control-plane search (Keycloak Admin API)
+       LdapPrincipalDiscovery       control-plane search (direct RFC 4511 LDAP)
+       CustomPrincipalDiscovery     control-plane search (configurable HTTP + JWT)
        ScimPrincipalDiscovery       RFC 7643 User/Group subset ingestion
   -> idempotently materialize iam_principal
   -> Authguard /adm/v1/** (policy and role-binding control plane)
@@ -140,7 +143,7 @@ src/core/src
   principal/
     mod.rs       shared discovery models, traits, and errors
     jit.rs       trusted OIDC just-in-time projection
-    federation/   federated search composition plus Keycloak and LDAP connectors
+    federation/   Keycloak, LDAP, and configurable HTTP/JWT federated search
     scim.rs      RFC 7643 User/Group subset ingestion
   storage/      SQLite/PostgreSQL repositories and private row records
   cache/        Memory/Redis opaque scope-token context cache

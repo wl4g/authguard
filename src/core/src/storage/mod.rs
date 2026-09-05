@@ -145,14 +145,14 @@ pub trait PrincipalRepository: Send + Sync {
     async fn delete(&self, id: &str) -> anyhow::Result<bool>;
 }
 
-/// Opens both repositories over one shared backend pool.
+/// Opens both repositories over one shared provider pool.
 ///
 /// # Errors
 ///
-/// Returns an error for an unsupported backend or failed database initialization.
+/// Returns an error for an unsupported provider or failed database initialization.
 pub async fn open(storage: &StorageConfig) -> anyhow::Result<Repositories> {
-    match storage.backend.to_ascii_lowercase().as_str() {
-        "sqlite" => {
+    match storage.provider.to_ascii_lowercase().as_str() {
+        "SQLite" => {
             let repository = Arc::new(
                 SqliteAuthorizationRepository::connect(&storage.sqlite)
                     .await
@@ -160,7 +160,7 @@ pub async fn open(storage: &StorageConfig) -> anyhow::Result<Repositories> {
             );
             Ok(Repositories { policy: repository.clone(), principals: repository })
         }
-        "postgres" => {
+        "Postgres" => {
             let repository = Arc::new(
                 PostgresAuthorizationRepository::connect(&storage.postgres)
                     .await
@@ -168,6 +168,6 @@ pub async fn open(storage: &StorageConfig) -> anyhow::Result<Repositories> {
             );
             Ok(Repositories { policy: repository.clone(), principals: repository })
         }
-        backend => anyhow::bail!("unsupported authorization storage backend `{backend}`"),
+        provider => anyhow::bail!("unsupported authorization storage provider `{provider}`"),
     }
 }
