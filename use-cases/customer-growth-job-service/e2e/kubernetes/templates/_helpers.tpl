@@ -30,6 +30,14 @@
 {{- printf "%s-e2e-%s" (include "customer-growth-e2e.name" .root) .component | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "customer-growth-e2e.mocksvcName" -}}
+{{- printf "%s-e2e-mocksvc" (include "customer-growth-e2e.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "customer-growth-e2e.scimSyncName" -}}
+{{- printf "%s-e2e-scim-sync" (include "customer-growth-e2e.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
 {{- define "customer-growth-e2e.accessContextSecretName" -}}
 {{- default (printf "%s-e2e-authguard-access-context" (include "customer-growth-e2e.name" .)) .Values.authguard.accessContext.secretName | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

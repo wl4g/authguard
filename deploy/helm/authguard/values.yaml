@@ -13,10 +13,11 @@ envoy-gateway:
         pullPolicy: IfNotPresent
   deployment:
     replicas: 2
-    envoyGateway:
-      resources:
-        requests: { cpu: 100m, memory: 256Mi }
-        limits: { cpu: 500m, memory: 512Mi }
+    # Resources for the control-plane container. The vendored gateway-helm
+    # chart is patched so consumers set deployment.resources directly.
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 500m, memory: 512Mi }
 
 # Independent Redis Cluster dependency used for opaque request-access tokens.
 # The 8.8.2 chart is the final Bitnami
@@ -42,49 +43,83 @@ redis-cluster:
       requests: { cpu: 50m, memory: 96Mi }
       limits: { cpu: 500m, memory: 256Mi }
 
-# Authguard resources that bind to an Envoy Gateway. This switch is independent
-# from envoy-gateway.enabled, so an existing GKE/Kubernetes Gateway can reuse
-# the same ext_auth integration without installing another controller.
-authguardIntegration:
-  enabled: true
-  gateway:
-    create: true
-    name: authguard
-    className: authguard
-  # Optional Envoy data-plane spans exported over OTLP/gRPC. The sampler is
-  # intentionally fixed to AlwaysOn; sampling should be performed centrally.
-  tracing:
-    enabled: false
-    backendRef:
-      name: ""
-      port: 4317
-    # Empty uses Envoy Gateway's <gateway>.<namespace> service-name default.
-    serviceName: ""
-  jwt:
+# ─────────────────────────────────────────────────────────────────────
+# Envoy Gateway — ext_authz integration with Authguard. Everything that
+# wires the Gateway to the Authguard ext_auth gRPC endpoint lives here.
+# This block is independent from envoy-gateway.enabled, so an existing
+# GKE/Kubernetes Gateway can reuse the same integration without installing
+# another controller.
+# ─────────────────────────────────────────────────────────────────────
+envoy_gateway:
+  ext_authz:
     enabled: true
+    # Canonical IdP issuer. The JWT/OIDC providers, the JIT trusted issuer, and
+    # SCIM must all converge on this exact `iss`.
     issuer: https://idp.example.com/realms/example-corp
-    audiences: [customer-growth-job-service]
-    localJWKS:
-      existingConfigMap: ""
-      inline: '{"keys":[]}'
-    remoteJWKS:
-      uri: ""
-      backendRefs: []
-  oidc:
-    enabled: false
-    issuer: https://idp.example.com
-    clientID: authguard
-    existingSecret: ""
-    clientSecret: ""
-    redirectURL: ""
-  exampleRoute:
-    enabled: false
-    name: protected-app
-    hostnames: []
-    backend:
-      name: app
-      port: 8080
+    gateway:
+      create: true
+      name: authguard
+      className: authguard
+    # Optional Envoy data-plane spans exported over OTLP/gRPC. The sampler is
+    # intentionally fixed to AlwaysOn; sampling should be performed centrally.
+    tracing:
+      enabled: false
+      backendRef:
+        name: ""
+        port: 4317
+      # Empty uses Envoy Gateway's <gateway>.<namespace> service-name default.
+      serviceName: ""
+    # JWT mode: Envoy verifies Authorization: Bearer <token> against the JWKS
+    # below, forwards the verified token to Authguard, and extracts the identity.
+    # The public key is public information: provide localJWKS.inline (a JWKS with
+    # only public keys), an existingConfigMap, or remoteJWKS.uri. jwt.enabled
+    # MUST be paired with a public key — an empty JWKS cannot verify any token.
+    jwt:
+      enabled: true
+      audiences: [customer-growth-job-service]
+      localJWKS:
+        existingConfigMap: ""
+        inline: '{"keys":[]}'
+      remoteJWKS:
+        uri: ""
+        backendRefs: []
+    # OIDC mode (browser users): Envoy Gateway handles the IdP redirect/callback
+    # and token exchange (authorization_code); users log in on the IdP UI. The
+    # forwarded ID token carries x-authguard-id-token. Workloads do NOT use this
+    # flow — they authenticate with their own SA via OAuth2 client_credentials.
+    oidc:
+      enabled: false
+      clientID: authguard
+      # Existing Opaque Secret holding the OIDC client secret.
+      clientSecretRef:
+        name: ""
+        key: client-secret
+      redirectURL: ""
+    # Optional HTTPRoute through the managed Gateway to a protected workload.
+    authguardRoute:
+      enabled: false
+      name: protected-app
+      hostnames: []
+      backend:
+        name: app
+        port: 8080
 
+# ─────────────────────────────────────────────────────────────────────
+# Authguard — deployment parameters plus the COMPLETE authguard.yaml main
+# configuration, rendered with Helm tpl (so chart values and helpers can be
+# referenced) and mounted at /etc/authguard/authguard.yaml. Override
+# wholesale with --set-file authguard.authguard-config=...; small tweaks
+# work with --set when the template references that knob.
+#
+# Everything the Authguard service loads at runtime lives in this file —
+# policy data is NOT part of it: authorization policies are imported into
+# the Authguard storage as a post-deploy step (see the use-case E2E runner).
+#
+# The 6 secrets (redis/postgres credentials, keycloak/scim/ldap SA credentials,
+# resign-JWT private key) live inside their OWN config blocks — never in a
+# unified secret section. Values written as "${ENV_KEY}" resolve at startup
+# from the injected environment (see the top-level `secrets` block).
+# ─────────────────────────────────────────────────────────────────────
 authguard:
   # SQLite is the default backend, so the zero-configuration deployment is a
   # single replica. Select PostgreSQL before increasing this value.
@@ -94,6 +129,17 @@ authguard:
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   imagePullSecrets: []
+  # Deploy-time decoder for the resign-JWT key: the runtime image is
+  # distroless, so an init container decodes AUTHGUARD_RESIGN_JWT_PRIVATE_KEY
+  # (base64 PKCS#8 PEM) into auth.resign_jwt.private_key_file. Enable this
+  # together with auth.resign_jwt.enabled inside authguard-config. busybox is
+  # not mirrored in the Aliyun registry, so this defaults to mirrored alpine.
+  resignKeyInit:
+    enabled: false
+    image:
+      repository: registry.cn-shenzhen.aliyuncs.com/wl4g/alpine
+      tag: "3.21"
+      pullPolicy: IfNotPresent
   serviceAccount:
     create: true
     name: ""
@@ -102,6 +148,13 @@ authguard:
     grpcPort: 8080
     scopeGrpcPort: 8081
     mgmtPort: 9091
+  mgmt:
+    enabled: true
+    livenessPath: /healthz
+    readinessPath: /readyz
+    metricsPath: /metrics
+    otelEnabled: false
+    otelEndpoint: http://otel-collector.observability.svc:4317
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: 1000m, memory: 512Mi }
@@ -114,143 +167,6 @@ authguard:
   disruptionBudget:
     enabled: true
     minAvailable: 1
-  admin:
-    # Existing Opaque Secret key containing the /adm/v1 Bearer token.
-    existingSecret: ""
-    key: admin-token
-    # Intended only for local rendering; prefer existingSecret in every cluster.
-    token: ""
-  accessContext:
-    # Shared HMAC key used only for direct x-authguard-context delivery.
-    # Leave signingKey empty to generate and retain a 64-character key.
-    existingSecret: ""
-    key: hmac-key
-    signingKey: ""
-  businessToken:
-    # RSA private key (PKCS#8 PEM) re-signing the internal business JWT.
-    # Business workloads only hold the paired public key.
-    existingSecret: ""
-    key: rsa-private-key
-    privateKey: ""
-  principalDiscovery:
-    # Optional Secret whose keys are referenced through connector `*_file`
-    # settings under config.auth.principal_discovery.
-    existingSecret: ""
-  storage:
-    # Required when config.storage.backend is postgres. The Secret value is
-    # injected as AUTHGUARD__STORAGE__POSTGRES__URL and never rendered.
-    existingSecret: ""
-    urlKey: database-url
-  config:
-    server:
-      service_name: authguard
-      host: 0.0.0.0
-      port: 8080
-      scope_port: 8081
-      shutdown_timeout: 15s
-      request:
-        max_message_bytes: 1048576
-        timeout: 5s
-      response:
-        max_message_bytes: 1048576
-      performance:
-        worker_threads: 2
-        max_in_flight_requests: 4096
-    mgmt:
-      enabled: true
-      host: 0.0.0.0
-      port: 9091
-      context_path: "/"
-      health:
-        liveness_path: /healthz
-        readiness_path: /readyz
-      metrics:
-        enabled: true
-        path: /metrics
-      otel:
-        enabled: false
-        endpoint: http://otel-collector.observability.svc:4317
-        protocol: grpc
-        timeout: 5s
-        sample_rate: 1.0
-    logging:
-      mode: JSON
-      level: info,tower_http=info
-    auth:
-      identity:
-        token_header: authorization
-        issuer_claim: iss
-        external_id_claim: sub
-        # Values must be issuer-local stable group identifiers, not display names.
-        groups_claim: authguard_group_ids
-      scope_delivery:
-        direct_urn_limit: 32
-        max_direct_header_bytes: 8192
-        context_ttl: 30s
-        scope_token_ttl: 30s
-      principal_discovery:
-        jit:
-          enabled: true
-          discovery_id: verified-oidc
-          trusted_issuers: [https://idp.example.com/realms/example-corp]
-          allow_insecure_http: false
-        # keycloak/ldap/custom are flat siblings of jit/scim; each entry
-        # supports `enabled: false`. Production-grade commented examples
-        # live in etc/authguard.yaml.
-        keycloak: []
-        ldap: []
-        custom: []
-        scim:
-          enabled: false
-          discovery_id: corporate-scim
-          # Must exactly equal the OIDC `iss`; SCIM externalId should equal OIDC `sub`.
-          issuer: https://idp.example.com/realms/example-corp
-      business_token:
-        enabled: false
-        ttl: 60s
-        private_key: ""
-        private_key_file: ""
-      admin_token: ""
-    storage:
-      backend: sqlite
-      bootstrap_policy: null
-      policy_refresh_interval: 5s
-      policy_max_staleness: 30s
-      sqlite:
-        url: sqlite:///tmp/authguard.db
-        max_connections: 1
-        connect_timeout: 5s
-      postgres:
-        url: ""
-        max_connections: 20
-        connect_timeout: 5s
-    cache:
-      provider: Redis
-      memory:
-        initial_capacity: 32
-        max_capacity: 65535
-        ttl: 1h
-        eviction_policy: LRU
-      redis:
-        nodes: []
-        username: default
-        password: ""
-        key_prefix: authguard
-        connection_timeout: 3s
-        response_timeout: 6s
-        # Covers both initial cluster formation and transient command retries.
-        retries: 8
-        max_retry_wait: 65s
-        min_retry_wait: 1280ms
-        read_from_replica: false
-  policy:
-    id: default
-    revision: 0
-    name: Default authorization policy
-    description: ""
-    actions: []
-    roles: []
-    role_bindings: []
   networkPolicy:
     enabled: true
     # Match these selectors to the managed Envoy Proxy, protected workloads
@@ -271,3 +187,260 @@ authguard:
       enabled: false
       interval: 30s
       labels: {}
+
+  # The COMPLETE authguard.yaml main configuration (flowgent-chart style).
+  # Helm-templated: chart values and helpers can be referenced inside, so a
+  # full override stays one file.
+  authguard-config: |
+    server:
+      service_name: {{ include "authguard.name" . }}
+      host: 0.0.0.0
+      port: {{ .Values.authguard.service.grpcPort }}
+      scope_port: {{ .Values.authguard.service.scopeGrpcPort }}
+      shutdown_timeout: 15s
+      request:
+        max_message_bytes: 1048576
+        timeout: 5s
+      response:
+        max_message_bytes: 1048576
+      performance:
+        worker_threads: 2
+        max_in_flight_requests: 4096
+    mgmt:
+      enabled: {{ .Values.authguard.mgmt.enabled }}
+      host: 0.0.0.0
+      port: {{ .Values.authguard.service.mgmtPort }}
+      context_path: "/"
+      health:
+        liveness_path: {{ .Values.authguard.mgmt.livenessPath | quote }}
+        readiness_path: {{ .Values.authguard.mgmt.readinessPath | quote }}
+      metrics:
+        enabled: true
+        path: {{ .Values.authguard.mgmt.metricsPath | quote }}
+      otel:
+        enabled: {{ .Values.authguard.mgmt.otelEnabled }}
+        endpoint: {{ .Values.authguard.mgmt.otelEndpoint | quote }}
+        protocol: grpc
+        timeout: 5s
+        sample_rate: 1.0
+    logging:
+      mode: JSON
+      level: "info,tower_http=info"
+    auth:
+      # Envoy Gateway verifies OIDC/JWT before forwarding this token to extAuth.
+      identity:
+        token_header: {{ .Values.envoy_gateway.ext_authz.jwt.enabled | ternary "authorization" "x-authguard-id-token" }}
+        issuer_claim: iss
+        external_id_claim: sub
+        groups_claim: authguard_group_ids
+      scope_delivery:
+        # Grants with at most this many URNs are delivered as a signed header
+        # (direct mode); larger grants resolve through opaque scope tokens.
+        direct_urn_limit: 32
+        max_direct_header_bytes: 8192
+        context_ttl: 30s
+        scope_token_ttl: 30s
+      principal_discovery:
+        jit:
+          enabled: true
+          discovery_id: verified-oidc
+          trusted_issuers: [{{ .Values.envoy_gateway.ext_authz.issuer | quote }}]
+          allow_insecure_http: false
+        # Connector SA credentials resolve from the injected environment
+        # ("${ENV_KEY}"); each connector authenticates BEFORE any call:
+        # keycloak/scim exchange OIDC client_credentials, ldap binds directly.
+        #
+        # keycloak:
+        #   - enabled: false
+        #     discovery_id: corporate-keycloak
+        #     base_url: https://sso.example.com
+        #     realm: example-corp
+        #     issuer: https://sso.example.com/realms/example-corp
+        #     auth:
+        #       token_url: ""  # default: {base_url}/realms/{realm}/protocol/openid-connect/token
+        #       client_id: authguard-search
+        #       client_secret: "${AUTHGUARD_KEYCLOAK_CLIENT_SECRET}"
+        #     connect_timeout: 3s
+        #     request_timeout: 5s
+        #     max_page_size: 100
+        #     allow_insecure_http: false
+        # ldap:
+        #   - enabled: false
+        #     discovery_id: corporate-ldap
+        #     url: ldaps://ldap.example.com:636
+        #     issuer: https://ldap.example.com
+        #     base_dn: dc=example,dc=com
+        #     auth:
+        #       bind_dn: cn=authguard-readonly,ou=service,dc=example,dc=com
+        #       bind_password: "${AUTHGUARD_LDAP_BIND_PASSWORD}"
+        #     user:
+        #       search_base: ou=people
+        #       object_filter: (&(objectClass=person)(|(uid={0})(mail={0})))
+        #       id_attribute: uid
+        #       name_attribute: cn
+        #       display_name_attribute: displayName
+        #       email_attribute: mail
+        #       enabled_attribute: ""
+        #       search_attributes: [uid, mail]
+        #     group:
+        #       search_base: ou=groups
+        #       object_filter: (&(objectClass=groupOfNames)(cn={0}))
+        #       id_attribute: cn
+        #       name_attribute: cn
+        #       display_name_attribute: displayName
+        #       search_attributes: [cn]
+        #     connect_timeout: 3s
+        #     request_timeout: 5s
+        #     max_page_size: 100
+        #     allow_insecure: false
+        # custom:
+        #   - enabled: false
+        #     discovery_id: dsp-directory
+        #     url: https://dsp.example.com/identity
+        #     issuer: https://dsp.example.com
+        #     jwt_token: ""  # or jwt_token_file: /run/secrets/dsp-jwt
+        #     request:
+        #       # The connector resolves DOUBLE-brace tokens (kind, search,
+        #       # offset, limit, external_id) at runtime. Go-escape each
+        #       # brace pair so Helm tpl emits it literally instead of
+        #       # consuming it as a template action.
+        #       path: api/v1/users/{{ "{{" }}kind{{ "}}" }}/search
+        #       text_param: search
+        #       offset_param: offset
+        #       limit_param: limit
+        #       external_id_param: id
+        #       body_template: '{"query":"{{ "{{" }}search{{ "}}" }}","offset":{{ "{{" }}offset{{ "}}" }},"limit":{{ "{{" }}limit{{ "}}" }},"kind":"{{ "{{" }}kind{{ "}}" }}"}'
+        #     response:
+        #       # Search responses page at array_path; resolve responses
+        #       # return ONE FLAT entry with id_attr at the top level.
+        #       array_path: /data/items
+        #       id_attr: id
+        #       display_name_attr: displayName
+        #       username_attr: username
+        #       email_attr: email
+        #       enabled_attr: active
+        #       kind_attr: kind
+        #     connect_timeout: 3s
+        #     request_timeout: 5s
+        #     max_page_size: 100
+        #     allow_insecure_http: false
+        keycloak: []
+        ldap: []
+        custom: []
+        # SCIM runs as a background sync job in push mode: an external sync
+        # agent authenticates with its own OIDC client-credentials token
+        # carrying the SCIM audience and POSTs normalized resources to
+        # /adm/v1/principal-discovery/scim/refresh, which ingests them into
+        # Authguard storage as principal projections, so the hot AuthN path
+        # never calls the IdP.
+        scim:
+          enabled: false
+          discovery_id: corporate-scim
+          issuer: {{ .Values.envoy_gateway.ext_authz.issuer | quote }}
+          auth:
+            token_url: ""
+            client_id: authguard-scim-sync
+            # kubernetes injects the process environment, so the native
+            # AUTHGUARD__AUTH__PRINCIPAL_DISCOVERY__SCIM__AUTH__CLIENT_SECRET
+            # override applies; file-based providers resolve the reference.
+            client_secret: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD_SCIM_CLIENT_SECRET}"{{ end }}
+      # On every allowed check Authguard re-signs the verified client identity
+      # as RS256 with `authguardOrigin: true`; all client JWT attributes are
+      # preserved, only the marker claim is added. The private key is decoded
+      # by the resign-key-decode init container from
+      # AUTHGUARD_RESIGN_JWT_PRIVATE_KEY (base64 PKCS#8 PEM) into the
+      # private_key_file below; workloads hold only the paired public key.
+      resign_jwt:
+        enabled: false
+        ttl: 60s
+        private_key_file: /etc/authguard/secrets/resign-jwt-private-key.pem
+      # kubernetes: overridden natively by AUTHGUARD__AUTH__ADMIN_TOKEN from
+      # the injected environment; file-based providers resolve the reference.
+      admin_token: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD__AUTH__ADMIN_TOKEN}"{{ end }}
+    storage:
+      provider: SQLite
+      bootstrap_policy: null
+      policy_refresh_interval: 5s
+      policy_max_staleness: 30s
+      sqlite:
+        url: "sqlite:///tmp/authguard.db"
+        max_connections: 1
+        connect_timeout: 5s
+      postgres:
+        # URL without credentials; username/password resolve from the injected
+        # environment. kubernetes: native AUTHGUARD__STORAGE__POSTGRES__*
+        # overrides apply; file-based providers resolve the references.
+        url: ""
+        username: ""
+        password: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD__STORAGE__POSTGRES__PASSWORD}"{{ end }}
+        max_connections: 20
+        min_connections: 0
+        connect_timeout: 5s
+        idle_timeout: 10m
+        validate_on_acquire: true
+    cache:
+      provider: Redis
+      memory:
+        initial_capacity: 32
+        max_capacity: 65535
+        ttl: 1h
+        eviction_policy: LRU
+      redis:
+        nodes: [{{ printf "redis://%s:6379" (include "authguard.redisFullname" .) | quote }}]
+        username: default
+        # In-cluster Redis consumes the Bitnami Secret directly; external
+        # clusters resolve the injected environment (native override for
+        # kubernetes, reference for file-based providers).
+        password: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD_REDIS_PASSWORD}"{{ end }}
+        key_prefix: authguard
+        connection_timeout: 3s
+        response_timeout: 6s
+        retries: 8
+        max_retry_wait: 65s
+        min_retry_wait: 1280ms
+        read_from_replica: false
+
+# ── Secrets — pick exactly ONE provider (flowgent cache.provider style) ──
+# kubernetes: envFrom an existing Opaque Secret whose keys are the env names
+#             used by the ${...} references above.
+# gcp / aws:  a single SecretProviderClass path whose secret CONTENT is the
+#             multi-line "ENV KEY=VALUE" text; mounted as a volume and read
+#             through AUTHGUARD_ENV_FILE.
+# vault:      the Vault Agent Injector writes the same multi-line KEY=VALUE
+#             content to /vault/secrets/env.
+#
+# Secret contract (keys inside the Secret / KEY=VALUE content):
+#   AUTHGUARD_REDIS_PASSWORD            (only when redis-cluster is external;
+#                                       in-cluster uses the Bitnami Secret)
+#   AUTHGUARD__STORAGE__POSTGRES__URL       (required when storage.provider=PostgreSQL)
+#   AUTHGUARD__STORAGE__POSTGRES__USERNAME  (required when storage.provider=PostgreSQL)
+#   AUTHGUARD__STORAGE__POSTGRES__PASSWORD  (required when storage.provider=PostgreSQL)
+#   AUTHGUARD_KEYCLOAK_CLIENT_SECRET    (keycloak connector SA)
+#   AUTHGUARD_SCIM_CLIENT_SECRET        (scim sync agent)
+#   AUTHGUARD_LDAP_BIND_PASSWORD        (ldap connector SA)
+#   AUTHGUARD_RESIGN_JWT_PRIVATE_KEY    (base64 PKCS#8 PEM, required when
+#                                       auth.resign_jwt.enabled=true)
+#   AUTHGUARD__AUTH__ADMIN_TOKEN        (required for /adm/v1 management API)
+#   AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY   (required; shared with workloads)
+secrets:
+  provider: kubernetes  # kubernetes | gcp | aws | vault
+  kubernetes:
+    existingSecret: ""  # required when provider=kubernetes
+  # GCP Secret Manager: exactly ONE path; its secret value is the
+  # multi-line "ENV KEY=VALUE" content above.
+  gcp:
+    secretResourceName: ""  # e.g. projects/PROJECT/secrets/authguard-secrets/versions/latest
+  # AWS Secrets Manager: exactly ONE secret; its value is the same
+  # multi-line "ENV KEY=VALUE" content.
+  aws:
+    region: ""
+    secretName: ""
+  vault:
+    vaultAddress: ""
+    vaultRole: ""
+    # KV v2 path whose data.env value is the multi-line KEY=VALUE content.
+    secretPath: ""
+  # Workload-identity annotations for the Authguard ServiceAccount, e.g.
+  # iam.gke.io/gcp-service-account for the GCP CSI driver.
+  serviceAccount:
+    annotations: {}

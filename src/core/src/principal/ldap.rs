@@ -88,8 +88,8 @@ impl DefaultLdapSearchClient {
         Self {
             provider_id: config.discovery_id.clone(),
             url: config.url.clone(),
-            bind_dn: config.bind_dn.clone(),
-            bind_password: config.bind_password.clone(),
+            bind_dn: config.auth.bind_dn.clone(),
+            bind_password: config.auth.bind_password.clone(),
             connect_timeout: config.connect_timeout,
             request_timeout: config.request_timeout,
         }
@@ -225,9 +225,9 @@ impl LdapPrincipalDiscovery {
         Self::validate_canonical("discovery_id", &config.discovery_id)?;
         Self::validate_canonical("issuer", &config.issuer)?;
         Self::validate_dn("base_dn", &config.base_dn, false)?;
-        Self::validate_dn("bind_dn", &config.bind_dn, false)?;
-        if config.bind_password.is_empty() {
-            return Err(Self::configuration_error("bind_password must not be empty"));
+        Self::validate_dn("auth.bind_dn", &config.auth.bind_dn, false)?;
+        if config.auth.bind_password.is_empty() {
+            return Err(Self::configuration_error("auth.bind_password must not be empty"));
         }
         if config.connect_timeout.is_zero() || config.request_timeout.is_zero() {
             return Err(Self::configuration_error("connection timeouts must be positive"));
@@ -632,6 +632,7 @@ mod tests {
     use tokio::sync::Mutex;
 
     use super::*;
+    use crate::config::LdapBindAuthConfig;
 
     #[derive(Default)]
     struct FakeLdapSearchClient {
@@ -687,8 +688,11 @@ mod tests {
             url: "ldaps://ldap.example.com:636".to_string(),
             issuer: "https://identity.example.com/directories/corporate".to_string(),
             base_dn: "dc=example,dc=com".to_string(),
-            bind_dn: "uid=authguard,ou=service-accounts,dc=example,dc=com".to_string(),
-            bind_password: "not-logged-secret".to_string(),
+            auth: LdapBindAuthConfig {
+                bind_dn: "uid=authguard,ou=service-accounts,dc=example,dc=com".to_string(),
+                bind_password: "not-logged-secret".to_string(),
+                ..LdapBindAuthConfig::default()
+            },
             user: user_mapping(),
             group: group_mapping(),
             ..LdapPrincipalDiscoveryConfig::default()

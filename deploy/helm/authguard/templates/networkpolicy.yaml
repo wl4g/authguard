@@ -18,27 +18,30 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           podSelector:
-            {{- toYaml $networkPolicy.envoyProxyPodSelector | nindent 12 }}
+            matchLabels:
+              {{- toYaml $networkPolicy.envoyProxyPodSelector | nindent 14 }}
       ports:
-        - { protocol: TCP, port: {{ .Values.authguard.config.server.port }} }
+        - { protocol: TCP, port: {{ .Values.authguard.service.grpcPort }} }
     - from:
         - {{- with $networkPolicy.workloadNamespaceSelector }}
           namespaceSelector:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           podSelector:
-            {{- toYaml $networkPolicy.workloadPodSelector | nindent 12 }}
+            matchLabels:
+              {{- toYaml $networkPolicy.workloadPodSelector | nindent 14 }}
       ports:
-        - { protocol: TCP, port: {{ .Values.authguard.config.server.scope_port }} }
-    {{- if .Values.authguard.config.mgmt.enabled }}
+        - { protocol: TCP, port: {{ .Values.authguard.service.scopeGrpcPort }} }
+    {{- if .Values.authguard.mgmt.enabled }}
     - from:
         - {{- with $networkPolicy.managementNamespaceSelector }}
           namespaceSelector:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           podSelector:
-            {{- toYaml $networkPolicy.managementPodSelector | nindent 12 }}
+            matchLabels:
+              {{- toYaml $networkPolicy.managementPodSelector | nindent 14 }}
       ports:
-        - { protocol: TCP, port: {{ .Values.authguard.config.mgmt.port }} }
+        - { protocol: TCP, port: {{ .Values.authguard.service.mgmtPort }} }
     {{- end }}
 {{- end }}

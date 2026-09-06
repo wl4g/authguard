@@ -204,11 +204,15 @@ dependencies = [
  "anyhow",
  "authguard-adapter-rust",
  "axum",
+ "base64",
  "http",
+ "rsa",
  "serde",
  "serde_json",
  "sqlx",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

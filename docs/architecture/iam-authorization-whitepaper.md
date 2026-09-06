@@ -70,12 +70,12 @@ consume trusted access context through adapters.
 before Bob has ever accessed an application:
 
 ```text
-Admin UI/API: "search Bob"
+Admin UI/API: "search Bob/Workload"
   │  POST /adm/v1/principal-discovery/search          (parallel pull)
   ▼
 federation fan-out:
-  KeycloakPrincipalDiscovery ─▶ Keycloak Admin API
-  LdapPrincipalDiscovery      ─▶ LDAP (RFC 4511)
+  KeycloakPrincipalDiscovery  ─▶ Keycloak Admin API
+  LdapPrincipalDiscovery      ─▶ LDAP (RFC-4511)
   CustomPrincipalDiscovery    ─▶ HTTP + pre-issued bearer JWT
   │  candidates: (issuer, external_id) + display metadata, not materialized yet
   ▼
@@ -85,14 +85,15 @@ POST /adm/v1/role-bindings
   └─▶ iam_role_binding(effect + resource URN + conditions)
 
 converge on the same iam_principal:
-  SCIM push (RFC 7643/7644) ─▶ IdP lifecycle events (pre-provision / disable)
+  SCIM push (RFC 7643/7644)   ─▶ IdP lifecycle events (pre-provision / disable)
   JIT projection (data plane) ─▶ first verified request
 ```
 
-- Data plane (one business request from Bob):
+- Data plane (one business request from Bob/Workload):
 
 ```text
-Bob ─ (Windows/macOS AD login with Kerberos TGT ─▶ SSO ─▶ IdP/DSP/Keycloak get access jwt token)
+User(Bob) ─ (e.g, on Windows/macOS AD login with Kerberos TGT ─▶ SSO(WWW-Authenticate: Negotiate) ─▶ IdP/DSP/Keycloak get access token)
+Workload(Service Account)  ─ (e.g, on GKE internal google-flavor auth ─▶ GCP IAM get access token)
   │
   ▼
 Envoy Gateway: verify JWT (iss, aud, JWKS)
@@ -115,8 +116,8 @@ Envoy forwards the request
   ▼
 Business Microservice
   │  adapter SDK: IAccessContextResolver
-  │    HeaderAccessContextResolver ─▶ read direct header
-  │    GrpcAccessContextResolver   ─▶ Authguard ResolveScope (large lists)
+  │    HeaderAccessContextResolver ─▶ Local Read from headers directly. (short lists)
+  │    GrpcAccessContextResolver   ─▶ Remote Read from Authguard. (large lists)
   │  optional: verify the business JWT with the Authguard public key
   ▼
 SQL WHERE scope ─▶ row-level fine-grained data permissions
@@ -258,6 +259,21 @@ requested job. The request is allowed.
 - IAM core does not own business resource lifecycle.
 - Arbitrary regex resource patterns are not supported in v1.
 - Legacy compatibility models are not retained.
+
+### 2.4 Relationship to generic policy engines (OPA, SpiceDB, Cerbos)
+
+| Dimension | OPA / SpiceDB / Cerbos | Authguard |
+|---|---|---|
+| Identity acquisition loop | No identity pipeline; identity data must be fed externally | Built-in federated search (Keycloak/LDAP/custom) + SCIM + JIT: search a person -> bind -> effective before first login |
+| Row-level data filtering | OPA has only partial-evaluation community patterns; Cerbos stops at query plans | One role binding compiles to SQL WHERE through adapter SDKs |
+| Pushdown-safe model | Rego is Turing-complete; arbitrary policy cannot be guaranteed to compile into SQL predicates | Restrained URN + bounded wildcards (`*`/`**`) is exactly what makes safe pushdown possible |
+| Decision delivery semantics | OPA-Envoy sets custom headers after ALLOW per Rego | Dual mode: small lists inline in `x-authguard-context`, large lists via scope token -> Redis + gRPC |
+| Home turf | OPA = K8s admission / arbitrary domain rules | Authguard = 2B/2B2C enterprise resource authorization loop |
+
+The two classes are complementary, not substitutes: generic domains such as
+K8s admission are OPA's home turf and Authguard's non-goals. If arbitrary ABAC
+beyond `conditions` is ever needed, Rego/Cedar can be embedded at the
+`ConditionsMatch` evaluation point without changing the core model.
 
 ## 3. Overall model
 
@@ -1405,6 +1421,22 @@ stable identity and coarse claims, not large allow/deny URN lists; Authguard
 computes resource permissions for each request to avoid oversized JWTs, delayed
 revocation, and audience leakage.
 
+Two distinct client flows enter this boundary, and they must not be confused:
+
+- **Browser users (humans)** — e.g. an operator logging into the flowgent UI
+  with GitHub. Envoy Gateway's OIDC filter owns the entire
+  authorization-code flow: it redirects to the IdP, handles the callback
+  redirect, exchanges the code for tokens, and maintains the session. The
+  user logs in on the IdP UI; the application never sees or stores an OAuth
+  callback implementation of its own. Envoy forwards the verified ID token to
+  Authguard (`x-authguard-id-token`, OIDC mode).
+- **Workloads (machines)** — job services, sync agents, CI runners. No browser
+  redirect exists; the workload authenticates as itself with its own business
+  service account through OAuth2/OIDC **client_credentials**, obtains a
+  short-lived audience-restricted access token, and sends it as
+  `Authorization: Bearer`. Envoy's JWT provider verifies that token (JWT
+  mode). Workloads never use the browser flow and never impersonate users.
+
 Downstream of that boundary, Authguard may re-sign its own internal business
 JWT (see §10): the original credential is verified by Envoy exactly as before,
 and only the ALLOW response rewrites the forwarded token. Authguard therefore
@@ -1491,12 +1523,12 @@ durable repository by revision. A Redis Cluster deployment serves only as the
 cross-replica scope-token store; scope-token cache misses or failures fail
 closed. Policies and Principals are never stored in the Memory/Redis cache.
 
-### 10.1 Internal business JWT
+### 10.1 Business JWT re-signing
 
-Optionally (`auth.business_token.enabled`), every ALLOW re-signs a short-lived
-internal JWT for the business microservice and overwrites the `authorization`
-header (Envoy removes the original identity token first). The token is an
-RS256 compact JWT (`RSASSA-PKCS1-v1_5` with SHA-256, RFC 8017 § 8.2):
+Optionally (`auth.resign_jwt.enabled`), every ALLOW re-signs a short-lived
+JWT for the business microservice and replaces the `authorization` header
+(Envoy removes the original identity token first). The token is an RS256
+compact JWT (`RSASSA-PKCS1-v1_5` with SHA-256, RFC 8017 § 8.2):
 
 - `iss: "authguard"` marks the re-signer, `authguardOrigin: true` marks
   re-signed provenance — the client-issued token never carries this claim.
@@ -1506,10 +1538,14 @@ RS256 compact JWT (`RSASSA-PKCS1-v1_5` with SHA-256, RFC 8017 § 8.2):
 - `iat`/`exp` use `scope_token_ttl`, and scalar identity claims (e.g. tenant_id,
   MFA state) are copied; `iss`/`sub`/`authguard_group_ids` are never overwritten
   by client-supplied values.
+- **The stable identity is preserved, and the `authguardOrigin: true`
+  marker claim is added.** A microservice verifying this signature proves the
+  request passed through Envoy Gateway and rejects clients that call its API
+  directly.
 - The RSA private key (≥ 2048 bits, PKCS#8 PEM) lives only in Authguard —
-  injected via `AUTHGUARD__AUTH__BUSINESS_TOKEN__PRIVATE_KEY`. Business
-  workloads hold only the paired public key (PKCS#1 PEM for bootstrap tooling)
-  and verify with any standard JWT library; no Authguard SDK call is required.
+  injected via `AUTHGUARD__AUTH__RESIGN_JWT__PRIVATE_KEY`. Business workloads
+  hold only the paired public key (PKCS#1 PEM for bootstrap tooling) and
+  verify with any standard JWT library; no Authguard SDK call is required.
 - Disabled (default) leaves the original identity token stripped without
   replacement. Envoy's own JWT/OIDC verification (§9) is unchanged.
 

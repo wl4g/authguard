@@ -113,11 +113,16 @@ has verified issuer, audience, signature, and expiry. JWT mode forwards the
 Bearer token; OIDC mode forwards Envoy's verified ID token. Authguard decodes
 claims from that verified token and never trusts separate client-controlled
 issuer, subject, group, or MFA claim headers. Optionally
-(`auth.business_token.enabled`) every ALLOW re-signs a short-lived internal
-business JWT (RS256, `authguardOrigin: true`) and overwrites the authorization
-header for the upstream microservice: the RSA private key stays in Authguard,
-business workloads verify with the paired public key only, and Envoy's standard
-JWT verification is unchanged.
+(`auth.resign_jwt.enabled`) every ALLOW re-signs the verified identity as a
+short-lived RS256 JWT and replaces the authorization header for the upstream
+microservice. The resign JWT re-issues `iss` as `authguard`, keeps the stable
+identity (`sub` = external id, `principal_id`, `authguard_group_ids`), adds the
+`authguardOrigin: true` marker, copies the remaining client JWT claims, and
+regenerates `iat`/`exp` from the scope-token TTL — so the microservice proves
+the request passed through Envoy Gateway and rejects clients calling its API
+directly. The RSA private key stays in Authguard, business workloads verify
+with the paired public key only, and Envoy's standard JWT verification is
+unchanged.
 
 ## Run
 
@@ -147,7 +152,8 @@ helm upgrade --install authguard deploy/helm/authguard \
 The repository vendors the official Envoy Gateway and Redis Cluster charts, and
 the default values use the required Aliyun images. Existing Envoy Gateway
 clusters reuse their controller with `--set envoy-gateway.enabled=false`; the
-independent `authguardIntegration.enabled` switch still applies gRPC ext_auth.
+independent `envoy_gateway.ext_authz.enabled` switch still applies gRPC
+ext_auth.
 
 ## Verification
 

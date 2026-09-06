@@ -53,8 +53,8 @@ policy 都不进入 Memory/Redis cache。
   -> Envoy 删除客户端 x-authguard-* 头并注入以下二者之一：
        x-authguard-context       HMAC-SHA256 签名的短期 allow/deny URN context
        x-authguard-scope-token   大授权范围，仅携带短期 opaque token
-  -> 若启用 auth.business_token，Authguard 另以 RS256 重签短期内部业务 JWT
-       （携带 authguardOrigin: true）并覆盖 authorization 头；业务微服务只
+  -> 若启用 auth.resign_jwt，Authguard 另以 RS256 重签短期 JWT
+       （携带 authguardOrigin: true）并替换 authorization 头；业务微服务只
        配置公钥验签
   -> workload adapter 的 IAccessContextResolver
        HeaderAccessContextResolver 直接解码 Envoy 注入的 context
@@ -79,9 +79,11 @@ JWT 模式只接受 Envoy 验证后转发的 `Authorization: Bearer ...`，OIDC 
 headers。Authguard 解析已由 Envoy 验证的 token claims，本身不重复执行 JWT 签名验证。
 `auth.scope_delivery.direct_urn_limit` 决定直接上下文与 scope token 的切换点；两种结果均有
 短 TTL、策略 revision 和目标 action，adapter 缺失、过期或动作不匹配时必须 fail closed。
-可选的 `auth.business_token` 会在每个 ALLOW 上重签 RS256 JWT：`iss: authguard`、
+可选的 `auth.resign_jwt` 会在每个 ALLOW 上重签 RS256 JWT：`iss: authguard`、
 `sub: external_id`、`principal_id`、`authguard_group_ids`、`authguardOrigin: true`、
-`iat`/`exp`（TTL 沿用 `scope_token_ttl`），并复制原 token 的标量 claims。RSA 私钥仅存于
+`iat`/`exp`（TTL 沿用 `scope_token_ttl`），并复制原 token 的标量 claims。稳定身份保持
+不变——重签者重发 `iss`/`sub` 并追加 `authguardOrigin: true` 标记 claim——业务微服务
+验证此签名即可证明请求经过了 Envoy Gateway，从而拒绝客户端直连微服务 API。RSA 私钥仅存于
 Authguard；Envoy 对原始 JWT 的标准验证不变，禁用时维持仅移除身份 token 的现状。
 两个 gRPC 服务使用独立 listener：Envoy Check 为 `8080`，SDK ResolveScope 为 `8081`。
 默认 NetworkPolicy 按 Envoy 与 `authguard.io/scope-client` 分别限制两个端口，避免将

@@ -1,6 +1,6 @@
 {{- $serviceMonitor := .Values.authguard.observability.serviceMonitor -}}
-{{- if and $serviceMonitor.enabled (not (and .Values.authguard.config.mgmt.enabled .Values.authguard.config.mgmt.metrics.enabled)) -}}
-{{- fail "authguard.observability.serviceMonitor requires authguard.config.mgmt.enabled and authguard.config.mgmt.metrics.enabled" -}}
+{{- if and $serviceMonitor.enabled (not .Values.authguard.mgmt.enabled) -}}
+{{- fail "authguard.observability.serviceMonitor requires authguard.mgmt.enabled" -}}
 {{- end -}}
 {{- if $serviceMonitor.enabled }}
 apiVersion: monitoring.coreos.com/v1
@@ -18,6 +18,6 @@ spec:
       {{- include "authguard.serverSelectorLabels" . | nindent 6 }}
   endpoints:
     - port: mgmt
-      path: {{ include "authguard.joinPath" (dict "context" .Values.authguard.config.mgmt.context_path "path" .Values.authguard.config.mgmt.metrics.path) }}
+      path: {{ .Values.authguard.mgmt.metricsPath }}
       interval: {{ $serviceMonitor.interval }}
 {{- end }}

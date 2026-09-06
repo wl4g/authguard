@@ -102,19 +102,22 @@ pub struct AuthConfig {
     pub identity: IdentityConfig,
     pub scope_delivery: ScopeDeliveryConfig,
     pub principal_discovery: PrincipalDiscoveryConfig,
-    pub business_token: BusinessTokenConfig,
+    pub resign_jwt: ResignJwtConfig,
     pub admin_token: String,
 }
 
-/// Re-signing of the short-lived internal business JWT.
+/// Re-signing of the short-lived JWT delivered to business microservices.
 ///
-/// On every allowed check Authguard re-signs a JWT carrying
-/// `authguardOrigin: true` and overwrites the `authorization` header for the
-/// business microservice. Authguard holds the RSA private key; workloads only
-/// hold the paired public key.
+/// On every allowed check Authguard re-signs the verified identity as a JWT
+/// carrying `authguardOrigin: true` and replaces the original identity
+/// provider (`IdP`) token on the forwarded request. All attributes of the
+/// client JWT are preserved — only the marker claim is added — so a
+/// microservice verifying this signature proves the request passed through
+/// Envoy Gateway and rejects clients that call its API directly. Authguard
+/// holds the RSA private key; workloads only hold the paired public key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct BusinessTokenConfig {
+pub struct ResignJwtConfig {
     pub enabled: bool,
     #[serde(with = "humantime_serde")]
     pub ttl: Duration,
@@ -150,15 +153,34 @@ pub struct KeycloakPrincipalDiscoveryConfig {
     pub base_url: String,
     pub issuer: String,
     pub realm: String,
-    pub client_id: String,
-    pub client_secret: String,
-    pub client_secret_file: String,
+    /// Service-account OIDC client-credentials used to obtain the Admin REST
+    /// API bearer token.
+    pub auth: OidcClientCredentialsConfig,
     #[serde(with = "humantime_serde")]
     pub connect_timeout: Duration,
     #[serde(with = "humantime_serde")]
     pub request_timeout: Duration,
     pub max_page_size: u32,
     pub allow_insecure_http: bool,
+}
+
+/// OIDC client-credentials authentication for a service account (SA).
+///
+/// Connectors speaking OIDC-protected APIs (Keycloak Admin REST, SCIM sync)
+/// exchange these credentials for an access token — they never log in as a
+/// user. The SA lives inside the target realm with the minimal roles it
+/// needs (e.g. `realm-management` on Keycloak), never a master admin. LDAP
+/// connectors bind directly and use [`LdapBindAuthConfig`] instead.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OidcClientCredentialsConfig {
+    /// Overrides the token endpoint derived from the connector URL; useful
+    /// when the identity provider is fronted by a gateway with a different
+    /// external URL.
+    pub token_url: String,
+    pub client_id: String,
+    pub client_secret: String,
+    pub client_secret_file: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,9 +191,10 @@ pub struct LdapPrincipalDiscoveryConfig {
     pub url: String,
     pub issuer: String,
     pub base_dn: String,
-    pub bind_dn: String,
-    pub bind_password: String,
-    pub bind_password_file: String,
+    /// Simple-bind service-account credentials: LDAP authenticates by binding
+    /// directly on every connection — no token exchange like the OIDC
+    /// connectors.
+    pub auth: LdapBindAuthConfig,
     pub user: LdapObjectMappingConfig,
     pub group: LdapObjectMappingConfig,
     #[serde(with = "humantime_serde")]
@@ -180,6 +203,15 @@ pub struct LdapPrincipalDiscoveryConfig {
     pub request_timeout: Duration,
     pub max_page_size: u32,
     pub allow_insecure: bool,
+}
+
+/// LDAP simple-bind service-account credentials.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LdapBindAuthConfig {
+    pub bind_dn: String,
+    pub bind_password: String,
+    pub bind_password_file: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -248,6 +280,11 @@ pub struct ScimPrincipalDiscoveryConfig {
     pub enabled: bool,
     pub discovery_id: String,
     pub issuer: String,
+    /// Credentials for the external sync agent that pushes resources into
+    /// Authguard (push mode): the agent authenticates against the SCIM
+    /// endpoint with an OIDC client-credentials token carrying the SCIM
+    /// audience. Authguard itself never calls out with these credentials.
+    pub auth: OidcClientCredentialsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -333,10 +370,21 @@ pub struct RedisClusterConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PostgresConfig {
+    /// Connection URL without credentials, e.g. `postgres://host:5432/db`.
+    /// Username and password are separate fields so the password can resolve
+    /// from a secret store without leaking it into the URL.
     pub url: String,
+    pub username: String,
+    pub password: String,
     pub max_connections: u32,
+    pub min_connections: u32,
     #[serde(with = "humantime_serde")]
     pub connect_timeout: Duration,
+    #[serde(with = "humantime_serde")]
+    pub idle_timeout: Duration,
+    /// Pings a pooled connection before handing it out, so broken connections
+    /// evicted by the database are never served to callers.
+    pub validate_on_acquire: bool,
 }
 
 impl AuthguardConfig {
@@ -433,7 +481,7 @@ impl Default for LoggingConfig {
     }
 }
 
-impl Default for BusinessTokenConfig {
+impl Default for ResignJwtConfig {
     fn default() -> Self {
         Self {
             enabled: false,
@@ -474,9 +522,7 @@ impl Default for KeycloakPrincipalDiscoveryConfig {
             base_url: String::new(),
             issuer: String::new(),
             realm: String::new(),
-            client_id: String::new(),
-            client_secret: String::new(),
-            client_secret_file: String::new(),
+            auth: OidcClientCredentialsConfig::default(),
             connect_timeout: Duration::from_secs(3),
             request_timeout: Duration::from_secs(5),
             max_page_size: 100,
@@ -493,9 +539,7 @@ impl Default for LdapPrincipalDiscoveryConfig {
             url: String::new(),
             issuer: String::new(),
             base_dn: String::new(),
-            bind_dn: String::new(),
-            bind_password: String::new(),
-            bind_password_file: String::new(),
+            auth: LdapBindAuthConfig::default(),
             user: LdapObjectMappingConfig::default(),
             group: LdapObjectMappingConfig::default(),
             connect_timeout: Duration::from_secs(3),
@@ -558,6 +602,7 @@ impl Default for ScimPrincipalDiscoveryConfig {
             enabled: false,
             discovery_id: "corporate-scim".to_string(),
             issuer: "https://idp.example.com/scim/example-corp".to_string(),
+            auth: OidcClientCredentialsConfig::default(),
         }
     }
 }
@@ -636,6 +681,15 @@ impl Default for RedisClusterConfig {
 
 impl Default for PostgresConfig {
     fn default() -> Self {
-        Self { url: String::new(), max_connections: 20, connect_timeout: Duration::from_secs(5) }
+        Self {
+            url: String::new(),
+            username: String::new(),
+            password: String::new(),
+            max_connections: 20,
+            min_connections: 0,
+            connect_timeout: Duration::from_secs(5),
+            idle_timeout: Duration::from_secs(600),
+            validate_on_acquire: true,
+        }
     }
 }

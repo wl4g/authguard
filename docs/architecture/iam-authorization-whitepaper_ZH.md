@@ -40,15 +40,15 @@
 
 ### 1.1 全局物理调用视图
 
-- 控制面（B2B 场景预授权）：管理员给新员工 Bob 预授权，此时 Bob 可能从未访问过应用：
+- 控制面（e.g, B2B 场景预授权）：管理员给新员工 Bob 或新微服务 workload 预授权，此时 Bob/Workload 可能从未访问过应用：
 
 ```text
-Admin UI/API: "search Bob"
+Admin UI/API: "search Bob/Workload"
   │  POST /adm/v1/principal-discovery/search          (parallel pull)
   ▼
 federation fan-out:
-  KeycloakPrincipalDiscovery ─▶ Keycloak Admin API
-  LdapPrincipalDiscovery      ─▶ LDAP (RFC 4511)
+  KeycloakPrincipalDiscovery  ─▶ Keycloak Admin API
+  LdapPrincipalDiscovery      ─▶ LDAP (RFC-4511)
   CustomPrincipalDiscovery    ─▶ HTTP + pre-issued bearer JWT
   │  candidates: (issuer, external_id) + display metadata, not materialized yet
   ▼
@@ -58,14 +58,15 @@ POST /adm/v1/role-bindings
   └─▶ iam_role_binding(effect + resource URN + conditions)
 
 converge on the same iam_principal:
-  SCIM push (RFC 7643/7644) ─▶ IdP lifecycle events (pre-provision / disable)
+  SCIM push (RFC 7643/7644)   ─▶ IdP lifecycle events (pre-provision / disable)
   JIT projection (data plane) ─▶ first verified request
 ```
 
-- 数据面（Bob 的一次业务请求）：
+- 数据面（e.g, Bob/Workload 的一次业务请求）：
 
 ```text
-Bob ─ (Windows/macOS AD login with Kerberos TGT ─▶ SSO ─▶ IdP/DSP/Keycloak get access jwt token)
+User(Bob) ─ (e.g, on Windows/macOS AD login with Kerberos TGT ─▶ SSO(WWW-Authenticate: Negotiate) ─▶ IdP/DSP/Keycloak get access token)
+Workload(Service Account)  ─ (e.g, on GKE internal google-flavor auth ─▶ GCP IAM get access token)
   │
   ▼
 Envoy Gateway: verify JWT (iss, aud, JWKS)
@@ -88,8 +89,8 @@ Envoy forwards the request
   ▼
 Business Microservice
   │  adapter SDK: IAccessContextResolver
-  │    HeaderAccessContextResolver ─▶ read direct header
-  │    GrpcAccessContextResolver   ─▶ Authguard ResolveScope (large lists)
+  │    HeaderAccessContextResolver ─▶ Local Read from headers directly. (short lists)
+  │    GrpcAccessContextResolver   ─▶ Remote Read from Authguard. (large lists)
   │  optional: 以 Authguard 公钥验证 business JWT
   ▼
 SQL WHERE scope ─▶ row-level fine-grained data permissions
@@ -215,6 +216,20 @@ parent_urns  = [
 - 不在 IAM 核心维护业务资源生命周期。
 - 不支持任意 regex 资源授权 pattern；v1 只支持可下推查询的有限 wildcard。
 - 不保留旧兼容模型。
+
+### 2.4 与其他策略引擎的关系与边界
+
+| 维度 | OPA / SpiceDB / Cerbos | Authguard |
+|---|---|---|
+| 身份获取闭环 | 无身份管道，身份数据全靠外部自喂 | 内置联邦搜索（Keycloak/LDAP/custom）+ SCIM + JIT，管理员搜人 → 绑定 → 未登录即生效 |
+| 行级数据过滤 | OPA 仅 partial-evaluation 社区玩法；Cerbos 只有查询计划 | 同一条 role binding 经 adapter SDK 编译为 SQL WHERE |
+| 模型可下推性 | Rego 图灵完备，任意策略无法保证编译成 SQL 谓词 | 收敛 URN + 有限 wildcard（`*`/`**`），正是安全下推的前提 |
+| 决策交付语义 | OPA-Envoy 允许后按 Rego 自定义 headers | 双模：小列表直携 `x-authguard-context`，大列表 scope-token → Redis + gRPC |
+| 主战场 | OPA = K8s admission / 任意领域规则 | Authguard = 2B/2B2C 企业资源授权闭环 |
+
+两类定位互补而非替代：K8s admission 等通用领域是 OPA 主场、属 Authguard 非目标；
+若未来需超出 `conditions` 的任意 ABAC，可在 `ConditionsMatch` 求值点内嵌
+Rego/Cedar，主模型不变。
 
 ## 3. 总体模型
 
@@ -1240,6 +1255,18 @@ Authguard 对受信 token 只做 claim 解码，不把 payload decode 描述为�
 Gateway。登录 Access Token 只携带稳定身份与粗粒度 claims，不携带大量 allow/deny URN；
 资源权限由 Authguard 针对当前请求实时计算，避免 JWT 过大、权限撤销延迟和 audience 越界。
 
+进入该边界的有两条完全不同的客户端流程，不能混用：
+
+- **浏览器用户（人）**——例如运营人员用 GitHub 登录 flowgent UI。Envoy Gateway 的
+  OIDC filter 负责整个 authorization-code 流程：重定向到 IdP、处理 callback
+  重定向、用 code 换取 token 并维护会话；用户在 IdP UI 上完成登录，应用自身不再
+  实现或保存任何 OAuth callback 逻辑。Envoy 将已验证的 ID token 转发给 Authguard
+  （`x-authguard-id-token`，OIDC 模式）。
+- **Workload（机器）**——作业服务、同步代理、CI runner。不存在浏览器重定向；
+  workload 以自身业务 SA 账号走 OAuth2/OIDC **client_credentials** 获取短期
+  audience 受限的 access token，并以 `Authorization: Bearer` 发送；Envoy JWT
+  provider 验证该 token（JWT 模式）。Workload 绝不使用浏览器流程，也绝不冒充用户。
+
 在该边界下游，Authguard 可重签自己的内部业务 JWT（见 §10）：原始凭据仍由 Envoy 按
 标准验证，只有 ALLOW 响应会改写转发给业务服务的 token。因此 Authguard 始终是“验签
 无关的重签者”——绝不接受未验证 token，也绝不要求 Envoy 放宽其 JWT/OIDC 策略。
@@ -1306,10 +1333,10 @@ workload 不能调用签发 direct context/scope token 的 Envoy Check listener�
 scope-token store；scope-token miss 或 cache 故障时 fail closed。policy 与 Principal
 均不进入 Memory/Redis cache。
 
-### 10.1 内部业务 JWT
+### 10.1 业务 JWT 重签（resign）
 
-可选（`auth.business_token.enabled`）开启后，每个 ALLOW 都为业务微服务重签一枚短期
-内部 JWT 并覆盖 `authorization` 头（Envoy 先移除原始身份 token）。格式为 RS256
+可选（`auth.resign_jwt.enabled`）开启后，每个 ALLOW 都为业务微服务重签一枚短期
+JWT 并替换 `authorization` 头（Envoy 先移除原始身份 token）。格式为 RS256
 compact JWT（`RSASSA-PKCS1-v1_5` + SHA-256，RFC 8017 § 8.2）：
 
 - `iss: "authguard"` 标记重签者，`authguardOrigin: true` 标记重签来源——客户端原始
@@ -1319,8 +1346,11 @@ compact JWT（`RSASSA-PKCS1-v1_5` + SHA-256，RFC 8017 § 8.2）：
 - `authguard_group_ids` 携带 issuer-local 稳定 group ID。
 - `iat`/`exp` 沿用 `scope_token_ttl`，并复制原 token 的标量身份 claims（如
   tenant_id、MFA 状态）；`iss`/`sub`/`authguard_group_ids` 不会被客户端值覆盖。
+- **稳定身份保持不变，并追加 `authguardOrigin: true` 标记 claim**。业务
+  微服务验证该签名即可证明请求经过了 Envoy Gateway，从而拒绝客户端直连微服务
+  API。
 - RSA 私钥（≥ 2048 bits，PKCS#8 PEM）仅存于 Authguard，经
-  `AUTHGUARD__AUTH__BUSINESS_TOKEN__PRIVATE_KEY` 注入。业务 workload 只持有配对公钥
+  `AUTHGUARD__AUTH__RESIGN_JWT__PRIVATE_KEY` 注入。业务 workload 只持有配对公钥
   （PKCS#1 PEM，供引导工具使用），用任意标准 JWT 库验签，无需调用 Authguard SDK。
 - 禁用（默认）时维持仅移除身份 token 的现状。Envoy 自身的 JWT/OIDC 验证（§9）不变。
 

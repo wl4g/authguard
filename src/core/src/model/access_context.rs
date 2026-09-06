@@ -85,14 +85,16 @@ impl AccessContextSigner {
         Ok(Self { key: key.to_vec() })
     }
 
-    /// Reads the direct-context key from `AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY`.
+    /// Reads the direct-context key from `AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY`,
+    /// either from the process environment or from the mounted
+    /// `AUTHGUARD_ENV_FILE` KEY=VALUE file.
     ///
     /// # Errors
     ///
     /// Returns an error when the variable is absent, non-Unicode, or too short.
     pub fn from_env() -> Result<Self, AccessContextError> {
-        let key = std::env::var(ACCESS_CONTEXT_SIGNING_KEY_ENV)
-            .map_err(|_| AccessContextError::InvalidSigningKey)?;
+        let key = crate::config::secret_env(ACCESS_CONTEXT_SIGNING_KEY_ENV)
+            .ok_or(AccessContextError::InvalidSigningKey)?;
         Self::new(key)
     }
 

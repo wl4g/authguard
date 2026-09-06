@@ -24,6 +24,9 @@ evaluates the condition matrix, and each project tests the SDK-to-SQL boundary
 against SQLite or H2. Deployment mode starts the complete request path on k3s:
 Keycloak, Envoy Gateway, one Authguard replica, Redis Cluster, one shared
 PostgreSQL instance, an LDAP directory, Jaeger, and all five HTTP microservices.
+It additionally proves the Envoy Gateway JWT public-key requirement with a
+deterministic realm key, the workload OAuth2 client_credentials flow, and the
+resign-JWT Authguard-origin boundary inside a business microservice.
 
 ## Structure
 
@@ -33,6 +36,8 @@ customer-growth-job-service/
     init.sql                shared schema and deterministic rows
     authorization-scenarios.json      53 shared gateway and business scenarios
     principal-discovery-scenarios.json  JIT, federation, LDAP, and SCIM fixtures
+    keycloak-realm.json     realm fixture with deterministic RSA keys and workload client
+    e2e-jwt-keys/           fixed realm-signing and resign-JWT RSA key pairs
   e2e/
     common/                            process, project lifecycle, and reports
     deploy/
@@ -119,6 +124,37 @@ records using the same OIDC `(issuer, sub/externalId)` key must converge on the
 existing JIT Principal rather than creating a duplicate. The generated report
 contains provider paths, lifecycle results, counts, and stable-identity
 assertions, but never bearer tokens, client secrets, or LDAP bind credentials.
+
+### Deterministic realm signing key
+
+The realm imports a fixed RSA key pair (see `config/e2e-jwt-keys/`) through the
+realm `keys[]` fixture instead of letting Keycloak generate one at first start.
+The paired public JWKS is rendered as a ConfigMap by the support chart, and the
+Authguard SecurityPolicy consumes it through `localJWKS.existingConfigMap`, so
+Envoy Gateway JWT verification never depends on a dynamic realm key that would
+invalidate existing tokens or drift across `--skip-clean` redeploys. The
+verifier asserts the SecurityPolicy loads that exact ConfigMap.
+
+### Workload client_credentials (machine identity)
+
+The realm defines the confidential client `e2e-growth-job-runner` with service
+accounts enabled and an audience mapper stamping
+`customer-growth-job-service`. The verifier exchanges the SA secret for an
+access token with `grant_type=client_credentials` — no browser, no user login —
+asserts the audience claim, then sends it through Envoy: the JWT provider
+verifies the signature (foreign tokens would fail with HTTP 401) and Authguard
+denies the unbound SA with HTTP 403, proving both gates ran on the
+machine-identity flow.
+
+### Resign-JWT origin boundary
+
+Authguard re-signs every allowed request as a short-lived RS256 JWT carrying
+`authguardOrigin: true`. The rust-sqlx service mounts the paired public key
+(`resign-jwt-key.pub.pem`) and enforces the boundary in its middleware: the
+valid user JWT re-signed by Authguard passes through Envoy and is accepted,
+while the same Keycloak token sent directly to the workload — bypassing Envoy —
+is rejected with HTTP 401, proving business microservices can refuse direct
+client calls.
 
 The services share database `e2e_customer_growth`, but connect through separate login
 roles and schemas: `e2e_customer_growth_go_sqlx`, `e2e_customer_growth_rust_sqlx`,

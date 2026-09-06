@@ -2,9 +2,12 @@
   "realm": "example-corp",
   "enabled": true,
   "sslRequired": "none",
+  "scimApiEnabled": true,
   "registrationAllowed": false,
   "resetPasswordAllowed": false,
   "loginWithEmailAllowed": false,
+  "privateKey": "${E2E_REALM_SIGNING_PRIVATE_KEY}",
+  "certificate": "${E2E_REALM_SIGNING_CERTIFICATE}",
   "groups": [
     { "id": "11111111-1111-4111-8111-111111111111", "name": "direct-readers" },
     { "id": "22222222-2222-4222-8222-222222222222", "name": "token-editors" }
@@ -104,6 +107,64 @@
       "serviceAccountsEnabled": true,
       "authorizationServicesEnabled": false,
       "fullScopeAllowed": false
+    },
+    {
+      "id": "77777777-7777-4777-8777-777777777778",
+      "clientId": "e2e-scim-sync",
+      "name": "E2E SCIM Background Sync",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "${AUTHGUARD_SCIM_CLIENT_SECRET}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "fullScopeAllowed": false,
+      "protocolMappers": [
+        {
+          "name": "scim-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "http://placeholder.invalid/realms/example-corp/scim/v2",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "id": "99999999-9999-4999-8999-999999999999",
+      "clientId": "e2e-growth-job-runner",
+      "name": "E2E Customer Growth Job Runner",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "${E2E_WORKLOAD_CLIENT_SECRET}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "fullScopeAllowed": false,
+      "defaultClientScopes": [],
+      "optionalClientScopes": [],
+      "protocolMappers": [
+        {
+          "name": "audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "customer-growth-job-service",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
     }
   ],
   "users": [
@@ -150,6 +211,15 @@
       "serviceAccountClientId": "e2e-authguard-principal-discovery",
       "clientRoles": {
         "realm-management": ["query-groups", "query-users", "view-users"]
+      }
+    },
+    {
+      "id": "77777777-7777-4777-8777-777777777779",
+      "username": "service-account-e2e-scim-sync",
+      "enabled": true,
+      "serviceAccountClientId": "e2e-scim-sync",
+      "clientRoles": {
+        "realm-management": ["realm-admin"]
       }
     }
   ],

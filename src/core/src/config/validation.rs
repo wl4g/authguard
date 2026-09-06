@@ -1,10 +1,11 @@
 use anyhow::bail;
 
 use super::{
-    AuthguardConfig, BusinessTokenConfig, CacheConfig, CustomPrincipalDiscoveryConfig,
-    IdentityConfig, JitPrincipalDiscoveryConfig, KeycloakPrincipalDiscoveryConfig,
-    LdapPrincipalDiscoveryConfig, MgmtConfig, PrincipalDiscoveryConfig, RedisClusterConfig,
-    ScimPrincipalDiscoveryConfig, ScopeDeliveryConfig, ServerConfig, StorageConfig,
+    AuthguardConfig, CacheConfig, CustomPrincipalDiscoveryConfig, IdentityConfig,
+    JitPrincipalDiscoveryConfig, KeycloakPrincipalDiscoveryConfig, LdapPrincipalDiscoveryConfig,
+    MgmtConfig, OidcClientCredentialsConfig, PrincipalDiscoveryConfig, RedisClusterConfig,
+    ResignJwtConfig, ScimPrincipalDiscoveryConfig, ScopeDeliveryConfig, ServerConfig,
+    StorageConfig,
 };
 
 impl AuthguardConfig {
@@ -19,7 +20,7 @@ impl AuthguardConfig {
         validate_scope_delivery(&self.auth.scope_delivery)?;
         validate_identity(&self.auth.identity)?;
         validate_principal_discovery(&self.auth.principal_discovery)?;
-        validate_business_token(&self.auth.business_token)?;
+        validate_resign_jwt(&self.auth.resign_jwt)?;
         validate_storage(&self.storage)?;
         validate_cache(&self.cache)?;
         Ok(())
@@ -163,13 +164,10 @@ fn validate_keycloak(keycloak: &KeycloakPrincipalDiscoveryConfig) -> anyhow::Res
     if keycloak.discovery_id.trim().is_empty()
         || keycloak.base_url.trim().is_empty()
         || keycloak.realm.trim().is_empty()
-        || keycloak.client_id.trim().is_empty()
-        || (keycloak.client_secret.is_empty() == keycloak.client_secret_file.is_empty())
     {
-        bail!(
-            "each Keycloak principal discovery requires id, URL, realm and exactly one of client_secret or client_secret_file"
-        );
+        bail!("each Keycloak principal discovery requires id, URL and realm");
     }
+    validate_client_credentials("keycloak.auth", &keycloak.auth)?;
     if keycloak.connect_timeout.is_zero()
         || keycloak.request_timeout.is_zero()
         || keycloak.max_page_size == 0
@@ -184,11 +182,11 @@ fn validate_ldap(ldap: &LdapPrincipalDiscoveryConfig) -> anyhow::Result<()> {
         || ldap.url.trim().is_empty()
         || ldap.issuer.trim().is_empty()
         || ldap.base_dn.trim().is_empty()
-        || ldap.bind_dn.trim().is_empty()
-        || (ldap.bind_password.is_empty() == ldap.bind_password_file.is_empty())
+        || ldap.auth.bind_dn.trim().is_empty()
+        || (ldap.auth.bind_password.is_empty() == ldap.auth.bind_password_file.is_empty())
     {
         bail!(
-            "each LDAP principal discovery requires id, URL, issuer, base DN and exactly one of bind_password or bind_password_file"
+            "each LDAP principal discovery requires id, URL, issuer, base DN and exactly one of auth.bind_password or auth.bind_password_file"
         );
     }
     if ldap.connect_timeout.is_zero() || ldap.request_timeout.is_zero() || ldap.max_page_size == 0 {
@@ -239,16 +237,34 @@ fn validate_custom(custom: &CustomPrincipalDiscoveryConfig) -> anyhow::Result<()
     Ok(())
 }
 
-fn validate_business_token(token: &BusinessTokenConfig) -> anyhow::Result<()> {
+/// Validates OIDC client-credentials blocks shared by the Keycloak and SCIM
+/// connectors: a client id plus exactly one of the secret sources. A custom
+/// `token_url` must be an http(s) endpoint.
+fn validate_client_credentials(
+    path: &str,
+    auth: &OidcClientCredentialsConfig,
+) -> anyhow::Result<()> {
+    if auth.client_id.trim().is_empty()
+        || (auth.client_secret.is_empty() == auth.client_secret_file.is_empty())
+    {
+        bail!("{path} requires client_id and exactly one of client_secret or client_secret_file");
+    }
+    if !auth.token_url.is_empty() && !auth.token_url.starts_with("http") {
+        bail!("{path}.token_url must be an http(s) endpoint");
+    }
+    Ok(())
+}
+
+fn validate_resign_jwt(token: &ResignJwtConfig) -> anyhow::Result<()> {
     if !token.enabled {
         return Ok(());
     }
     if token.ttl.is_zero() {
-        bail!("auth.business_token.ttl must be positive when enabled");
+        bail!("auth.resign_jwt.ttl must be positive when enabled");
     }
     if token.private_key.is_empty() == token.private_key_file.is_empty() {
         bail!(
-            "auth.business_token requires exactly one of private_key or private_key_file when enabled"
+            "auth.resign_jwt requires exactly one of private_key or private_key_file when enabled"
         );
     }
     Ok(())
@@ -260,6 +276,19 @@ fn validate_scim(
 ) -> anyhow::Result<()> {
     if scim.enabled && (scim.discovery_id.trim().is_empty() || scim.issuer.trim().is_empty()) {
         bail!("auth.principal_discovery.scim requires discovery_id and issuer");
+    }
+    if scim.enabled && scim.auth.client_id.trim().is_empty() {
+        bail!(
+            "auth.principal_discovery.scim.auth requires client_id so the external sync agent can authenticate"
+        );
+    }
+    if scim.enabled
+        && !scim.auth.client_secret.is_empty()
+        && !scim.auth.client_secret_file.is_empty()
+    {
+        bail!(
+            "auth.principal_discovery.scim.auth requires at most one of client_secret or client_secret_file"
+        );
     }
     if scim.enabled
         && jit.enabled
@@ -295,8 +324,14 @@ fn validate_storage(storage: &StorageConfig) -> anyhow::Result<()> {
         "postgres" if storage.postgres.max_connections == 0 => {
             bail!("storage.postgres.max_connections must be positive");
         }
+        "postgres" if storage.postgres.min_connections > storage.postgres.max_connections => {
+            bail!("storage.postgres.min_connections must not exceed max_connections");
+        }
         "postgres" if storage.postgres.connect_timeout.is_zero() => {
             bail!("storage.postgres.connect_timeout must be positive");
+        }
+        "postgres" if storage.postgres.idle_timeout.is_zero() => {
+            bail!("storage.postgres.idle_timeout must be positive");
         }
         "sqlite" | "postgres" => {}
         provider => bail!("storage.provider must be SQLite or postgres, got `{provider}`"),

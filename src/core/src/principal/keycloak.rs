@@ -530,10 +530,17 @@ impl KeycloakEndpoints {
         };
         let users = append_segments(&base, &["admin", "realms", config.realm.trim(), "users"])?;
         let groups = append_segments(&base, &["admin", "realms", config.realm.trim(), "groups"])?;
-        let token = append_segments(
-            &base,
-            &["realms", config.realm.trim(), "protocol", "openid-connect", "token"],
-        )?;
+        // The SA token endpoint defaults to the well-known Keycloak path; the
+        // auth.token_url override supports IdPs fronted by a gateway whose
+        // external token URL differs from the Admin REST base.
+        let token = if config.auth.token_url.is_empty() {
+            append_segments(
+                &base,
+                &["realms", config.realm.trim(), "protocol", "openid-connect", "token"],
+            )?
+        } else {
+            parse_endpoint("auth.token_url", &config.auth.token_url, config.allow_insecure_http)?
+        };
         Ok(Self { issuer, users, groups, token })
     }
 }

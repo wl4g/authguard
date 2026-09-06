@@ -3,14 +3,17 @@ mod loader;
 mod settings;
 mod validation;
 
+pub(crate) use loader::secret_env;
+
 pub use settings::{
-    AuthConfig, AuthguardConfig, BusinessTokenConfig, CacheConfig, CustomPrincipalDiscoveryConfig,
+    AuthConfig, AuthguardConfig, CacheConfig, CustomPrincipalDiscoveryConfig,
     CustomRequestBindingConfig, CustomResponseMappingConfig, HealthConfig, IdentityConfig,
-    JitPrincipalDiscoveryConfig, KeycloakPrincipalDiscoveryConfig, LdapObjectMappingConfig,
-    LdapPrincipalDiscoveryConfig, LoggingConfig, MemoryCacheConfig, MetricsConfig, MgmtConfig,
-    OtelConfig, PerformanceConfig, PostgresConfig, PrincipalDiscoveryConfig, RedisClusterConfig,
-    RequestConfig, ResponseConfig, ScimPrincipalDiscoveryConfig, ScopeDeliveryConfig, ServerConfig,
-    SqliteConfig, StorageConfig,
+    JitPrincipalDiscoveryConfig, KeycloakPrincipalDiscoveryConfig, LdapBindAuthConfig,
+    LdapObjectMappingConfig, LdapPrincipalDiscoveryConfig, LoggingConfig, MemoryCacheConfig,
+    MetricsConfig, MgmtConfig, OidcClientCredentialsConfig, OtelConfig, PerformanceConfig,
+    PostgresConfig, PrincipalDiscoveryConfig, RedisClusterConfig, RequestConfig, ResignJwtConfig,
+    ResponseConfig, ScimPrincipalDiscoveryConfig, ScopeDeliveryConfig, ServerConfig, SqliteConfig,
+    StorageConfig,
 };
 
 #[cfg(test)]
@@ -19,7 +22,8 @@ mod tests {
 
     use super::{
         AuthguardConfig, CustomPrincipalDiscoveryConfig, KeycloakPrincipalDiscoveryConfig,
-        LdapObjectMappingConfig, LdapPrincipalDiscoveryConfig, PerformanceConfig, ServerConfig,
+        LdapBindAuthConfig, LdapObjectMappingConfig, LdapPrincipalDiscoveryConfig,
+        OidcClientCredentialsConfig, PerformanceConfig, ServerConfig,
     };
 
     #[test]
@@ -103,8 +107,11 @@ mod tests {
             base_url: "https://id.example.com".to_string(),
             issuer: "https://id.example.com/realms/corporate".to_string(),
             realm: "corporate".to_string(),
-            client_id: "authguard-principal-discovery".to_string(),
-            client_secret_file: "/run/secrets/keycloak-client-secret".to_string(),
+            auth: OidcClientCredentialsConfig {
+                client_id: "authguard-principal-discovery".to_string(),
+                client_secret_file: "/run/secrets/keycloak-client-secret".to_string(),
+                ..OidcClientCredentialsConfig::default()
+            },
             ..KeycloakPrincipalDiscoveryConfig::default()
         }];
         let object_mapping = LdapObjectMappingConfig {
@@ -120,8 +127,11 @@ mod tests {
             url: "ldaps://ldap.example.com:636".to_string(),
             issuer: "urn:identity:corporate-ldap".to_string(),
             base_dn: "dc=example,dc=com".to_string(),
-            bind_dn: "cn=authguard,ou=service-accounts,dc=example,dc=com".to_string(),
-            bind_password_file: "/run/secrets/ldap-bind-password".to_string(),
+            auth: LdapBindAuthConfig {
+                bind_dn: "cn=authguard,ou=service-accounts,dc=example,dc=com".to_string(),
+                bind_password_file: "/run/secrets/ldap-bind-password".to_string(),
+                ..LdapBindAuthConfig::default()
+            },
             user: object_mapping.clone(),
             group: LdapObjectMappingConfig {
                 object_filter: "(objectClass=groupOfNames)".to_string(),
@@ -142,7 +152,7 @@ mod tests {
 
         config.validate().expect("file-backed connector credentials are valid");
 
-        config.auth.principal_discovery.keycloak[0].client_secret =
+        config.auth.principal_discovery.keycloak[0].auth.client_secret =
             "ambiguous-inline-secret".to_string();
         assert!(config.validate().is_err());
     }
@@ -166,8 +176,11 @@ mod tests {
             discovery_id: discovery_id.to_string(),
             base_url: "https://sso.example.com".to_string(),
             realm: "example-corp".to_string(),
-            client_id: "authguard-search".to_string(),
-            client_secret: "not-logged-secret".to_string(),
+            auth: OidcClientCredentialsConfig {
+                client_id: "authguard-search".to_string(),
+                client_secret: "not-logged-secret".to_string(),
+                ..OidcClientCredentialsConfig::default()
+            },
             ..KeycloakPrincipalDiscoveryConfig::default()
         };
 
@@ -184,22 +197,22 @@ mod tests {
     }
 
     #[test]
-    fn validates_business_token_configuration() {
+    fn validates_resign_jwt_configuration() {
         let mut config = AuthguardConfig::default();
-        config.validate().expect("business token is disabled by default");
+        config.validate().expect("resign JWT is disabled by default");
 
-        config.auth.business_token.enabled = true;
-        config.auth.business_token.private_key = "not a real key".to_string();
-        config.auth.business_token.ttl = Duration::ZERO;
+        config.auth.resign_jwt.enabled = true;
+        config.auth.resign_jwt.private_key = "not a real key".to_string();
+        config.auth.resign_jwt.ttl = Duration::ZERO;
         assert!(config.validate().is_err(), "positive ttl is required");
 
-        config.auth.business_token.ttl = Duration::from_secs(60);
+        config.auth.resign_jwt.ttl = Duration::from_secs(60);
         config.validate().expect("inline private key is valid");
 
-        config.auth.business_token.private_key_file = "/run/secrets/business-token-key".to_string();
+        config.auth.resign_jwt.private_key_file = "/run/secrets/resign-jwt-key".to_string();
         assert!(config.validate().is_err(), "exactly one key source is required");
 
-        config.auth.business_token.private_key.clear();
+        config.auth.resign_jwt.private_key.clear();
         config.validate().expect("file-backed private key is valid");
     }
 }

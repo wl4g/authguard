@@ -4,6 +4,19 @@ keycloak:
   realm: ""
   bootstrapAdminUsername: e2e-admin
   bootstrapAdminPassword: e2e-admin-password
+  # SCIM v2 API is a preview feature in Keycloak 26; the sync agent needs a
+  # confidential client carrying the SCIM audience and a realm-admin SA.
+  scimEnabled: true
+  # Static e2e_ keys passed as --set-file by the runner; empty values fail
+  # chart rendering, so a missing --set-file cannot silently deploy a dynamic
+  # realm key.
+  realmSigningPrivateKey: ""
+  realmSigningCertificate: ""
+  realmSigningJwks: ""
+  resignJwtPrivateKey: ""
+  resignJwtPublicKey: ""
+  # Business SA secret for the workload client_credentials verifier.
+  workloadClientSecret: e2e-workload-client-secret
   resources:
     requests: { cpu: 100m, memory: 384Mi }
     limits: { cpu: 1000m, memory: 1Gi }
@@ -40,9 +53,32 @@ postgresql:
 gateway:
   name: e2e-customer-growth-gateway
 
+# Mock in-house identity directory consumed by the CustomPrincipalDiscovery
+# connector verifier. The vendor bearer token is embedded in the image.
+mocksvc:
+  image: registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-customer-growth-mocksvc:e2e-local
+  pullPolicy: Never
+  # Pre-issued vendor bearer JWT; the CustomPrincipalDiscovery connector in
+  # the Authguard config references the same value.
+  bearerToken: e2e-mocksvc-directory-token
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { cpu: 250m, memory: 128Mi }
+
+# SCIM background sync agent (Keycloak SCIM v2 API -> Authguard scim/refresh).
+scimSync:
+  image: registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-customer-growth-scim-sync:e2e-local
+  pullPolicy: Never
+  # Long period: the E2E triggers an explicit job from the CronJob instead.
+  schedule: "0 3 * * *"
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { cpu: 250m, memory: 128Mi }
+
 authguard:
   grpcTarget: ""
   grpcTLS: false
+  adminToken: e2e-admin-token
   accessContext:
     secretName: ""
     key: hmac-key

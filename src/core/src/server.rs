@@ -10,7 +10,8 @@ use crate::config::AuthguardConfig;
 use crate::handler::{
     DefaultAuthorizationHandler, ManagementHandler, PolicyHandler, PrincipalHandler,
 };
-use crate::model::{AccessContextSigner, BusinessTokenSigner};
+use crate::model::AccessContextSigner;
+use crate::principal::resign::{self, SigningKey};
 use crate::principal::PrincipalDiscoveryComponent;
 use crate::route::{AuthorizationRoutes, ManagementRoutes};
 use crate::storage;
@@ -330,7 +331,7 @@ impl RuntimeComponents {
             authguard.policy.role_binding_count = policy_snapshot.role_bindings.len(),
             "authorization policy runtime is ready"
         );
-        let business_token_signer = Self::open_business_token_signer(&config.auth.business_token)?;
+        let resign_key = Self::open_resign_signing_key(&config.auth.resign_jwt)?;
         let authorization = DefaultAuthorizationHandler::new(
             policy.clone(),
             principals.clone(),
@@ -340,29 +341,29 @@ impl RuntimeComponents {
             config.auth.scope_delivery.clone(),
             AccessContextSigner::from_env()
                 .context("configure direct access-context signing key")?,
-            business_token_signer,
+            resign_key,
         );
         Ok(Self { policy, principals, authorization, cache, metrics })
     }
 
-    /// Opens the RS256 business-token signer from its file-or-inline key.
+    /// Opens the RS256 resign-JWT signing key from its file-or-inline key.
     ///
     /// Disabled configuration yields `None` and the original identity token is
     /// simply stripped. The private key never leaves this process; business
     /// workloads only hold the paired public key.
-    fn open_business_token_signer(
-        config: &crate::config::BusinessTokenConfig,
-    ) -> anyhow::Result<Option<BusinessTokenSigner>> {
+    fn open_resign_signing_key(
+        config: &crate::config::ResignJwtConfig,
+    ) -> anyhow::Result<Option<SigningKey>> {
         if !config.enabled {
             return Ok(None);
         }
         let private_key_pem = crate::principal::PrincipalDiscoveryComponent::credential(
             &config.private_key,
             &config.private_key_file,
-            "business token RSA private key",
+            "resign JWT RSA private key",
         )?;
-        BusinessTokenSigner::new(&private_key_pem)
-            .context("configure business token RSA signing key")
+        resign::load_signing_key(&private_key_pem)
+            .context("configure resign JWT RSA signing key")
             .map(Some)
     }
 }

@@ -74,6 +74,13 @@ spec:
                 secretKeyRef:
                   name: {{ include "customer-growth-e2e.accessContextSecretName" $root }}
                   key: {{ $root.Values.authguard.accessContext.key }}
+            {{- if eq $component "rust-sqlx" }}
+            # The rust workload mounts the deterministic resign-JWT public key
+            # and enforces the Authguard-origin proof boundary; the other
+            # workloads only consume the trusted access context.
+            - name: RESIGN_JWT_PUBLIC_KEY_FILE
+              value: /etc/e2e/resign-jwt-public-key.pem
+            {{- end }}
           ports:
             - { name: http, containerPort: 8080 }
           startupProbe:
@@ -88,9 +95,20 @@ spec:
             {{- toYaml $workload.resources | nindent 12 }}
           volumeMounts:
             - { name: tmp, mountPath: /tmp }
+            {{- if eq $component "rust-sqlx" }}
+            - name: resign-public-key
+              mountPath: /etc/e2e/resign-jwt-public-key.pem
+              subPath: resign-jwt-public-key.pem
+              readOnly: true
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if eq $component "rust-sqlx" }}
+        - name: resign-public-key
+          configMap:
+            name: {{ include "customer-growth-e2e.keycloakName" $root }}-resign-public-key
+        {{- end }}
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute

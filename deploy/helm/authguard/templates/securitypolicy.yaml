@@ -1,8 +1,9 @@
-{{- $integration := .Values.authguardIntegration -}}
-{{- $jwt := $integration.jwt -}}
-{{- if $integration.enabled }}
-{{- if eq $jwt.enabled $integration.oidc.enabled }}
-{{- fail "authguardIntegration requires exactly one of jwt.enabled or oidc.enabled" }}
+{{- $ext := .Values.envoy_gateway.ext_authz -}}
+{{- $jwt := $ext.jwt -}}
+{{- $oidc := $ext.oidc -}}
+{{- if $ext.enabled }}
+{{- if eq $jwt.enabled $oidc.enabled }}
+{{- fail "envoy_gateway.ext_authz requires exactly one of jwt.enabled or oidc.enabled" }}
 {{- end }}
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
@@ -14,7 +15,7 @@ spec:
   targetRefs:
     - group: gateway.networking.k8s.io
       kind: Gateway
-      name: {{ $integration.gateway.name }}
+      name: {{ $ext.gateway.name }}
   extAuth:
     failOpen: false
     timeout: 2s
@@ -38,7 +39,7 @@ spec:
     optional: false
     providers:
       - name: platform-idp
-        issuer: {{ required "authguardIntegration.jwt.issuer is required" $jwt.issuer | quote }}
+        issuer: {{ required "envoy_gateway.ext_authz.issuer is required when jwt.enabled" $ext.issuer | quote }}
         audiences:
           {{- toYaml $jwt.audiences | nindent 10 }}
         extractFrom:
@@ -62,15 +63,18 @@ spec:
             name: {{ include "authguard.jwtJwksConfigMapName" . }}
         {{- end }}
   {{- end }}
-  {{- if $integration.oidc.enabled }}
+  {{- if $oidc.enabled }}
   oidc:
     provider:
-      issuer: {{ required "authguardIntegration.oidc.issuer is required" $integration.oidc.issuer | quote }}
-    clientID: {{ required "authguardIntegration.oidc.clientID is required" $integration.oidc.clientID | quote }}
+      issuer: {{ required "envoy_gateway.ext_authz.issuer is required when oidc.enabled" $ext.issuer | quote }}
+    clientID: {{ required "envoy_gateway.ext_authz.oidc.clientID is required" $oidc.clientID | quote }}
     clientSecret:
-      name: {{ include "authguard.oidcSecretName" . }}
+      name: {{ required "envoy_gateway.ext_authz.oidc.clientSecretRef.name is required" $oidc.clientSecretRef.name }}
+      {{- with $oidc.clientSecretRef.key }}
+      key: {{ . | quote }}
+      {{- end }}
     scopes: [openid, profile, email, groups]
-    {{- with $integration.oidc.redirectURL }}
+    {{- with $oidc.redirectURL }}
     redirectURL: {{ . | quote }}
     {{- end }}
     logoutPath: /logout

@@ -83,9 +83,14 @@ auth:
     #     base_url: https://sso.example.com
     #     realm: example-corp
     #     issuer: https://sso.example.com/realms/example-corp
-    #     # Service account with view-users/view-groups realm-management roles.
-    #     client_id: authguard-search
-    #     client_secret: ""  # or client_secret_file: /run/secrets/keycloak-client-secret
+    #     # SA authentication: standard OIDC client_credentials. The SA lives
+    #     # inside the realm with view-users/view-groups realm-management
+    #     # roles — never a master admin. token_url overrides the well-known
+    #     # Keycloak token endpoint when the IdP is fronted by a gateway.
+    #     auth:
+    #       token_url: ""  # default: {base_url}/realms/{realm}/protocol/openid-connect/token
+    #       client_id: authguard-search
+    #       client_secret: ""  # or client_secret_file: /run/secrets/keycloak-client-secret
     #     connect_timeout: 3s
     #     request_timeout: 5s
     #     max_page_size: 100
@@ -95,16 +100,17 @@ auth:
     # paged results. Runtime query values are always RFC 4515 escaped.
     # `object_filter` is a static administrator-supplied filter, e.g.
     # `(&(objectClass=person)(cn={0}))`; `{0}` is replaced by the escaped
-    # search text. Bind with a read-only service account or GSSAPI (omit
-    # bind_dn/bind_password and configure a SASL mechanism via env).
+    # search text. SA authentication is a direct simple bind on every
+    # connection — LDAP has no token exchange like the OIDC connectors.
     # ldap:
     #   - enabled: false
     #     discovery_id: corporate-ldap
     #     url: ldaps://ldap.example.com:636
     #     issuer: https://ldap.example.com
     #     base_dn: dc=example,dc=com
-    #     bind_dn: cn=authguard-readonly,ou=service,dc=example,dc=com
-    #     bind_password: ""  # or bind_password_file: /run/secrets/ldap-bind-password
+    #     auth:
+    #       bind_dn: cn=authguard-readonly,ou=service,dc=example,dc=com
+    #       bind_password: ""  # or bind_password_file: /run/secrets/ldap-bind-password
     #     user:
     #       search_base: ou=people
     #       object_filter: (&(objectClass=person)(|(uid={0})(mail={0})))
@@ -162,8 +168,13 @@ auth:
     #     max_page_size: 100
     #     allow_insecure_http: false
     #
-    # The SCIM is a pull mode AuthN sync protocol, It is will ingests from (e.g, Keycloak SCIM server) provisioning the
-    # Authentication data resources into Authguard storage as auth projection, so the hot AuthN path never calls the IdP.
+    # SCIM runs in push mode: an external sync agent authenticates with its
+    # own OIDC client-credentials token carrying the SCIM audience and POSTs
+    # normalized resources to /adm/v1/principal-discovery/scim/refresh, which
+    # ingests them into Authguard storage as principal projections, so the
+    # hot AuthN path never calls the IdP. Authguard itself never calls out
+    # with these credentials; `auth` documents the agent's client for
+    # provisioning tooling and is validated for completeness.
     # Refer SCIM's specification: RFC-7643 core schema, RFC-7644 protocol.
     # https://www.rfc-editor.org/rfc/rfc7643.html
     # https://www.rfc-editor.org/rfc/rfc7644.html
@@ -174,13 +185,21 @@ auth:
       discovery_id: corporate-scim
       # Must exactly equal the OIDC `iss`; SCIM externalId should equal OIDC `sub`.
       issuer: https://idp.example.com/realms/example-corp
-  # On every allowed check Authguard re-signs a short-lived internal business
-  # JWT (RS256) carrying `authguardOrigin: true` and overwrites the
-  # authorization header for the upstream microservice. The RSA private key
-  # stays in Authguard (inject AUTHGUARD__AUTH__BUSINESS_TOKEN__PRIVATE_KEY
-  # from a Secret); business workloads verify with the paired public key only.
+      auth:
+        token_url: ""  # overrides the IdP token endpoint when required
+        client_id: authguard-scim-sync
+        client_secret: ""  # or client_secret_file: /run/secrets/scim-client-secret
+  # On every allowed check Authguard re-signs the verified client identity as
+  # a short-lived JWT (RS256) carrying `authguardOrigin: true` and replaces
+  # the authorization header for the upstream microservice. All attributes of
+  # the client JWT are preserved — only the marker claim is added — so the
+  # microservice verifying this signature proves the request passed through
+  # Envoy Gateway and rejects clients calling its API directly. The RSA
+  # private key stays in Authguard (inject
+  # AUTHGUARD__AUTH__RESIGN_JWT__PRIVATE_KEY from a Secret); business
+  # workloads verify with the paired public key only.
   # Disabled leaves the original identity token stripped without replacement.
-  business_token:
+  resign_jwt:
     enabled: false
     ttl: 60s
     private_key: ""  # PKCS#8 PEM RSA private key, or private_key_file: /run/secrets/...
@@ -198,9 +217,17 @@ storage:
     max_connections: 1
     connect_timeout: 5s
   postgres:
-    url: ""
+    # URL without credentials; username/password are separate fields so the
+    # password can resolve from a secret store without leaking into the URL.
+    url: ""  # e.g. postgres://host:5432/authguard
+    username: ""
+    password: ""  # inject AUTHGUARD__STORAGE__POSTGRES__PASSWORD from a Secret
     max_connections: 20
+    min_connections: 0
     connect_timeout: 5s
+    idle_timeout: 10m
+    # Pings a pooled connection before handing it out (SELECT 1).
+    validate_on_acquire: true
 
 # Local development defaults to an in-process cache. Helm overrides provider
 # to Redis so opaque scope tokens are shared by replicas.

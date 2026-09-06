@@ -184,7 +184,7 @@ repository 与 policy snapshot。Principal 每次按 `issuer + external_id` 批�
 
 `deploy/helm/authguard` vendored Envoy Gateway `v1.9.0` 和 Redis Cluster chart。默认安装
 Envoy Gateway 与 Redis；已有兼容 Envoy Gateway 的集群可设置
-`envoy-gateway.enabled=false`，同时保持 `authguardIntegration.enabled=true` 应用 gRPC
+`envoy-gateway.enabled=false`，同时保持 `envoy_gateway.ext_authz.enabled=true` 应用 gRPC
 extAuth `SecurityPolicy`。运行镜像使用项目约定的阿里云 registry 地址。
 默认 NetworkPolicy 分别允许 Envoy 访问 `8080`，以及带
 `authguard.io/scope-client` 选择器的 workload 访问 `8081`；两个服务不得复用 listener。

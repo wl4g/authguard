@@ -12,10 +12,13 @@ use authguard_customer_growth_job_rust_service::{
     },
     customer_growth_job_repository::CustomerGrowthJobRepository,
     customer_growth_job_service::CustomerGrowthJobService,
+    resign_jwt_verifier::ResignJwtVerifier,
 };
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query, Request, State},
     http::{HeaderMap, StatusCode},
+    middleware::{self, Next},
+    response::Response,
     routing::get,
     Json, Router,
 };
@@ -26,10 +29,17 @@ struct AppState {
     controller: CustomerGrowthJobController,
     repository: CustomerGrowthJobRepository,
     access_filter: HttpHeaderAccessFilter,
+    resign_verifier: Option<ResignJwtVerifier>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
     sqlx::any::install_default_drivers();
     let database_url = required_env("DATABASE_URL")?;
     let pool =
@@ -38,12 +48,19 @@ async fn main() -> anyhow::Result<()> {
     repository.ping().await?;
     let controller =
         CustomerGrowthJobController::new(CustomerGrowthJobService::new(repository.clone()));
-    let state = AppState { controller, repository, access_filter: access_filter_from_env()? };
+    let resign_verifier = ResignJwtVerifier::from_env()?;
+    let state = AppState {
+        controller,
+        repository,
+        access_filter: access_filter_from_env()?,
+        resign_verifier,
+    };
 
     let app = Router::new()
         .route("/healthz", get(health))
         .route("/customer-growth/jobs", get(list_jobs).post(create_job))
         .route("/customer-growth/jobs/{id}", get(get_job).put(update_job).delete(delete_job))
+        .layer(middleware::from_fn_with_state(state.clone(), verify_resign_jwt))
         .with_state(state);
     let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;
@@ -54,6 +71,27 @@ async fn main() -> anyhow::Result<()> {
 async fn health(State(state): State<AppState>) -> Result<&'static str, ApiError> {
     state.repository.ping().await.map_err(|error| ApiError::internal(&error))?;
     Ok("ok")
+}
+
+/// Business-microservice proof boundary: when a resign-JWT public key is
+/// configured, every request must carry a valid Authguard-re-signed JWT
+/// (`authguardOrigin: true`, RS256). Direct client calls never produce one,
+/// so the microservice can prove the request passed through Envoy Gateway.
+async fn verify_resign_jwt(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    // /healthz backs the kubelet probes: it must never require the resign JWT,
+    // or the startup/readiness probes 401 and the pod is restarted in a loop.
+    if request.uri().path() != "/healthz" {
+        if let Some(verifier) = &state.resign_verifier {
+            verifier.verify(&request).map_err(|error| {
+                ApiError::new(StatusCode::UNAUTHORIZED, format!("invalid resign JWT: {error}"))
+            })?;
+        }
+    }
+    Ok(next.run(request).await)
 }
 
 async fn list_jobs(

@@ -1,0 +1,131 @@
+{{- $root := . -}}
+{{- $keycloakName := include "customer-growth-e2e.keycloakName" . -}}
+{{- $principalSecretName := include "customer-growth-e2e.principalDiscoverySecretName" . -}}
+{{- $authguardName := "e2e-customer-growth-authguard" -}}
+{{- $scimTokenUrl := printf "http://%s.%s.svc.cluster.local:8080/realms/example-corp/protocol/openid-connect/token" $keycloakName .Release.Namespace -}}
+{{- $scimBaseUrl := printf "http://%s.%s.svc.cluster.local:8080/realms/example-corp/scim/v2" $keycloakName .Release.Namespace -}}
+{{- $mocksvcName := include "customer-growth-e2e.mocksvcName" . -}}
+
+# ── Mock in-house identity directory for the CustomPrincipalDiscovery
+# connector. Its /healthz is intentionally unauthenticated so the K8s
+# probes never carry the vendor bearer token.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $mocksvcName }}
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+    app.kubernetes.io/component: e2e-mocksvc
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: e2e-mocksvc
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $mocksvcName }}
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+    app.kubernetes.io/component: e2e-mocksvc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: e2e-mocksvc
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: e2e-mocksvc
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: e2e-mocksvc
+          image: {{ .Values.mocksvc.image | quote }}
+          imagePullPolicy: {{ .Values.mocksvc.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          ports:
+            - { name: http, containerPort: 8080 }
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 2
+          resources:
+            {{- toYaml .Values.mocksvc.resources | nindent 12 }}
+          # readOnlyRootFilesystem needs a writable scratch dir for gunicorn.
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+
+# ── SCIM background sync job: pulls Users/Groups from the Keycloak SCIM v2
+# API (client_credentials + SCIM audience + realm-admin SA) and pushes them
+# into Authguard as normalized ScimRefreshRequest projections. The CronJob
+# schedule is the cadence; one successful manual run is what the E2E
+# verifier asserts.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "customer-growth-e2e.scimSyncName" . }}
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+    app.kubernetes.io/component: e2e-scim-sync
+spec:
+  schedule: "{{ .Values.scimSync.schedule }}"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/instance: {{ .Release.Name }}
+            app.kubernetes.io/component: e2e-scim-sync
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: scim-sync-agent
+              image: {{ .Values.scimSync.image | quote }}
+              imagePullPolicy: {{ .Values.scimSync.pullPolicy }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              env:
+                - { name: KEYCLOAK_URL, value: {{ printf "http://%s.%s.svc.cluster.local:8080" $keycloakName .Release.Namespace | quote }} }
+                - { name: KEYCLOAK_REALM, value: "example-corp" }
+                - { name: SCIM_CLIENT_ID, value: "e2e-scim-sync" }
+                - { name: AUTHGUARD_SCIM_CLIENT_SECRET, valueFrom: { secretKeyRef: { name: {{ $principalSecretName }}, key: AUTHGUARD_SCIM_CLIENT_SECRET } } }
+                - { name: AUTHGUARD_MGMT_URL, value: {{ printf "http://%s.%s.svc.cluster.local:9091" $authguardName .Release.Namespace | quote }} }
+                - { name: AUTHGUARD__AUTH__ADMIN_TOKEN, valueFrom: { secretKeyRef: { name: {{ $principalSecretName }}, key: AUTHGUARD__AUTH__ADMIN_TOKEN } } }
+              resources:
+                {{- toYaml .Values.scimSync.resources | nindent 16 }}

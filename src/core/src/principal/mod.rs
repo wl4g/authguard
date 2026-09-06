@@ -20,6 +20,7 @@ mod custom;
 mod jit;
 mod keycloak;
 mod ldap;
+pub mod resign;
 mod scim;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -382,13 +383,13 @@ impl PrincipalDiscoveryComponent {
         let mut federated: Vec<Arc<PrincipalSearchDiscovery>> = Vec::new();
         for keycloak in config.keycloak.iter().filter(|entry| entry.enabled) {
             let secret = Self::credential(
-                &keycloak.client_secret,
-                &keycloak.client_secret_file,
+                &keycloak.auth.client_secret,
+                &keycloak.auth.client_secret_file,
                 "Keycloak client secret",
             )?;
             let provider = KeycloakPrincipalDiscovery::with_client_credentials(
                 keycloak,
-                &keycloak.client_id,
+                &keycloak.auth.client_id,
                 secret,
             )
             .context("configure Keycloak Principal discovery")?;
@@ -396,12 +397,12 @@ impl PrincipalDiscoveryComponent {
         }
         for ldap in config.ldap.iter().filter(|entry| entry.enabled) {
             let password = Self::credential(
-                &ldap.bind_password,
-                &ldap.bind_password_file,
+                &ldap.auth.bind_password,
+                &ldap.auth.bind_password_file,
                 "LDAP bind password",
             )?;
             let mut resolved = ldap.clone();
-            resolved.bind_password = password;
+            resolved.auth.bind_password = password;
             let provider = LdapPrincipalDiscovery::new(&resolved)
                 .context("configure LDAP Principal discovery")?;
             Self::add_search_provider(&mut federated, provider)?;

@@ -1,11 +1,7 @@
-{{- if and (eq (lower .Values.authguard.config.storage.backend) "sqlite") (gt (int .Values.authguard.replicaCount) 1) -}}
-{{- fail "authguard.config.storage.backend=sqlite supports only one Authguard replica; use PostgreSQL before increasing authguard.replicaCount" -}}
-{{- end }}
-{{- if and (eq (lower .Values.authguard.config.cache.provider) "memory") (gt (int .Values.authguard.replicaCount) 1) -}}
-{{- fail "authguard.config.cache.provider=Memory supports only one Authguard replica; use Redis before increasing authguard.replicaCount" -}}
-{{- end }}
-{{- if and .Values.authguard.config.auth.business_token.enabled (not .Values.authguard.businessToken.existingSecret) (not .Values.authguard.businessToken.privateKey) -}}
-{{- fail "authguard.config.auth.business_token.enabled requires authguard.businessToken.existingSecret or authguard.businessToken.privateKey" -}}
+{{- $provider := include "authguard.secretsProvider" . -}}
+{{- $ext := .Values.envoy_gateway.ext_authz -}}
+{{- if and $ext.enabled (eq $ext.jwt.enabled $ext.oidc.enabled) -}}
+{{- fail "envoy_gateway.ext_authz requires exactly one of jwt.enabled or oidc.enabled" -}}
 {{- end }}
 apiVersion: apps/v1
 kind: Deployment
@@ -28,8 +24,10 @@ spec:
     metadata:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
-        checksum/access-context-key: {{ .Values.authguard.accessContext | toJson | sha256sum }}
-        checksum/business-token-key: {{ .Values.authguard.businessToken | toJson | sha256sum }}
+        checksum/secrets: {{ .Values.secrets | toJson | sha256sum }}
+        {{- if eq $provider "vault" }}
+        {{- include "authguard.vaultAnnotations" . | nindent 8 }}
+        {{- end }}
         {{- with .Values.authguard.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -52,7 +50,48 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- $redis := index .Values "redis-cluster" }}
+      {{- if .Values.authguard.resignKeyInit.enabled }}
+      initContainers:
+        # Decodes the base64 PKCS#8 PEM resign-JWT key from the injected
+        # environment (or the mounted KEY=VALUE env file) into the
+        # private_key_file configured under auth.resign_jwt. The runtime image
+        # is distroless, so the decode runs here.
+        - name: resign-key-decode
+          image: "{{ .Values.authguard.resignKeyInit.image.repository }}:{{ .Values.authguard.resignKeyInit.image.tag }}"
+          imagePullPolicy: {{ .Values.authguard.resignKeyInit.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsUser: 65532
+            runAsGroup: 65532
+            capabilities: { drop: ["ALL"] }
+          {{- if and (eq $provider "kubernetes") .Values.secrets.kubernetes.existingSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secrets.kubernetes.existingSecret }}
+          {{- end }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              key="${AUTHGUARD_RESIGN_JWT_PRIVATE_KEY:-}"
+              if [ -z "$key" ] && [ -f /etc/authguard/csi/env ]; then
+                key="$(sed -n 's/^AUTHGUARD_RESIGN_JWT_PRIVATE_KEY=//p' /etc/authguard/csi/env | head -n 1)"
+              fi
+              if [ -z "$key" ] && [ -f /vault/secrets/env ]; then
+                key="$(sed -n 's/^AUTHGUARD_RESIGN_JWT_PRIVATE_KEY=//p' /vault/secrets/env | head -n 1)"
+              fi
+              if [ -n "$key" ]; then
+                printf '%s' "$key" | base64 -d > /etc/authguard/secrets/resign-jwt-private-key.pem
+              fi
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/authguard/secrets
+            {{- if or (eq $provider "gcp") (eq $provider "aws") }}
+            - name: csi-secrets
+              mountPath: {{ include "authguard.csiSecretsMountPath" . }}
+              readOnly: true
+            {{- end }}
+      {{- end }}
       containers:
         - name: authguard
           image: "{{ .Values.authguard.image.repository }}:{{ .Values.authguard.image.tag }}"
@@ -66,63 +105,49 @@ spec:
               value: /etc/authguard/authguard.yaml
             - name: AUTHGUARD_REPLICA_COUNT
               value: {{ .Values.authguard.replicaCount | quote }}
-            - name: AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "authguard.accessContextSecretName" . }}
-                  key: {{ .Values.authguard.accessContext.key }}
-            {{- if or .Values.authguard.admin.existingSecret .Values.authguard.admin.token }}
-            - name: AUTHGUARD__AUTH__ADMIN_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ default (printf "%s-admin" (include "authguard.fullname" .)) .Values.authguard.admin.existingSecret }}
-                  key: {{ .Values.authguard.admin.key }}
+            {{- if or (eq $provider "gcp") (eq $provider "aws") }}
+            - name: AUTHGUARD_ENV_FILE
+              value: {{ include "authguard.csiSecretsMountPath" . }}/env
+            {{- else if eq $provider "vault" }}
+            - name: AUTHGUARD_ENV_FILE
+              value: /vault/secrets/env
             {{- end }}
-            {{- if and .Values.authguard.config.auth.business_token.enabled (or .Values.authguard.businessToken.existingSecret .Values.authguard.businessToken.privateKey) }}
-            - name: AUTHGUARD__AUTH__BUSINESS_TOKEN__PRIVATE_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "authguard.businessTokenSecretName" . }}
-                  key: {{ .Values.authguard.businessToken.key }}
-            {{- end }}
-            {{- with .Values.authguard.storage.existingSecret }}
-            - name: AUTHGUARD__STORAGE__POSTGRES__URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ . }}
-                  key: {{ $.Values.authguard.storage.urlKey }}
-            {{- end }}
-            {{- if and (eq (lower .Values.authguard.config.cache.provider) "redis") (or $redis.enabled $redis.existingSecret) }}
+            {{- if and (index .Values "redis-cluster").enabled (index .Values "redis-cluster").usePassword }}
             - name: AUTHGUARD__CACHE__REDIS__PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "authguard.redisSecretName" . }}
                   key: {{ include "authguard.redisPasswordKey" . }}
             {{- end }}
+          {{- if and (eq $provider "kubernetes") .Values.secrets.kubernetes.existingSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secrets.kubernetes.existingSecret }}
+          {{- end }}
           ports:
-            - { name: authz-grpc, containerPort: {{ .Values.authguard.config.server.port }}, protocol: TCP }
-            - { name: scope-grpc, containerPort: {{ .Values.authguard.config.server.scope_port }}, protocol: TCP }
-            {{- if .Values.authguard.config.mgmt.enabled }}
-            - { name: mgmt, containerPort: {{ .Values.authguard.config.mgmt.port }}, protocol: TCP }
+            - { name: authz-grpc, containerPort: {{ .Values.authguard.service.grpcPort }}, protocol: TCP }
+            - { name: scope-grpc, containerPort: {{ .Values.authguard.service.scopeGrpcPort }}, protocol: TCP }
+            {{- if .Values.authguard.mgmt.enabled }}
+            - { name: mgmt, containerPort: {{ .Values.authguard.service.mgmtPort }}, protocol: TCP }
             {{- end }}
-          {{- if .Values.authguard.config.mgmt.enabled }}
+          {{- if .Values.authguard.mgmt.enabled }}
           livenessProbe:
             httpGet:
-              path: {{ include "authguard.joinPath" (dict "context" .Values.authguard.config.mgmt.context_path "path" .Values.authguard.config.mgmt.health.liveness_path) }}
+              path: {{ .Values.authguard.mgmt.livenessPath }}
               port: mgmt
             periodSeconds: 10
             timeoutSeconds: 2
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: {{ include "authguard.joinPath" (dict "context" .Values.authguard.config.mgmt.context_path "path" .Values.authguard.config.mgmt.health.readiness_path) }}
+              path: {{ .Values.authguard.mgmt.readinessPath }}
               port: mgmt
             periodSeconds: 5
             timeoutSeconds: 2
             failureThreshold: 3
           startupProbe:
             httpGet:
-              path: {{ include "authguard.joinPath" (dict "context" .Values.authguard.config.mgmt.context_path "path" .Values.authguard.config.mgmt.health.liveness_path) }}
+              path: {{ .Values.authguard.mgmt.livenessPath }}
               port: mgmt
             periodSeconds: 2
             failureThreshold: 30
@@ -133,9 +158,11 @@ spec:
             - name: config
               mountPath: /etc/authguard
               readOnly: true
-            {{- with .Values.authguard.principalDiscovery.existingSecret }}
-            - name: principal-discovery-credentials
-              mountPath: /etc/authguard/principal-discovery
+            - name: secrets
+              mountPath: /etc/authguard/secrets
+            {{- if or (eq $provider "gcp") (eq $provider "aws") }}
+            - name: csi-secrets
+              mountPath: {{ include "authguard.csiSecretsMountPath" . }}
               readOnly: true
             {{- end }}
             - name: tmp
@@ -144,10 +171,15 @@ spec:
         - name: config
           configMap:
             name: {{ include "authguard.fullname" . }}-config
-        {{- with .Values.authguard.principalDiscovery.existingSecret }}
-        - name: principal-discovery-credentials
-          secret:
-            secretName: {{ . }}
+        - name: secrets
+          emptyDir: {}
+        {{- if or (eq $provider "gcp") (eq $provider "aws") }}
+        - name: csi-secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ printf "%s-%s-secrets" (include "authguard.fullname" .) $provider }}
         {{- end }}
         - name: tmp
           emptyDir: {}

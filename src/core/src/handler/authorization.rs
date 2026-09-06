@@ -29,13 +29,14 @@ use crate::cache::IAuthorizationCache;
 use crate::config::{IdentityConfig, ScopeDeliveryConfig};
 use crate::model::access_context_v1::access_context_service_server::AccessContextService;
 use crate::model::{
-    epoch_seconds, AccessContext, AccessContextInput, AccessContextSigner, BusinessTokenSigner,
-    ACCESS_CONTEXT_HEADER, SCOPE_TOKEN_HEADER,
+    epoch_seconds, AccessContext, AccessContextInput, AccessContextSigner, ACCESS_CONTEXT_HEADER,
+    SCOPE_TOKEN_HEADER,
 };
 use crate::model::{
     AuthorizationConditions, AuthorizationDecision, AuthorizationRequest, AuthorizationScope,
     Effect, EvaluationContext, Role, UrnPattern,
 };
+use crate::principal::resign;
 use crate::utils::{HttpMappingError, IdentityError, RequestIdentity, ResolvedHttpRoute};
 
 const CHECK_ROUTE: &str = "envoy.service.auth.v3.Authorization/Check";
@@ -179,9 +180,9 @@ pub struct DefaultAuthorizationHandler {
     identity: IdentityConfig,
     scope_delivery: ScopeDeliveryConfig,
     direct_context_signer: AccessContextSigner,
-    /// Re-signs the internal business JWT when enabled; `None` strips the
-    /// original token header without replacement.
-    business_token_signer: Option<BusinessTokenSigner>,
+    /// Re-signs the JWT for the business microservice when enabled; `None`
+    /// strips the original token header without replacement.
+    resign_key: Option<resign::SigningKey>,
 }
 
 impl DefaultAuthorizationHandler {
@@ -197,7 +198,7 @@ impl DefaultAuthorizationHandler {
         identity: IdentityConfig,
         scope_delivery: ScopeDeliveryConfig,
         direct_context_signer: AccessContextSigner,
-        business_token_signer: Option<BusinessTokenSigner>,
+        resign_key: Option<resign::SigningKey>,
     ) -> Self {
         Self {
             policy,
@@ -207,7 +208,7 @@ impl DefaultAuthorizationHandler {
             identity,
             scope_delivery,
             direct_context_signer,
-            business_token_signer,
+            resign_key,
         }
     }
 }
@@ -353,7 +354,7 @@ impl DefaultAuthorizationHandler {
         let deny_urn_count = scoped.deny_resource_urns.len();
         let urn_count = allow_urn_count + deny_urn_count;
         let now = epoch_seconds();
-        let business_token = self.business_token(&identity, &principal_id);
+        let resign_jwt = self.resign_jwt(&identity, &principal_id);
         let direct_context = AccessContext::new(
             AccessContextInput {
                 principal_id,
@@ -380,7 +381,7 @@ impl DefaultAuthorizationHandler {
         };
         self.metrics.record_authorization(true, &decision.reason, started.elapsed().as_secs_f64());
         self.metrics.record_http(CHECK_ROUTE, "gRPC", 200);
-        let ok = self.allowed_http_response(&delivery, business_token.as_deref());
+        let ok = self.allowed_http_response(&delivery, resign_jwt.as_deref());
         self.metrics.record_scope_delivery(delivery.name());
         tracing::debug!(
             authguard.decision = "allow",
@@ -463,7 +464,7 @@ impl DefaultAuthorizationHandler {
     fn allowed_http_response(
         &self,
         delivery: &AccessDelivery,
-        business_token: Option<&str>,
+        resign_jwt: Option<&str>,
     ) -> OkHttpResponseBuilder {
         let overwrite = Some(HeaderAppendAction::OverwriteIfExistsOrAdd);
         let mut response = OkHttpResponseBuilder::new();
@@ -488,10 +489,10 @@ impl DefaultAuthorizationHandler {
                 response.add_header(SCOPE_TOKEN_HEADER, token, overwrite, false);
             }
         }
-        if let Some(token) = business_token {
-            // The re-signed business JWT replaces the original IdP token so
-            // the upstream microservice receives only Authguard-issued
-            // identity (authguardOrigin: true) plus the access context.
+        if let Some(token) = resign_jwt {
+            // The re-signed JWT replaces the original IdP token so the
+            // upstream microservice receives only Authguard-issued identity
+            // (authguardOrigin: true) plus the access context.
             response.add_header("authorization", format!("Bearer {token}"), overwrite, false);
         }
         response
@@ -860,34 +861,33 @@ impl DefaultAuthorizationHandler {
         })
     }
 
-    /// Re-signs the internal business JWT for the upstream microservice.
+    /// Re-signs the JWT for the upstream business microservice.
     ///
     /// The token carries `authguardOrigin: true`, the verified identity, and
     /// the materialized principal id. It is signed with Authguard's RSA
     /// private key (RS256), so the microservice verifies it with the paired
     /// public key without calling back into Authguard.
-    fn business_token(&self, identity: &RequestIdentity, principal_id: &str) -> Option<String> {
-        let signer = self.business_token_signer.as_ref()?;
+    fn resign_jwt(&self, identity: &RequestIdentity, principal_id: &str) -> Option<String> {
+        let key = self.resign_key.as_ref()?;
         let now = epoch_seconds();
-        let claims = Self::business_token_claims(identity, principal_id, now, &self.scope_delivery);
+        let claims = Self::resign_jwt_claims(identity, principal_id, now, &self.scope_delivery);
         let payload = serde_json::to_vec(&claims)
-            .map_err(|error| tracing::error!(%error, "failed to encode business token claims"))
+            .map_err(|error| tracing::error!(%error, "failed to encode resign JWT claims"))
             .ok()?;
-        let token = signer
-            .sign(&payload)
-            .map_err(|error| tracing::error!(%error, "failed to sign business token"))
+        let token = resign::sign(key, &payload)
+            .map_err(|error| tracing::error!(%error, "failed to sign resign JWT"))
             .ok()?;
         tracing::debug!(
             authguard.principal_id = principal_id,
-            authguard.business_token.ttl_seconds = self.scope_delivery.scope_token_ttl.as_secs(),
-            "re-signed internal business JWT"
+            authguard.resign_jwt.ttl_seconds = self.scope_delivery.scope_token_ttl.as_secs(),
+            "re-signed JWT for the business microservice"
         );
         Some(token)
     }
 
-    /// Assembles the business JWT claims shared between the runtime and tests.
+    /// Assembles the resign JWT claims shared between the runtime and tests.
     #[must_use]
-    pub(crate) fn business_token_claims(
+    pub(crate) fn resign_jwt_claims(
         identity: &RequestIdentity,
         principal_id: &str,
         now_epoch_seconds: u64,
@@ -1050,7 +1050,7 @@ mod tests {
     }
 
     #[test]
-    fn business_token_claims_mark_authguard_origin_and_keep_scalar_claims() {
+    fn resign_jwt_claims_mark_authguard_origin_and_keep_scalar_claims() {
         let identity = RequestIdentity {
             issuer: "https://id.example/realms/company".to_string(),
             external_id: "user-1".to_string(),
@@ -1060,7 +1060,7 @@ mod tests {
                 ("mfa".to_string(), "true".to_string()),
             ]),
         };
-        let claims = DefaultAuthorizationHandler::business_token_claims(
+        let claims = DefaultAuthorizationHandler::resign_jwt_claims(
             &identity,
             "principal-1",
             1_700_000_000,

@@ -36,20 +36,12 @@ app.kubernetes.io/component: server
 {{- end -}}
 {{- end -}}
 
-{{- define "authguard.oidcSecretName" -}}
-{{- default (printf "%s-oidc" (include "authguard.fullname" .)) .Values.authguardIntegration.oidc.existingSecret -}}
-{{- end -}}
-
-{{- define "authguard.accessContextSecretName" -}}
-{{- default (printf "%s-access-context" (include "authguard.fullname" .)) .Values.authguard.accessContext.existingSecret -}}
+{{- define "authguard.secretsProvider" -}}
+{{- lower (default "kubernetes" .Values.secrets.provider) -}}
 {{- end -}}
 
 {{- define "authguard.jwtJwksConfigMapName" -}}
-{{- default (printf "%s-jwt-jwks" (include "authguard.fullname" .)) .Values.authguardIntegration.jwt.localJWKS.existingConfigMap -}}
-{{- end -}}
-
-{{- define "authguard.businessTokenSecretName" -}}
-{{- default (printf "%s-business-token" (include "authguard.fullname" .)) .Values.authguard.businessToken.existingSecret -}}
+{{- default (printf "%s-jwt-jwks" (include "authguard.fullname" .)) .Values.envoy_gateway.ext_authz.jwt.localJWKS.existingConfigMap -}}
 {{- end -}}
 
 {{- define "authguard.redisFullname" -}}
@@ -73,4 +65,22 @@ app.kubernetes.io/component: server
 {{- else -}}
 {{- printf "%s%s" (trimSuffix "/" .context) .path -}}
 {{- end -}}
+{{- end -}}
+
+{{/* Env-file path for the cloud providers; vault owns its path. */}}
+{{- define "authguard.csiSecretsMountPath" -}}
+/etc/authguard/csi
+{{- end -}}
+
+{{/* Vault Agent Injector annotations. The KV secret's data.env value must be
+    the multi-line "ENV KEY=VALUE" content consumed through AUTHGUARD_ENV_FILE. */}}
+{{- define "authguard.vaultAnnotations" -}}
+vault.hashicorp.com/agent-inject: "true"
+vault.hashicorp.com/role: {{ required "secrets.vault.vaultRole is required when secrets.provider=vault" .Values.secrets.vault.vaultRole | quote }}
+vault.hashicorp.com/agent-init-first: "true"
+vault.hashicorp.com/agent-inject-secret-env: {{ required "secrets.vault.secretPath is required when secrets.provider=vault" .Values.secrets.vault.secretPath | quote }}
+vault.hashicorp.com/agent-inject-template-env: |
+  {{ print "{{" }}- with secret {{ .Values.secrets.vault.secretPath | quote }} -{{ print "}}" }}
+  {{ print "{{" }} .Data.data.env {{ print "}}" }}
+  {{ print "{{" }}- end -{{ print "}}" }}
 {{- end -}}

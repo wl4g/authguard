@@ -9,11 +9,11 @@
 {{- $keycloakLdapBindPassword := randAlphaNum 48 -}}
 {{- $existingPrincipalSecret := lookup "v1" "Secret" .Release.Namespace $principalSecretName -}}
 {{- $existingKeycloakSecret := lookup "v1" "Secret" .Release.Namespace $keycloakSecretName -}}
-{{- if and $existingPrincipalSecret (hasKey $existingPrincipalSecret.data "keycloak-client-secret") -}}
-{{- $clientSecret = index $existingPrincipalSecret.data "keycloak-client-secret" | b64dec -}}
+{{- if and $existingPrincipalSecret (hasKey $existingPrincipalSecret.data "AUTHGUARD_KEYCLOAK_CLIENT_SECRET") -}}
+{{- $clientSecret = index $existingPrincipalSecret.data "AUTHGUARD_KEYCLOAK_CLIENT_SECRET" | b64dec -}}
 {{- end -}}
-{{- if and $existingPrincipalSecret (hasKey $existingPrincipalSecret.data "ldap-bind-password") -}}
-{{- $authguardLdapBindPassword = index $existingPrincipalSecret.data "ldap-bind-password" | b64dec -}}
+{{- if and $existingPrincipalSecret (hasKey $existingPrincipalSecret.data "AUTHGUARD_LDAP_BIND_PASSWORD") -}}
+{{- $authguardLdapBindPassword = index $existingPrincipalSecret.data "AUTHGUARD_LDAP_BIND_PASSWORD" | b64dec -}}
 {{- end -}}
 {{- if and $existingKeycloakSecret (hasKey $existingKeycloakSecret.data "ldap-bind-password") -}}
 {{- $keycloakLdapBindPassword = index $existingKeycloakSecret.data "ldap-bind-password" | b64dec -}}
@@ -26,8 +26,18 @@ metadata:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
 type: Opaque
 stringData:
-  keycloak-client-secret: {{ $clientSecret | quote }}
-  ldap-bind-password: {{ $authguardLdapBindPassword | quote }}
+  # One Secret backs every runtime secret under the kubernetes provider:
+  # the connector credentials resolve through ${KEY} references (expand_env_refs),
+  # AUTHGUARD__AUTH__ADMIN_TOKEN is a native config override, and the
+  # access-context HMAC key is read directly through secret_env.
+  AUTHGUARD_KEYCLOAK_CLIENT_SECRET: {{ $clientSecret | quote }}
+  AUTHGUARD_LDAP_BIND_PASSWORD: {{ $authguardLdapBindPassword | quote }}
+  AUTHGUARD__AUTH__ADMIN_TOKEN: {{ required "authguard.adminToken is required" .Values.authguard.adminToken | quote }}
+  AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY: {{ .Values.authguard.accessContext.signingKey | quote }}
+  AUTHGUARD_SCIM_CLIENT_SECRET: {{ randAlphaNum 48 | quote }}
+  # base64 of the PKCS#8 PEM: the Authguard resign-key init container
+  # decodes this env var back into private_key_file.
+  AUTHGUARD_RESIGN_JWT_PRIVATE_KEY: {{ required "keycloak.resignJwtPrivateKey must contain the resign JWT private key" .Values.keycloak.resignJwtPrivateKey | b64enc | quote }}
 ---
 apiVersion: v1
 kind: Secret
@@ -109,6 +119,56 @@ metadata:
 data:
   example-corp-realm.json: |
 {{ required "keycloak.realm must contain the E2E realm JSON" .Values.keycloak.realm | nindent 4 }}
+  # Realm-level enablement of the SCIM v2 API (preview feature `scim-api`).
+  # The realm JSON pins the SCIM client so a restart with --import-realm
+  # replaces any admin-API drift.
+  scim-config.json: |
+    {
+      "realm": "example-corp",
+      "enabled": true,
+      "scimApiEnabled": true,
+      "clients": [
+        {
+          "clientId": "e2e-scim-sync",
+          "enabled": true,
+          "secret": {{ $clientSecret | quote }},
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "standardFlowEnabled": false,
+          "implicitFlowEnabled": false,
+          "directAccessGrantsEnabled": false,
+          "serviceAccountsEnabled": true,
+          "authorizationServicesEnabled": false,
+          "fullScopeAllowed": false,
+          "protocolMappers": [
+            {
+              "name": "scim-audience",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "consentRequired": false,
+              "config": {
+                "included.client.audience": {{ printf "http://%s.%s.svc.cluster.local:8080/realms/example-corp/scim/v2" $name .Release.Namespace | quote }},
+                "access.token.claim": "true",
+                "id.token.claim": "false"
+              }
+            }
+          ]
+        }
+      ],
+      "users": [
+        {
+          "username": "service-account-e2e-scim-sync",
+          "enabled": true,
+          "serviceAccountClientId": "e2e-scim-sync",
+          "clientRoles": {
+            "realm-management": ["realm-admin"]
+          }
+        }
+      ]
+    }
+  # The pre-issued bearer JWT the mock in-house directory expects; the
+  # CustomPrincipalDiscovery connector is configured with the same value.
+  mocksvc-bearer-token: {{ .Values.mocksvc.bearerToken | quote }}
 ---
 apiVersion: v1
 kind: Service
@@ -171,7 +231,14 @@ spec:
         - name: keycloak
           image: {{ .Values.keycloak.image | quote }}
           imagePullPolicy: {{ .Values.keycloak.pullPolicy }}
-          args: ["start-dev", "--import-realm", "--health-enabled=true"]
+          # scim-api is a preview feature in Keycloak 26; the realm JSON
+          # enables it per-realm (scimApiEnabled), the flag enables the
+          # provider globally.
+          args:
+            - start-dev
+            - --import-realm
+            - --health-enabled=true
+            - {{ printf "--features=scim-api" }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
@@ -184,7 +251,13 @@ spec:
             - { name: E2E_LDAP_ENABLED, value: {{ ternary "true" "false" .Values.ldap.enabled | quote }} }
             - { name: E2E_LDAP_URL, value: {{ printf "ldap://%s.%s.svc.cluster.local:389" $ldapName .Release.Namespace | quote }} }
             - { name: E2E_LDAP_BIND_PASSWORD, valueFrom: { secretKeyRef: { name: {{ $keycloakSecretName }}, key: ldap-bind-password } } }
-            - { name: E2E_PRINCIPAL_DISCOVERY_CLIENT_SECRET, valueFrom: { secretKeyRef: { name: {{ $principalSecretName }}, key: keycloak-client-secret } } }
+            - { name: E2E_PRINCIPAL_DISCOVERY_CLIENT_SECRET, valueFrom: { secretKeyRef: { name: {{ $principalSecretName }}, key: AUTHGUARD_KEYCLOAK_CLIENT_SECRET } } }
+            - { name: E2E_WORKLOAD_CLIENT_SECRET, value: {{ .Values.keycloak.workloadClientSecret | quote }} }
+            # Keycloak substitutes the placeholder into the raw realm JSON, so
+            # the pod must see the PEM with \n JSON escapes, not real newlines:
+            # replace turns newlines into \n, quote re-escapes the backslashes.
+            - { name: E2E_REALM_SIGNING_PRIVATE_KEY, value: {{ required "keycloak.realmSigningPrivateKey must contain the fixed realm RSA private key" .Values.keycloak.realmSigningPrivateKey | replace "\n" "\\n" | quote }} }
+            - { name: E2E_REALM_SIGNING_CERTIFICATE, value: {{ required "keycloak.realmSigningCertificate must contain the fixed realm RSA certificate" .Values.keycloak.realmSigningCertificate | replace "\n" "\\n" | quote }} }
             {{- if .Values.jaeger.enabled }}
             - { name: KC_TRACING_ENABLED, value: "true" }
             - { name: KC_TRACING_SAMPLER_TYPE, value: "always_on" }
@@ -214,3 +287,28 @@ spec:
         - name: realm
           configMap:
             name: {{ $name }}-realm
+---
+# The deterministic realm signing public key as a JWKS, mounted as the
+# localJWKS.existingConfigMap of the Authguard SecurityPolicy. Keycloak
+# imports the same RSA key through E2E_REALM_SIGNING_PRIVATE_KEY, so JWT
+# verification never depends on a dynamically generated realm key.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-realm-jwks
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+data:
+  jwks: {{ required "keycloak.realmSigningJwks must contain the fixed realm public JWKS" .Values.keycloak.realmSigningJwks | quote }}
+---
+# The deterministic resign-JWT public key (PKCS#1 PEM) for the workloads'
+# JWT verification filter.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-resign-public-key
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+data:
+  resign-jwt-public-key.pem: |
+{{ required "keycloak.resignJwtPublicKey must contain the fixed resign JWT public key" .Values.keycloak.resignJwtPublicKey | indent 4 }}

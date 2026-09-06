@@ -30,6 +30,16 @@
       "issuer": "urn:authguard:e2e:ldap:example-corp"
     }
   },
+  "custom": {
+    "provider_id": "e2e-mocksvc",
+    "identity": {
+      "username": "mocksvc-retention-analyst",
+      "immutable_external_id": "mocksvc-retention-analyst-001",
+      "display_name": "Mock Directory Retention Analyst",
+      "email": "mocksvc-retention-analyst@example-corp.example",
+      "expected_kind": "USER"
+    }
+  },
   "scim": {
     "provider_id": "e2e-scim",
     "user": {

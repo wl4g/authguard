@@ -1,6 +1,8 @@
+use std::str::FromStr;
+
 use anyhow::{bail, Context as _};
 use async_trait::async_trait;
-use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions};
+use sqlx::postgres::{PgConnectOptions, PgConnection, PgPool, PgPoolOptions};
 use sqlx::Executor as _;
 
 use super::record::{
@@ -24,10 +26,21 @@ impl PostgresAuthorizationRepository {
     ///
     /// Returns an error when the database cannot be reached or migrated.
     pub async fn connect(config: &PostgresConfig) -> anyhow::Result<Self> {
+        let mut options =
+            PgConnectOptions::from_str(&config.url).context("parse PostgreSQL URL")?;
+        if !config.username.is_empty() {
+            options = options.username(&config.username);
+        }
+        if !config.password.is_empty() {
+            options = options.password(&config.password);
+        }
         let pool = PgPoolOptions::new()
             .max_connections(config.max_connections)
+            .min_connections(config.min_connections)
             .acquire_timeout(config.connect_timeout)
-            .connect(&config.url)
+            .idle_timeout(config.idle_timeout)
+            .test_before_acquire(config.validate_on_acquire)
+            .connect_with(options)
             .await
             .context("connect to IAM database")?;
         let mut initialization =

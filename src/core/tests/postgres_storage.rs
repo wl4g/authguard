@@ -14,6 +14,7 @@ async fn postgres_implements_the_normalized_authorization_repository_contract() 
         url: url.clone(),
         max_connections: 2,
         connect_timeout: std::time::Duration::from_secs(5),
+        ..PostgresConfig::default()
     };
     let pool = PgPool::connect(&url).await.expect("connect PostgreSQL schema inspector");
     sqlx::raw_sql(

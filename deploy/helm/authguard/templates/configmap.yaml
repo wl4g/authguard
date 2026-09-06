@@ -1,3 +1,11 @@
+{{- $ext := .Values.envoy_gateway.ext_authz -}}
+{{- if and $ext.enabled (eq $ext.jwt.enabled $ext.oidc.enabled) -}}
+{{- fail "envoy_gateway.ext_authz requires exactly one of jwt.enabled or oidc.enabled" -}}
+{{- end -}}
+{{- $runtimeConfig := index .Values.authguard "authguard-config" | default "" -}}
+{{- if not $runtimeConfig -}}
+{{- fail "authguard.authguard-config must contain the full authguard.yaml content" -}}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,21 +14,4 @@ metadata:
     {{- include "authguard.labels" . | nindent 4 }}
 data:
   authguard.yaml: |
-{{- $config := deepCopy .Values.authguard.config -}}
-{{- $redis := index .Values "redis-cluster" -}}
-{{- $integration := .Values.authguardIntegration -}}
-{{- if and $integration.enabled (eq $integration.jwt.enabled $integration.oidc.enabled) -}}
-{{- fail "authguardIntegration requires exactly one of jwt.enabled or oidc.enabled" -}}
-{{- end -}}
-{{- if $redis.enabled -}}
-{{- $_ := set $config.cache.redis "nodes" (list (printf "redis://%s:6379" (include "authguard.redisFullname" .))) -}}
-{{- end }}
-{{- if and $integration.enabled $integration.jwt.enabled -}}
-{{- $_ := set $config.auth.identity "token_header" "authorization" -}}
-{{- $_ := set $config.auth.principal_discovery.jit "trusted_issuers" (list $integration.jwt.issuer) -}}
-{{- else if and $integration.enabled $integration.oidc.enabled -}}
-{{- $_ := set $config.auth.identity "token_header" "x-authguard-id-token" -}}
-{{- $_ := set $config.auth.principal_discovery.jit "trusted_issuers" (list $integration.oidc.issuer) -}}
-{{- end }}
-{{- $_ := set $config.storage "bootstrap_policy" .Values.authguard.policy -}}
-{{ toYaml $config | nindent 4 }}
+{{ tpl $runtimeConfig . | nindent 4 }}

@@ -18,7 +18,7 @@ spec:
       port: {{ .Values.authguard.service.scopeGrpcPort }}
       targetPort: scope-grpc
       appProtocol: grpc
-    {{- if .Values.authguard.config.mgmt.enabled }}
+    {{- if .Values.authguard.mgmt.enabled }}
     - name: mgmt
       port: {{ .Values.authguard.service.mgmtPort }}
       targetPort: mgmt

@@ -1,8 +1,8 @@
 {{- $envoyGateway := index .Values "envoy-gateway" -}}
-{{- $integration := .Values.authguardIntegration -}}
-{{- $gateway := $integration.gateway -}}
-{{- $tracing := $integration.tracing -}}
-{{- if and $integration.enabled $gateway.create }}
+{{- $ext := .Values.envoy_gateway.ext_authz -}}
+{{- $gateway := $ext.gateway -}}
+{{- $tracing := $ext.tracing -}}
+{{- if and $ext.enabled $gateway.create }}
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
 metadata:
@@ -34,8 +34,8 @@ spec:
         backendRefs:
           - group: ""
             kind: Service
-            name: {{ required "authguardIntegration.tracing.backendRef.name is required when tracing is enabled" $tracing.backendRef.name | quote }}
-            port: {{ required "authguardIntegration.tracing.backendRef.port is required when tracing is enabled" $tracing.backendRef.port }}
+            name: {{ required "envoy_gateway.ext_authz.tracing.backendRef.name is required when tracing is enabled" $tracing.backendRef.name | quote }}
+            port: {{ required "envoy_gateway.ext_authz.tracing.backendRef.port is required when tracing is enabled" $tracing.backendRef.port }}
             {{- with $tracing.backendRef.namespace }}
             namespace: {{ . | quote }}
             {{- end }}
