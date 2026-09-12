@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,6 +26,18 @@ const signedContextPrefix = "agctx1"
 const minSigningKeyBytes = 32
 
 var configuredLogger atomic.Pointer[slog.Logger]
+var telemetryObserver struct {
+	sync.RWMutex
+	observe func(context.Context, string, map[string]any)
+}
+
+// ConfigureTelemetryObserver installs an application-owned bridge for OTel
+// counters/histograms/spans. The adapter never initializes a global exporter.
+func ConfigureTelemetryObserver(observer func(context.Context, string, map[string]any)) {
+	telemetryObserver.Lock()
+	defer telemetryObserver.Unlock()
+	telemetryObserver.observe = observer
+}
 
 // ConfigureLogger installs an application-owned structured logger. Passing nil disables logging.
 func ConfigureLogger(logger *slog.Logger) {
@@ -42,11 +55,30 @@ func ResetLogger() {
 // LogDebug emits a structured adapter event without serializing request credentials.
 func LogDebug(ctx context.Context, event string, args ...any) {
 	adapterLogger().DebugContext(ctx, event, append([]any{"event", event}, args...)...)
+	observeTelemetry(ctx, event, args)
 }
 
 // LogWarn emits a structured infrastructure-failure event.
 func LogWarn(ctx context.Context, event string, args ...any) {
 	adapterLogger().WarnContext(ctx, event, append([]any{"event", event}, args...)...)
+	observeTelemetry(ctx, event, args)
+}
+
+func observeTelemetry(ctx context.Context, event string, args []any) {
+	telemetryObserver.RLock()
+	observer := telemetryObserver.observe
+	telemetryObserver.RUnlock()
+	if observer == nil {
+		return
+	}
+	fields := make(map[string]any, len(args)/2)
+	for index := 0; index+1 < len(args); index += 2 {
+		fields[fmt.Sprint(args[index])] = args[index+1]
+	}
+	func() {
+		defer func() { _ = recover() }()
+		observer(ctx, event, fields)
+	}()
 }
 
 // ErrorCategory returns a stable type name and never includes an error message.
@@ -194,6 +226,9 @@ func verifySignedAccessContext(signedContext string, signingKey string) (model.A
 func ValidateAccessContext(accessContext model.AccessContext, now uint64) error {
 	if accessContext.Version != model.AccessContextVersion {
 		return fmt.Errorf("unsupported access context version: %d", accessContext.Version)
+	}
+	if accessContext.PrincipalID == "" || accessContext.Action == "" || accessContext.ResourceURN == "" {
+		return fmt.Errorf("access context principal_id, action, and resource_urn are required")
 	}
 	if accessContext.ExpiresAtEpochSec <= accessContext.IssuedAtEpochSec {
 		return fmt.Errorf("access context expiry must be later than issue time")

@@ -10,6 +10,7 @@ metadata:
 spec:
   parentRefs:
     - name: {{ $ext.gateway.name }}
+      sectionName: protected
   {{- with $route.hostnames }}
   hostnames:
     {{- toYaml . | nindent 4 }}
@@ -22,4 +23,29 @@ spec:
       backendRefs:
         - name: {{ $route.backend.name }}
           port: {{ $route.backend.port }}
+{{- end }}
+{{- if and $ext.enabled .Values.authguard.authn.enabled $ext.authnRoute.enabled }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $ext.authnRoute.name }}
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $ext.gateway.name }}
+      sectionName: authn
+  {{- with $ext.authnRoute.hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /auth/
+      backendRefs:
+        - name: {{ include "authguard.fullname" . }}-authn
+          port: {{ .Values.authguard.authn.service.port }}
 {{- end }}

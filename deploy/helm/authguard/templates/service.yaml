@@ -4,22 +4,22 @@ metadata:
   name: {{ include "authguard.fullname" . }}
   labels:
     {{- include "authguard.labels" . | nindent 4 }}
-    app.kubernetes.io/component: server
+    app.kubernetes.io/component: authz
 spec:
   type: ClusterIP
   selector:
     {{- include "authguard.serverSelectorLabels" . | nindent 4 }}
   ports:
     - name: authz-grpc
-      port: {{ .Values.authguard.service.grpcPort }}
+      port: {{ .Values.authguard.authz.service.grpcPort }}
       targetPort: authz-grpc
       appProtocol: grpc
     - name: scope-grpc
-      port: {{ .Values.authguard.service.scopeGrpcPort }}
+      port: {{ .Values.authguard.authz.service.scopeGrpcPort }}
       targetPort: scope-grpc
       appProtocol: grpc
-    {{- if .Values.authguard.mgmt.enabled }}
+    {{- if .Values.authguard.authz.mgmt.enabled }}
     - name: mgmt
-      port: {{ .Values.authguard.service.mgmtPort }}
+      port: {{ .Values.authguard.authz.service.mgmtPort }}
       targetPort: mgmt
     {{- end }}

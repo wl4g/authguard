@@ -4,16 +4,16 @@ Authguard is installed as the external authorization backend for Gateway
 {{ $ext.gateway.name }}.
 
 The generated SecurityPolicy sends checks to:
-  grpc://{{ include "authguard.fullname" . }}:{{ .Values.authguard.service.grpcPort }}/envoy.service.auth.v3.Authorization/Check
+  grpc://{{ include "authguard.fullname" . }}:{{ .Values.authguard.authz.service.grpcPort }}/envoy.service.auth.v3.Authorization/Check
 
 Protected workloads resolve x-authguard-scope-token with:
-  AUTHGUARD_GRPC_TARGET={{ include "authguard.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.authguard.service.scopeGrpcPort }}
+  AUTHGUARD_GRPC_TARGET={{ include "authguard.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.authguard.authz.service.scopeGrpcPort }}
   AUTHGUARD_GRPC_TLS=false
 
-Management endpoints are available only on Service port {{ .Values.authguard.service.mgmtPort }}.
+Management endpoints are available only on Service port {{ .Values.authguard.authz.service.mgmtPort }}.
 Configure a real policy and gateway-authenticated OIDC/JWT identity before routing production traffic.
 Import the authorization policy into Authguard storage as a post-deploy step
-(POST /adm/v1/policy) — it is not part of authguard.authguard-config.
+(POST /api/v1/policy) — it is not part of authguard.authguard-config.
 
 {{- if eq (include "authguard.secretsProvider" .) "kubernetes" }}
 {{- if not .Values.secrets.kubernetes.existingSecret }}

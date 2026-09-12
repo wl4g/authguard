@@ -1,8 +1,11 @@
 # Optional cluster-level Envoy Gateway controller. Disable this when the
 # cluster already has a compatible Envoy Gateway installation. This block is
 # passed directly to the vendored official gateway-helm chart.
-envoy-gateway:
+envoy_gateway:
   enabled: true
+  # Keep generated Kubernetes names DNS-safe even though the Helm values key
+  # and dependency alias intentionally use snake_case.
+  nameOverride: envoy-gateway
   global:
     images:
       envoyGateway:
@@ -19,42 +22,17 @@ envoy-gateway:
       requests: { cpu: 100m, memory: 256Mi }
       limits: { cpu: 500m, memory: 512Mi }
 
-# Independent Redis Cluster dependency used for opaque request-access tokens.
-# The 8.8.2 chart is the final Bitnami
-# line built for Redis 7.0.x; only its patch-level image is overridden to 7.0.14.
-redis-cluster:
-  enabled: true
-  image:
-    registry: registry.cn-shenzhen.aliyuncs.com
-    repository: wl4g-k8s/bitnami_redis-cluster
-    tag: "7.0.14"
-    pullPolicy: IfNotPresent
-  usePassword: true
-  password: ""
-  existingSecret: ""
-  existingSecretPasswordKey: redis-password
-  cluster:
-    nodes: 6
-    replicas: 1
-  persistence:
-    enabled: false
-  redis:
-    resources:
-      requests: { cpu: 50m, memory: 96Mi }
-      limits: { cpu: 500m, memory: 256Mi }
-
 # ─────────────────────────────────────────────────────────────────────
 # Envoy Gateway — ext_authz integration with Authguard. Everything that
 # wires the Gateway to the Authguard ext_auth gRPC endpoint lives here.
-# This block is independent from envoy-gateway.enabled, so an existing
+# This block is independent from envoy_gateway.enabled, so an existing
 # GKE/Kubernetes Gateway can reuse the same integration without installing
 # another controller.
 # ─────────────────────────────────────────────────────────────────────
-envoy_gateway:
   ext_authz:
     enabled: true
-    # Canonical IdP issuer. The JWT/OIDC providers, the JIT trusted issuer, and
-    # SCIM must all converge on this exact `iss`.
+    # External issuer verified by Envoy for the selected standard JWT/OIDC
+    # integration. AuthZ still consumes only AuthN's canonical principal_id.
     issuer: https://idp.example.com/realms/example-corp
     gateway:
       create: true
@@ -77,6 +55,9 @@ envoy_gateway:
     jwt:
       enabled: true
       audiences: [customer-growth-job-service]
+      # Additional trusted canonical-token issuers. Each is still verified by
+      # Envoy; AuthZ receives only the normalized Principal claims.
+      additionalProviders: []
       localJWKS:
         existingConfigMap: ""
         inline: '{"keys":[]}'
@@ -103,100 +84,119 @@ envoy_gateway:
       backend:
         name: app
         port: 8080
+    # Public pre-authentication route on a separate Gateway listener. It serves
+    # only AuthN authorize/callback endpoints; business routes remain protected.
+    authnRoute:
+      enabled: true
+      name: authguard-authn
+      listenerPort: 8082
+      hostnames: []
 
-# ─────────────────────────────────────────────────────────────────────
-# Authguard — deployment parameters plus the COMPLETE authguard.yaml main
-# configuration, rendered with Helm tpl (so chart values and helpers can be
-# referenced) and mounted at /etc/authguard/authguard.yaml. Override
-# wholesale with --set-file authguard.authguard-config=...; small tweaks
-# work with --set when the template references that knob.
-#
-# Everything the Authguard service loads at runtime lives in this file —
-# policy data is NOT part of it: authorization policies are imported into
-# the Authguard storage as a post-deploy step (see the use-case E2E runner).
-#
-# The 6 secrets (redis/postgres credentials, keycloak/scim/ldap SA credentials,
-# resign-JWT private key) live inside their OWN config blocks — never in a
-# unified secret section. Values written as "${ENV_KEY}" resolve at startup
-# from the injected environment (see the top-level `secrets` block).
-# ─────────────────────────────────────────────────────────────────────
+# AuthN and AuthZ deployment knobs share one product root. Runtime settings
+# remain in the single authguard-config payload below.
 authguard:
-  # SQLite is the default backend, so the zero-configuration deployment is a
-  # single replica. Select PostgreSQL before increasing this value.
-  replicaCount: 1
-  image:
-    repository: registry.cn-shenzhen.aliyuncs.com/wl4g/authguard
-    tag: "0.1.0"
-    pullPolicy: IfNotPresent
-  imagePullSecrets: []
-  # Deploy-time decoder for the resign-JWT key: the runtime image is
-  # distroless, so an init container decodes AUTHGUARD_RESIGN_JWT_PRIVATE_KEY
-  # (base64 PKCS#8 PEM) into auth.resign_jwt.private_key_file. Enable this
-  # together with auth.resign_jwt.enabled inside authguard-config. busybox is
-  # not mirrored in the Aliyun registry, so this defaults to mirrored alpine.
-  resignKeyInit:
-    enabled: false
+  # AuthN owns provider callbacks, normalization, sessions, and account linking.
+  authn:
+    enabled: true
+    replicaCount: 2
     image:
-      repository: registry.cn-shenzhen.aliyuncs.com/wl4g/alpine
-      tag: "3.21"
+      repository: registry.cn-shenzhen.aliyuncs.com/wl4g/authguard
+      tag: "latest"
       pullPolicy: IfNotPresent
-  serviceAccount:
-    create: true
-    name: ""
-    annotations: {}
-  service:
-    grpcPort: 8080
-    scopeGrpcPort: 8081
-    mgmtPort: 9091
-  mgmt:
-    enabled: true
-    livenessPath: /healthz
-    readinessPath: /readyz
-    metricsPath: /metrics
-    otelEnabled: false
-    otelEndpoint: http://otel-collector.observability.svc:4317
-  resources:
-    requests: { cpu: 100m, memory: 128Mi }
-    limits: { cpu: 1000m, memory: 512Mi }
-  podAnnotations: {}
-  podLabels: {}
-  nodeSelector: {}
-  tolerations: []
-  affinity: {}
-  topologySpreadConstraints: []
-  disruptionBudget:
-    enabled: true
-    minAvailable: 1
-  networkPolicy:
-    enabled: true
-    # Match these selectors to the managed Envoy Proxy, protected workloads
-    # resolving opaque scope tokens, and management plane. An empty namespace
-    # selector means the Authguard release namespace only; set labels here only
-    # when the corresponding clients live in another namespace.
-    envoyProxyNamespaceSelector: {}
-    envoyProxyPodSelector:
-      app.kubernetes.io/name: envoy
-    workloadNamespaceSelector: {}
-    workloadPodSelector:
-      authguard.io/scope-client: "true"
-    managementNamespaceSelector: {}
-    managementPodSelector:
-      authguard.io/management-client: "true"
-  observability:
-    serviceMonitor:
+    service:
+      port: 8082
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 500m, memory: 256Mi }
+    disruptionBudget:
+      enabled: true
+      minAvailable: 1
+
+  # ───────────────────────────────────────────────────────────────────
+  # Authguard AuthZ — deployment parameters plus the COMPLETE shared
+  # authguard.yaml, rendered with Helm tpl and mounted into both services.
+  # Override it wholesale with --set-file authguard.authguard-config=....
+  # Policy data remains in AuthGuard storage, outside this runtime file.
+  # Secret values remain in their owning config blocks and resolve from the
+  # injection mechanism selected by the top-level `secrets` block.
+  # ───────────────────────────────────────────────────────────────────
+  authz:
+    # SQLite is the default backend, so the zero-configuration deployment is a
+    # single replica. Select PostgreSQL before increasing this value.
+    replicaCount: 1
+    image:
+      repository: registry.cn-shenzhen.aliyuncs.com/wl4g/authguard
+      tag: "latest"
+      pullPolicy: IfNotPresent
+    imagePullSecrets: []
+    # Deploy-time decoder for the resign-JWT key: the runtime image is
+    # distroless, so an init container decodes AUTHGUARD_RESIGN_TOKEN_PRIVATE_KEY
+    # (base64 PKCS#8 PEM) into authz.resign_token.private_key_file. Enable this
+    # together with authz.resign_token.enabled inside authguard-config. busybox is
+    # not mirrored in the Aliyun registry, so this defaults to mirrored alpine.
+    resignKeyInit:
       enabled: false
-      interval: 30s
-      labels: {}
+      image:
+        repository: registry.cn-shenzhen.aliyuncs.com/wl4g/alpine
+        tag: "3.21"
+        pullPolicy: IfNotPresent
+    serviceAccount:
+      create: true
+      name: ""
+      annotations: {}
+    service:
+      grpcPort: 8080
+      scopeGrpcPort: 8081
+      mgmtPort: 9091
+    mgmt:
+      enabled: true
+      livenessPath: /healthz
+      readinessPath: /readyz
+      metricsPath: /metrics
+      otelEnabled: false
+      otelEndpoint: http://otel-collector.observability.svc:4317
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits: { cpu: 1000m, memory: 512Mi }
+    podAnnotations: {}
+    podLabels: {}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    topologySpreadConstraints: []
+    disruptionBudget:
+      enabled: true
+      minAvailable: 1
+    networkPolicy:
+      enabled: true
+      # Match these selectors to the managed Envoy Proxy, protected workloads
+      # resolving opaque scope tokens, and management plane. An empty namespace
+      # selector means the Authguard release namespace only; set labels here only
+      # when the corresponding clients live in another namespace.
+      envoyProxyNamespaceSelector: {}
+      envoyProxyPodSelector:
+        app.kubernetes.io/name: envoy
+      workloadNamespaceSelector: {}
+      workloadPodSelector:
+        authguard.io/scope-client: "true"
+      managementNamespaceSelector: {}
+      managementPodSelector:
+        authguard.io/management-client: "true"
+    observability:
+      serviceMonitor:
+        enabled: false
+        interval: 30s
+        labels: {}
 
   # The COMPLETE authguard.yaml main configuration (flowgent-chart style).
   # Helm-templated: chart values and helpers can be referenced inside, so a
   # full override stays one file.
   authguard-config: |
     server:
-      service_name: {{ include "authguard.name" . }}
+      service_name: authguard-authz
       host: 0.0.0.0
-      port: {{ .Values.authguard.service.grpcPort }}
-      scope_port: {{ .Values.authguard.service.scopeGrpcPort }}
+      port: {{ .Values.authguard.authz.service.grpcPort }}
+      scope_port: {{ .Values.authguard.authz.service.scopeGrpcPort }}
       shutdown_timeout: 15s
       request:
         max_message_bytes: 1048576
@@ -206,32 +206,43 @@ authguard:
       performance:
         worker_threads: 2
         max_in_flight_requests: 4096
-    mgmt:
-      enabled: {{ .Values.authguard.mgmt.enabled }}
-      host: 0.0.0.0
-      port: {{ .Values.authguard.service.mgmtPort }}
-      context_path: "/"
-      health:
-        liveness_path: {{ .Values.authguard.mgmt.livenessPath | quote }}
-        readiness_path: {{ .Values.authguard.mgmt.readinessPath | quote }}
-      metrics:
-        enabled: true
-        path: {{ .Values.authguard.mgmt.metricsPath | quote }}
-      otel:
-        enabled: {{ .Values.authguard.mgmt.otelEnabled }}
-        endpoint: {{ .Values.authguard.mgmt.otelEndpoint | quote }}
-        protocol: grpc
-        timeout: 5s
-        sample_rate: 1.0
     logging:
       mode: JSON
       level: "info,tower_http=info"
-    auth:
-      # Envoy Gateway verifies OIDC/JWT before forwarding this token to extAuth.
+    mgmt:
+      enabled: {{ .Values.authguard.authz.mgmt.enabled }}
+      host: 0.0.0.0
+      port: {{ .Values.authguard.authz.service.mgmtPort }}
+      context_path: "/"
+      health:
+        liveness_path: {{ .Values.authguard.authz.mgmt.livenessPath | quote }}
+        readiness_path: {{ .Values.authguard.authz.mgmt.readinessPath | quote }}
+      metrics:
+        enabled: true
+        path: {{ .Values.authguard.authz.mgmt.metricsPath | quote }}
+      otel:
+        enabled: {{ .Values.authguard.authz.mgmt.otelEnabled }}
+        endpoint: {{ .Values.authguard.authz.mgmt.otelEndpoint | quote }}
+        protocol: grpc
+        timeout: 5s
+        sample_rate: 1.0
+    authn:
+      providers: {}
+      accountLinking:
+        # explicit: authoritative login + authenticated explicit linking.
+        # first-login: any unbound identity creates a Principal (2C signup).
+        # Neither mode ever links different Providers by matching email.
+        strategy: explicit
+        authoritativeProviders: []
+        allowLink: {}
+    authz:
+      # Envoy verifies AuthN's canonical token before forwarding it to AuthZ.
+      # Unknown principal_id values always fail closed. Authentication-only 2C
+      # routes should not attach ext_authz; authorized 2C routes use first-login.
       identity:
         token_header: {{ .Values.envoy_gateway.ext_authz.jwt.enabled | ternary "authorization" "x-authguard-id-token" }}
-        issuer_claim: iss
-        external_id_claim: sub
+        principal_id_claim: principal_id
+        principal_kind_claim: principal_kind
         groups_claim: authguard_group_ids
       scope_delivery:
         # Grants with at most this many URNs are delivered as a signed header
@@ -241,11 +252,6 @@ authguard:
         context_ttl: 30s
         scope_token_ttl: 30s
       principal_discovery:
-        jit:
-          enabled: true
-          discovery_id: verified-oidc
-          trusted_issuers: [{{ .Values.envoy_gateway.ext_authz.issuer | quote }}]
-          allow_insecure_http: false
         # Connector SA credentials resolve from the injected environment
         # ("${ENV_KEY}"); each connector authenticates BEFORE any call:
         # keycloak/scim exchange OIDC client_credentials, ldap binds directly.
@@ -327,41 +333,31 @@ authguard:
         keycloak: []
         ldap: []
         custom: []
-        # SCIM runs as a background sync job in push mode: an external sync
-        # agent authenticates with its own OIDC client-credentials token
-        # carrying the SCIM audience and POSTs normalized resources to
-        # /adm/v1/principal-discovery/scim/refresh, which ingests them into
+        # SCIM runs in push mode: an external connector authenticates at the
+        # Envoy edge and POSTs normalized resources to
+        # /api/v1/principal-discovery/scim/events, which ingests them into
         # Authguard storage as principal projections, so the hot AuthN path
         # never calls the IdP.
         scim:
           enabled: false
           discovery_id: corporate-scim
           issuer: {{ .Values.envoy_gateway.ext_authz.issuer | quote }}
-          auth:
-            token_url: ""
-            client_id: authguard-scim-sync
-            # kubernetes injects the process environment, so the native
-            # AUTHGUARD__AUTH__PRINCIPAL_DISCOVERY__SCIM__AUTH__CLIENT_SECRET
-            # override applies; file-based providers resolve the reference.
-            client_secret: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD_SCIM_CLIENT_SECRET}"{{ end }}
       # On every allowed check Authguard re-signs the verified client identity
       # as RS256 with `authguardOrigin: true`; all client JWT attributes are
       # preserved, only the marker claim is added. The private key is decoded
       # by the resign-key-decode init container from
-      # AUTHGUARD_RESIGN_JWT_PRIVATE_KEY (base64 PKCS#8 PEM) into the
+      # AUTHGUARD_RESIGN_TOKEN_PRIVATE_KEY (base64 PKCS#8 PEM) into the
       # private_key_file below; workloads hold only the paired public key.
-      resign_jwt:
+      resign_token:
         enabled: false
         ttl: 60s
         private_key_file: /etc/authguard/secrets/resign-jwt-private-key.pem
-      # kubernetes: overridden natively by AUTHGUARD__AUTH__ADMIN_TOKEN from
+      # kubernetes: overridden natively by AUTHGUARD__AUTHZ__API_TOKEN from
       # the injected environment; file-based providers resolve the reference.
-      admin_token: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD__AUTH__ADMIN_TOKEN}"{{ end }}
+      api_token: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD__AUTHZ__API_TOKEN}"{{ end }}
     storage:
       provider: SQLite
       bootstrap_policy: null
-      policy_refresh_interval: 5s
-      policy_max_staleness: 30s
       sqlite:
         url: "sqlite:///tmp/authguard.db"
         max_connections: 1
@@ -400,6 +396,31 @@ authguard:
         min_retry_wait: 1280ms
         read_from_replica: false
 
+# Independent optional Redis Cluster used for opaque request-access tokens.
+# Only the values key/dependency alias is snake_case; generated Kubernetes
+# resource names remain DNS-safe through nameOverride.
+redis_cluster:
+  enabled: true
+  nameOverride: redis-cluster
+  image:
+    registry: registry.cn-shenzhen.aliyuncs.com
+    repository: wl4g-k8s/bitnami_redis-cluster
+    tag: "7.0.14"
+    pullPolicy: IfNotPresent
+  usePassword: true
+  password: ""
+  existingSecret: ""
+  existingSecretPasswordKey: redis-password
+  cluster:
+    nodes: 6
+    replicas: 1
+  persistence:
+    enabled: false
+  redis:
+    resources:
+      requests: { cpu: 50m, memory: 96Mi }
+      limits: { cpu: 500m, memory: 256Mi }
+
 # ── Secrets — pick exactly ONE provider (flowgent cache.provider style) ──
 # kubernetes: envFrom an existing Opaque Secret whose keys are the env names
 #             used by the ${...} references above.
@@ -410,17 +431,20 @@ authguard:
 #             content to /vault/secrets/env.
 #
 # Secret contract (keys inside the Secret / KEY=VALUE content):
-#   AUTHGUARD_REDIS_PASSWORD            (only when redis-cluster is external;
+#   AUTHGUARD_REDIS_PASSWORD            (only when redis_cluster is external;
 #                                       in-cluster uses the Bitnami Secret)
 #   AUTHGUARD__STORAGE__POSTGRES__URL       (required when storage.provider=PostgreSQL)
 #   AUTHGUARD__STORAGE__POSTGRES__USERNAME  (required when storage.provider=PostgreSQL)
 #   AUTHGUARD__STORAGE__POSTGRES__PASSWORD  (required when storage.provider=PostgreSQL)
+#   AUTHGUARD_AUTHN_SESSION_PRIVATE_KEY  (AuthN RS256 key when referenced by
+#                                       authn.session.privateKey)
+#   <provider-specific keys>            (AuthN client secrets referenced by
+#                                       ${...} in provider entries)
 #   AUTHGUARD_KEYCLOAK_CLIENT_SECRET    (keycloak connector SA)
-#   AUTHGUARD_SCIM_CLIENT_SECRET        (scim sync agent)
 #   AUTHGUARD_LDAP_BIND_PASSWORD        (ldap connector SA)
-#   AUTHGUARD_RESIGN_JWT_PRIVATE_KEY    (base64 PKCS#8 PEM, required when
-#                                       auth.resign_jwt.enabled=true)
-#   AUTHGUARD__AUTH__ADMIN_TOKEN        (required for /adm/v1 management API)
+#   AUTHGUARD_RESIGN_TOKEN_PRIVATE_KEY    (base64 PKCS#8 PEM, required when
+#                                       authz.resign_token.enabled=true)
+#   AUTHGUARD__AUTHZ__API_TOKEN          (required for /api/v1 control-plane API)
 #   AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY   (required; shared with workloads)
 secrets:
   provider: kubernetes  # kubernetes | gcp | aws | vault

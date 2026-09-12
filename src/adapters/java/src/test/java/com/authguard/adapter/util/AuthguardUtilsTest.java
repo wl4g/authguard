@@ -149,13 +149,13 @@ class AuthguardUtilsTest {
   }
 
   @Test
-  void accessContextCodecAcceptsV3LegacyFieldAliases() {
+  void accessContextCodecRejectsNoncanonicalFieldNames() {
     long now = Instant.now().getEpochSecond();
-    String legacyJson =
+    String noncanonicalJson =
         """
         {
           "version": 3,
-          "subject_id": "legacy-revenue-analyst",
+          "subject_id": "noncanonical-revenue-analyst",
           "action": "customer-growth.job.read",
           "resource_urn": "%s",
           "allow_resource_urns": ["%s"],
@@ -169,13 +169,9 @@ class AuthguardUtilsTest {
     String encoded =
         Base64.getUrlEncoder()
             .withoutPadding()
-            .encodeToString(legacyJson.getBytes(StandardCharsets.UTF_8));
+            .encodeToString(noncanonicalJson.getBytes(StandardCharsets.UTF_8));
 
-    AccessContext decoded = AuthguardUtils.decodeAccessContext(encoded);
-
-    assertEquals(3, decoded.version());
-    assertEquals("legacy-revenue-analyst", decoded.principalId());
-    assertEquals(17, decoded.policyRevision());
+    assertThrows(IllegalArgumentException.class, () -> AuthguardUtils.decodeAccessContext(encoded));
   }
 
   @Test

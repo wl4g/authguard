@@ -1,0 +1,48 @@
+[package]
+name = "authguard-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+base64.workspace = true
+config.workspace = true
+humantime-serde.workspace = true
+hmac.workspace = true
+ipnet.workspace = true
+opentelemetry.workspace = true
+opentelemetry-otlp.workspace = true
+opentelemetry_sdk.workspace = true
+prometheus-client.workspace = true
+prost.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+rsa.workspace = true
+redis = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
+tracing.workspace = true
+tracing-opentelemetry.workspace = true
+tracing-subscriber.workspace = true
+
+[features]
+default = []
+redis-cache = ["dep:redis"]
+
+[build-dependencies]
+protoc-bin-vendored = "3.2"
+tonic-prost-build = "0.14"
+
+[lints]
+workspace = true

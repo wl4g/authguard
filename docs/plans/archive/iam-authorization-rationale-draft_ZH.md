@@ -1,7 +1,7 @@
 # 企业级 IAM 授权模型疑问与决策记录草稿
 
 > **历史文档 / Superseded：** 本草稿记录早期 `iam_subject` / `iam_group` /
-> `iam_grant` 候选模型，已被当前六表 singleton policy 模型取代。现行契约以
+> `iam_grant` 候选模型，已被当前 Principal/Action/Role/RoleBinding 模型取代。现行契约以
 > [IAM 授权白皮书](../../architecture/iam-authorization-whitepaper_ZH.md#5-数据模型)为准。
 
 **状态：** Historical / Superseded

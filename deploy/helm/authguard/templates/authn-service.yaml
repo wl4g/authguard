@@ -1,0 +1,18 @@
+{{- if .Values.authguard.authn.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "authguard.fullname" . }}-authn
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: authn
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "authguard.authnSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.authguard.authn.service.port }}
+      targetPort: http
+      appProtocol: http
+{{- end }}

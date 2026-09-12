@@ -130,7 +130,7 @@ class JaegerTraceVerifier:
 
     keycloak_service: str
     envoy_service: str = "e2e-envoy-proxy"
-    authguard_service: str = "e2e-authguard"
+    authguard_service: str = "authguard-authz"
     verifier_service: str = "e2e-verifier"
 
     def verify(self, payload: dict, trace: E2ETrace) -> None:

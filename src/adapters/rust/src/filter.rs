@@ -452,7 +452,7 @@ mod tests {
 
     fn sign_encoded_context(context: &AccessContext) -> String {
         let encoded = context.encode().unwrap();
-        authguard_core::model::AccessContextSigner::new(TEST_SIGNING_KEY)
+        authguard_common::AccessContextSigner::new(TEST_SIGNING_KEY)
             .unwrap()
             .sign_encoded(&encoded)
             .unwrap()
@@ -480,7 +480,7 @@ mod tests {
                 deny_resource_urns: vec!["urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/retention-analytics/job/vip-retention-risk-audit".to_string()],
                 policy_revision: 1,
             },
-            authguard_core::model::epoch_seconds(),
+            authguard_common::epoch_seconds(),
             std::time::Duration::from_secs(30),
         )
     }

@@ -140,11 +140,11 @@ fn access_context_codec_emits_v3_canonical_fields() {
 }
 
 #[test]
-fn access_context_codec_accepts_v3_legacy_field_aliases() {
-    let now = authguard_core::model::epoch_seconds();
-    let legacy_json = serde_json::json!({
+fn access_context_codec_rejects_noncanonical_field_names() {
+    let now = authguard_common::epoch_seconds();
+    let noncanonical_json = serde_json::json!({
         "version": 3,
-        "subject_id": "legacy-revenue-analyst",
+        "subject_id": "noncanonical-revenue-analyst",
         "action": "customer-growth.job.read",
         "resource_urn": EXACT_JOB,
         "allow_resource_urns": [JOB_WILDCARD],
@@ -153,13 +153,9 @@ fn access_context_codec_accepts_v3_legacy_field_aliases() {
         "issued_at_epoch_seconds": now,
         "expires_at_epoch_seconds": now + 30,
     });
-    let encoded = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&legacy_json).unwrap());
+    let encoded = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&noncanonical_json).unwrap());
 
-    let decoded = util::decode_access_context(&encoded).unwrap();
-
-    assert_eq!(decoded.version, 3);
-    assert_eq!(decoded.principal_id, "legacy-revenue-analyst");
-    assert_eq!(decoded.policy_revision, 17);
+    assert!(util::decode_access_context(&encoded).is_err());
 }
 
 #[test]
@@ -360,7 +356,7 @@ fn test_context() -> AccessContext {
             deny_resource_urns: vec!["urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/retention-analytics/job/vip-retention-risk-audit".to_string()],
             policy_revision: 1,
         },
-        authguard_core::model::epoch_seconds(),
+        authguard_common::epoch_seconds(),
         std::time::Duration::from_secs(30),
     )
 }

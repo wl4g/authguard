@@ -5,26 +5,32 @@ use authguard_adapter_rust::{
     util::{sign_access_context, ACCESS_CONTEXT_HEADER},
 };
 use authguard_customer_growth_job_rust_service::{
-    customer_growth_job_controller::CustomerGrowthJobController,
-    customer_growth_job_dto::{
+    controller::CustomerGrowthJobController,
+    dto::{
         CreateCustomerGrowthJobRequest, CustomerGrowthJobSearchRequest,
         UpdateCustomerGrowthJobRequest,
     },
-    customer_growth_job_repository::CustomerGrowthJobRepository,
-    customer_growth_job_service::CustomerGrowthJobService,
+    repository::CustomerGrowthJobRepository,
+    service::CustomerGrowthJobService,
 };
 use serde::Deserialize;
 use sqlx::{any::AnyPoolOptions, AnyPool};
 use std::sync::Arc;
 
-const CUSTOMER_GROWTH_JOBS_SQL: &str = include_str!("../../../../config/init.sql");
+const CUSTOMER_GROWTH_JOBS_SQL: &str = include_str!("../../../config/init.sql");
 const AUTHORIZATION_SCENARIOS_JSON: &str =
-    include_str!("../../../../config/authorization-scenarios.json");
+    include_str!("../../../config/authguard-e2e-scenarios.json");
 const TEST_SIGNING_KEY: &[u8] = b"test-access-context-hmac-key-32-bytes-minimum";
 
 #[derive(Debug, Deserialize)]
 struct AuthorizationFixture {
     version: u8,
+    authz: AuthorizationScenarios,
+}
+
+#[derive(Debug, Deserialize)]
+struct AuthorizationScenarios {
+    access_context_version: u8,
     scenarios: Vec<AuthorizationScenario>,
 }
 
@@ -82,11 +88,13 @@ struct ScenarioUpdate {
 #[tokio::test]
 async fn authorization_scenarios_from_shared_fixture() {
     let fixture: AuthorizationFixture = serde_json::from_str(AUTHORIZATION_SCENARIOS_JSON).unwrap();
-    assert!(fixture.scenarios.len() >= 30);
+    assert_eq!(fixture.version, 4);
+    assert!(fixture.authz.scenarios.len() >= 30);
+    let access_context_version = fixture.authz.access_context_version;
 
-    for scenario in fixture.scenarios {
+    for scenario in fixture.authz.scenarios {
         let (controller, pool) = new_customer_growth_job_controller().await;
-        let access_scope = enter_access_context(fixture.version, &scenario).await;
+        let access_scope = enter_access_context(access_context_version, &scenario).await;
         let request_access = access_scope.as_ref().and_then(AccessScope::request_access);
         let (allowed, actual_ids, actual_status) =
             execute_scenario(&controller, &pool, request_access, &scenario).await;

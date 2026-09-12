@@ -37,7 +37,9 @@ public final class AuthguardUtils {
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
   private static final IAuthguardLogger SYSTEM_LOGGER = new SystemAuthguardLogger();
   private static final IAuthguardLogger NOOP_LOGGER = (_level, _event, _fields) -> {};
+  private static final IAuthguardTelemetryObserver NOOP_OBSERVER = (_event, _fields) -> {};
   private static volatile IAuthguardLogger logger = SYSTEM_LOGGER;
+  private static volatile IAuthguardTelemetryObserver telemetryObserver = NOOP_OBSERVER;
 
   private AuthguardUtils() {}
 
@@ -45,6 +47,12 @@ public final class AuthguardUtils {
   @FunctionalInterface
   public interface IAuthguardLogger {
     void log(LogLevel level, String event, Map<String, Object> fields);
+  }
+
+  /** Application bridge for OTel counters, histograms, and spans. */
+  @FunctionalInterface
+  public interface IAuthguardTelemetryObserver {
+    void observe(String event, Map<String, Object> fields);
   }
 
   public enum LogLevel {
@@ -60,6 +68,11 @@ public final class AuthguardUtils {
   /** Restores the JDK {@link System.Logger} facade used by default. */
   public static void resetLogger() {
     logger = SYSTEM_LOGGER;
+  }
+
+  /** Installs an app-owned OTel bridge; the SDK never initializes a global exporter. */
+  public static void configureTelemetryObserver(IAuthguardTelemetryObserver observer) {
+    telemetryObserver = observer == null ? NOOP_OBSERVER : observer;
   }
 
   public static void logDebug(String event, Object... keyValues) {
@@ -83,7 +96,13 @@ public final class AuthguardUtils {
     for (int index = 0; index < keyValues.length; index += 2) {
       fields.put(String.valueOf(keyValues[index]), safeLogValue(keyValues[index + 1]));
     }
-    logger.log(level, event, Map.copyOf(fields));
+    Map<String, Object> immutableFields = Map.copyOf(fields);
+    try {
+      telemetryObserver.observe(event, immutableFields);
+    } catch (RuntimeException ignored) {
+      // Telemetry cannot be allowed to break authorization enforcement.
+    }
+    logger.log(level, event, immutableFields);
   }
 
   private static Object safeLogValue(Object value) {
@@ -257,6 +276,15 @@ public final class AuthguardUtils {
     if (accessContext.version() != ACCESS_CONTEXT_VERSION) {
       throw new IllegalArgumentException(
           "unsupported access context version: " + accessContext.version());
+    }
+    if (accessContext.principalId() == null
+        || accessContext.principalId().isEmpty()
+        || accessContext.action() == null
+        || accessContext.action().isEmpty()
+        || accessContext.resourceUrn() == null
+        || accessContext.resourceUrn().isEmpty()) {
+      throw new IllegalArgumentException(
+          "access context principal_id, action, and resource_urn are required");
     }
     if (accessContext.expiresAtEpochSeconds() <= accessContext.issuedAtEpochSeconds()) {
       throw new IllegalArgumentException("access context expiry must be later than issue time");

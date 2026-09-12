@@ -1,4 +1,4 @@
-"""Verify five workloads and their authentication/authorization trace on k3s."""
+"""Phase 21: deploy the complete real E2E topology with Helm."""
 
 from __future__ import annotations
 
@@ -16,13 +16,12 @@ def verify(context: RunContext) -> VerificationResult:
     try:
         environment.verify_prerequisites()
         environment.redeploy()
-        environment.verify_scenarios()
         passed = True
     except Exception:
         environment.details.append(traceback.format_exc())
     return VerificationResult(
         scenario_id="21",
-        title="k3s: Keycloak JWT -> Envoy ext_authz -> Authguard with Jaeger evidence",
+        title="k3s phase 1/5: Helm deployment and middleware initialization",
         passed=passed,
         duration_seconds=time.monotonic() - started,
         details=environment.details,

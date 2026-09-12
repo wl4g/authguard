@@ -1,8 +1,6 @@
 package model
 
 import (
-	"encoding/json"
-	"fmt"
 	"time"
 )
 
@@ -66,74 +64,6 @@ func (c AccessContext) RequestAccess() RequestAccess {
 	return RequestAccess{
 		PrincipalID: c.PrincipalID, Action: c.Action, ResourceURN: c.ResourceURN, Grants: c.GrantSet(),
 	}
-}
-
-// UnmarshalJSON accepts the v3 canonical field names and the v3 transition
-// aliases used by older SDKs. Marshal uses only the canonical struct tags.
-func (c *AccessContext) UnmarshalJSON(data []byte) error {
-	type canonical AccessContext
-	var wire struct {
-		canonical
-		PrincipalID         *string `json:"principal_id"`
-		LegacySubjectID     *string `json:"subject_id"`
-		PolicyRevision      *uint64 `json:"policy_revision"`
-		LegacyPolicyVersion *uint64 `json:"policy_version"`
-	}
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return err
-	}
-	principalID, err := compatibleStringAlias(
-		"principal_id", wire.PrincipalID, "subject_id", wire.LegacySubjectID,
-	)
-	if err != nil {
-		return err
-	}
-	policyRevision, err := compatibleUint64Alias(
-		"policy_revision", wire.PolicyRevision, "policy_version", wire.LegacyPolicyVersion,
-	)
-	if err != nil {
-		return err
-	}
-	*c = AccessContext(wire.canonical)
-	c.PrincipalID = principalID
-	c.PolicyRevision = policyRevision
-	return nil
-}
-
-func compatibleStringAlias(
-	canonicalName string,
-	canonicalValue *string,
-	legacyName string,
-	legacyValue *string,
-) (string, error) {
-	if canonicalValue != nil && legacyValue != nil && *canonicalValue != *legacyValue {
-		return "", fmt.Errorf("conflicting access context fields %s and %s", canonicalName, legacyName)
-	}
-	if canonicalValue != nil {
-		return *canonicalValue, nil
-	}
-	if legacyValue != nil {
-		return *legacyValue, nil
-	}
-	return "", nil
-}
-
-func compatibleUint64Alias(
-	canonicalName string,
-	canonicalValue *uint64,
-	legacyName string,
-	legacyValue *uint64,
-) (uint64, error) {
-	if canonicalValue != nil && legacyValue != nil && *canonicalValue != *legacyValue {
-		return 0, fmt.Errorf("conflicting access context fields %s and %s", canonicalName, legacyName)
-	}
-	if canonicalValue != nil {
-		return *canonicalValue, nil
-	}
-	if legacyValue != nil {
-		return *legacyValue, nil
-	}
-	return 0, nil
 }
 
 type SegmentMap struct {

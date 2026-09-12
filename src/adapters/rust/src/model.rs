@@ -1,5 +1,5 @@
-pub use authguard_core::model::{AccessContext, AccessContextError, AccessContextInput};
-pub use authguard_core::model::{
+pub use authguard_common::{AccessContext, AccessContextError, AccessContextInput};
+pub use authguard_common::{
     PathMap, PathPattern, ResourceSqlMapping, ResourceUrn, SegmentMap, SegmentPattern, SqlScope,
     UrnPattern,
 };

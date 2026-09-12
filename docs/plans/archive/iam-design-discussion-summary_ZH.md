@@ -1,8 +1,8 @@
 # Authguard IAM 设计历史讨论总结
 
 > **历史文档 / Superseded：** 文中早期 subject/group/grant 表结构已被当前
-> `iam_policy` / `iam_principal` / `iam_action` / `iam_role` / `iam_role_action` /
-> `iam_role_binding` 六表模型取代。现行契约以
+> `iam_principal` / `iam_action` / `iam_role` / `iam_role_action` /
+> `iam_role_binding` 授权表模型取代（不持久化 `iam_policy` aggregate）。现行契约以
 > [IAM 授权白皮书](../../architecture/iam-authorization-whitepaper_ZH.md#5-数据模型)为准。
 
 **状态：** Historical Summary
@@ -135,7 +135,7 @@ Authguard 被定义为独立系统：
 ```text
 authguard/
   src/common
-  src/core
+  src/authz
   src/gateway
   src/adapters/{rust,golang,python,java}
   use-cases/customer-growth-job-service/e2e/deploy/{rust-sqlx-service,golang-sqlx-service,python-sqlalchemy-service,springboot-jdbc-service,springboot-jpa-service}

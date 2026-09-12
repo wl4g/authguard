@@ -120,14 +120,14 @@ func TestAccessContextCodecEmitsV3CanonicalFields(t *testing.T) {
 		t.Fatalf("canonical identity/revision fields missing: %#v", payload)
 	}
 	if _, exists := payload["subject_id"]; exists {
-		t.Fatal("encoder must not emit legacy subject_id")
+		t.Fatal("encoder must not emit noncanonical subject_id")
 	}
 	if _, exists := payload["policy_version"]; exists {
-		t.Fatal("encoder must not emit legacy policy_version")
+		t.Fatal("encoder must not emit noncanonical policy_version")
 	}
 }
 
-func TestAccessContextCodecAcceptsV3LegacyFieldAliases(t *testing.T) {
+func TestAccessContextCodecRejectsNoncanonicalFieldNames(t *testing.T) {
 	encoded, err := EncodeAccessContext(sampleAccessContext())
 	assertNoError(t, err)
 	payload := decodeEncodedPayload(t, encoded)
@@ -135,13 +135,11 @@ func TestAccessContextCodecAcceptsV3LegacyFieldAliases(t *testing.T) {
 	delete(payload, "principal_id")
 	payload["policy_version"] = payload["policy_revision"]
 	delete(payload, "policy_revision")
-	legacyJSON, err := json.Marshal(payload)
+	noncanonicalJSON, err := json.Marshal(payload)
 	assertNoError(t, err)
 
-	decoded, err := DecodeAccessContext(base64.RawURLEncoding.EncodeToString(legacyJSON))
-	assertNoError(t, err)
-	if decoded.PrincipalID != "revenue-analyst" || decoded.PolicyRevision != 1 {
-		t.Fatalf("legacy aliases were not decoded: %#v", decoded)
+	if _, err := DecodeAccessContext(base64.RawURLEncoding.EncodeToString(noncanonicalJSON)); err == nil {
+		t.Fatal("noncanonical access context fields must be rejected")
 	}
 }
 

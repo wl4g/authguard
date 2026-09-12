@@ -1,7 +1,7 @@
 # 请求级访问上下文完整生命周期实施计划
 
 - 状态：当前已落地契约
-- 范围：Authguard core、四语言 adapters、Envoy Gateway Helm、Redis Cluster、
+- 范围：`authguard-authn`、`authguard-authz`、四语言 adapters、Envoy Gateway Helm、Redis Cluster、
   `use-cases/customer-growth-job-service`
 - 原则：认证与授权解耦；默认拒绝；Principal 状态每次从 repository 校验；请求头不可由客户端伪造；
   direct/token 两种交付使用同一版本化访问上下文。
@@ -9,9 +9,9 @@
 ## 1. 目标链路
 
 ```text
-IdP / Keycloak -> Access Token
-  -> Envoy Gateway JWT verification (issuer + audience + local/remote JWKS)
-  -> Authguard gRPC Authorization/Check
+External IdP -> Envoy Gateway native OIDC/JWT or authguard-authn Provider Adapter
+  -> AuthenticatedPrincipalContext (canonical principal_id)
+  -> authguard-authz gRPC Authorization/Check
   -> repository batch lookup for active Principal IDs
   -> L1 compiled policy evaluation (durable policy repository is source of truth)
   -> x-authguard-context OR x-authguard-scope-token
@@ -38,13 +38,13 @@ IdP / Keycloak -> Access Token
 4. token 使用至少 256 bit CSPRNG，Redis key 只保存 token SHA-256，值设置 TTL；
    token 不写日志、不进入 metrics label。
 
-## 3. Core 与缓存
+## 3. AuthZ 与缓存
 
 Core 分层中，扁平的 `model/` 统一保存与存储无关的授权业务模型、SQL-scope 语义和
-HTTP/gRPC DTO；SQLite/PostgreSQL row record 只存在于 `storage/record.rs`，route/handler
+HTTP/gRPC DTO；SQLite/PostgreSQL 行映射只存在于对应 `*_sqlite.rs` / `*_postgres.rs`，route/handler
 不依赖持久化行结构。
 
-1. `auth.scope_delivery` 新增：
+1. `authz.scope_delivery` 新增：
    - `direct_urn_limit`：allow + deny 数量小于或等于该值时候选 direct；
    - `max_direct_header_bytes`：头大小的第二道上限；
    - `context_ttl`、`scope_token_ttl`。
@@ -52,7 +52,7 @@ HTTP/gRPC DTO；SQLite/PostgreSQL row record 只存在于 `storage/record.rs`，
    响应超时和 key prefix；`IAuthorizationCache` 只保存 opaque scope-token context。
 3. 热路径始终读取 `PolicyRuntime` 的进程内不可变编译快照。后台从 durable repository
    按 revision 刷新各副本。policy 与 Principal 均不进入 Memory/Redis；
-   每次鉴权按 `issuer + external_id` 批量读取 repository，确保禁用/撤销立即 fail closed。
+   每次鉴权按 canonical `principal_id` 批量读取 repository，确保禁用/撤销立即 fail closed。
 4. control-plane 更新顺序：编译校验 -> SQLite/PostgreSQL 原子写 -> 当前进程
    `PolicyRuntime` 原子发布。其他副本继续按 revision 从 repository 刷新。
 5. direct 交付不要求 Redis；token 交付和 `ResolveScope` 必须成功访问 token store，

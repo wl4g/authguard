@@ -1,4 +1,4 @@
-{{- $envoyGateway := index .Values "envoy-gateway" -}}
+{{- $envoyGateway := .Values.envoy_gateway -}}
 {{- $ext := .Values.envoy_gateway.ext_authz -}}
 {{- $gateway := $ext.gateway -}}
 {{- $tracing := $ext.tracing -}}
@@ -61,10 +61,23 @@ spec:
       kind: EnvoyProxy
       name: {{ printf "%s-authguard" $gateway.name | trunc 63 | trimSuffix "-" }}
   listeners:
-    - name: http
+    # Only this listener is protected by jwt_authn -> ext_authz. Keeping the
+    # section name explicit prevents login/callback routes from inheriting the
+    # business authorization policy.
+    - name: protected
       protocol: HTTP
       port: 80
       allowedRoutes:
         namespaces:
           from: All
+    {{- if and .Values.authguard.authn.enabled $ext.authnRoute.enabled }}
+    # AuthN authorize/callback traffic still enters through Envoy, but must be
+    # reachable before a canonical session exists.
+    - name: authn
+      protocol: HTTP
+      port: {{ $ext.authnRoute.listenerPort }}
+      allowedRoutes:
+        namespaces:
+          from: All
+    {{- end }}
 {{- end }}

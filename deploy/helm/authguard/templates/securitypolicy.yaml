@@ -16,6 +16,7 @@ spec:
     - group: gateway.networking.k8s.io
       kind: Gateway
       name: {{ $ext.gateway.name }}
+      sectionName: protected
   extAuth:
     failOpen: false
     timeout: 2s
@@ -33,7 +34,7 @@ spec:
     grpc:
       backendRefs:
         - name: {{ include "authguard.fullname" . }}
-          port: {{ .Values.authguard.service.grpcPort }}
+          port: {{ .Values.authguard.authz.service.grpcPort }}
   {{- if $jwt.enabled }}
   jwt:
     optional: false
@@ -62,6 +63,22 @@ spec:
             kind: ConfigMap
             name: {{ include "authguard.jwtJwksConfigMapName" . }}
         {{- end }}
+      {{- range $provider := $jwt.additionalProviders }}
+      - name: {{ required "envoy_gateway.ext_authz.jwt.additionalProviders[].name is required" $provider.name | quote }}
+        issuer: {{ required "envoy_gateway.ext_authz.jwt.additionalProviders[].issuer is required" $provider.issuer | quote }}
+        audiences:
+          {{- toYaml $provider.audiences | nindent 10 }}
+        extractFrom:
+          headers:
+            - name: authorization
+              valuePrefix: "Bearer "
+        localJWKS:
+          type: ValueRef
+          valueRef:
+            group: ""
+            kind: ConfigMap
+            name: {{ required "envoy_gateway.ext_authz.jwt.additionalProviders[].localJWKSConfigMap is required" $provider.localJWKSConfigMap | quote }}
+      {{- end }}
   {{- end }}
   {{- if $oidc.enabled }}
   oidc:

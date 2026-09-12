@@ -108,16 +108,30 @@ class HeaderAccessContextResolver:
         return cls(signing_key)
 
     def resolve(self, headers: AccessHeaders) -> RequestAccess | None:
-        from authguard_adapter.util import ACCESS_CONTEXT_HEADER, verify_signed_access_context
+        from authguard_adapter.util import (
+            ACCESS_CONTEXT_HEADER,
+            _log_debug,
+            verify_signed_access_context,
+        )
 
         encoded = headers.header(ACCESS_CONTEXT_HEADER)
         if not encoded:
             return None
+        _log_debug("authguard.access_context.header.started", resolver_mode="header")
         signing_key = self._signing_key or os.getenv(ACCESS_CONTEXT_HMAC_KEY_ENV, "")
         if not signing_key:
             raise ValueError(f"{ACCESS_CONTEXT_HMAC_KEY_ENV} is required")
         context = verify_signed_access_context(encoded, signing_key)
-        return context.request_access()
+        request_access = context.request_access()
+        _log_debug(
+            "authguard.access_context.header.succeeded",
+            resolver_mode="header",
+            principal_id=request_access.principal_id,
+            action=request_access.action,
+            allow_count=len(request_access.grants.allow_resource_urns),
+            deny_count=len(request_access.grants.deny_resource_urns),
+        )
+        return request_access
 
 
 class GrpcAccessContextResolver:
@@ -127,13 +141,25 @@ class GrpcAccessContextResolver:
         self._client = client
 
     def resolve(self, headers: AccessHeaders) -> RequestAccess | None:
-        from authguard_adapter.util import SCOPE_TOKEN_HEADER, decode_access_context
+        from authguard_adapter.util import SCOPE_TOKEN_HEADER, _log_debug, decode_access_context
 
         token = headers.header(SCOPE_TOKEN_HEADER)
         if not token:
             return None
+        started = time.perf_counter()
+        _log_debug("authguard.access_context.grpc.started", resolver_mode="grpc")
         context = decode_access_context(self._client.resolve_scope(token))
-        return context.request_access()
+        request_access = context.request_access()
+        _log_debug(
+            "authguard.access_context.grpc.succeeded",
+            resolver_mode="grpc",
+            principal_id=request_access.principal_id,
+            action=request_access.action,
+            allow_count=len(request_access.grants.allow_resource_urns),
+            deny_count=len(request_access.grants.deny_resource_urns),
+            duration_ms=int((time.perf_counter() - started) * 1000),
+        )
+        return request_access
 
     @classmethod
     def from_env(cls) -> GrpcAccessContextResolver:

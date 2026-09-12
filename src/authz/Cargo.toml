@@ -1,0 +1,42 @@
+[package]
+name = "authguard-authz"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+authguard-common = { workspace = true, features = ["redis-cache"] }
+axum.workspace = true
+base64.workspace = true
+envoy-types.workspace = true
+ldap3.workspace = true
+opentelemetry.workspace = true
+opentelemetry-http.workspace = true
+prost.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
+tracing.workspace = true
+tracing-opentelemetry.workspace = true
+
+[dev-dependencies]
+opentelemetry_sdk.workspace = true
+rusqlite.workspace = true
+sqlx.workspace = true
+
+[[bin]]
+name = "authguard-authz"
+path = "src/main.rs"
+
+[lints]
+workspace = true

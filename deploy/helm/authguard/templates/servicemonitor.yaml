@@ -1,5 +1,5 @@
-{{- $serviceMonitor := .Values.authguard.observability.serviceMonitor -}}
-{{- if and $serviceMonitor.enabled (not .Values.authguard.mgmt.enabled) -}}
+{{- $serviceMonitor := .Values.authguard.authz.observability.serviceMonitor -}}
+{{- if and $serviceMonitor.enabled (not .Values.authguard.authz.mgmt.enabled) -}}
 {{- fail "authguard.observability.serviceMonitor requires authguard.mgmt.enabled" -}}
 {{- end -}}
 {{- if $serviceMonitor.enabled }}
@@ -18,6 +18,6 @@ spec:
       {{- include "authguard.serverSelectorLabels" . | nindent 6 }}
   endpoints:
     - port: mgmt
-      path: {{ .Values.authguard.mgmt.metricsPath }}
+      path: {{ .Values.authguard.authz.mgmt.metricsPath }}
       interval: {{ $serviceMonitor.interval }}
 {{- end }}

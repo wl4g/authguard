@@ -1,4 +1,4 @@
-{{- $networkPolicy := .Values.authguard.networkPolicy -}}
+{{- $networkPolicy := .Values.authguard.authz.networkPolicy -}}
 {{- if $networkPolicy.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -21,7 +21,7 @@ spec:
             matchLabels:
               {{- toYaml $networkPolicy.envoyProxyPodSelector | nindent 14 }}
       ports:
-        - { protocol: TCP, port: {{ .Values.authguard.service.grpcPort }} }
+        - { protocol: TCP, port: {{ .Values.authguard.authz.service.grpcPort }} }
     - from:
         - {{- with $networkPolicy.workloadNamespaceSelector }}
           namespaceSelector:
@@ -31,8 +31,8 @@ spec:
             matchLabels:
               {{- toYaml $networkPolicy.workloadPodSelector | nindent 14 }}
       ports:
-        - { protocol: TCP, port: {{ .Values.authguard.service.scopeGrpcPort }} }
-    {{- if .Values.authguard.mgmt.enabled }}
+        - { protocol: TCP, port: {{ .Values.authguard.authz.service.scopeGrpcPort }} }
+    {{- if .Values.authguard.authz.mgmt.enabled }}
     - from:
         - {{- with $networkPolicy.managementNamespaceSelector }}
           namespaceSelector:
@@ -42,6 +42,31 @@ spec:
             matchLabels:
               {{- toYaml $networkPolicy.managementPodSelector | nindent 14 }}
       ports:
-        - { protocol: TCP, port: {{ .Values.authguard.service.mgmtPort }} }
+        - { protocol: TCP, port: {{ .Values.authguard.authz.service.mgmtPort }} }
     {{- end }}
+{{- end }}
+{{- if and .Values.authguard.authn.enabled .Values.authguard.authz.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "authguard.fullname" . }}-authn
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "authguard.authnSelectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - {{- with .Values.authguard.authz.networkPolicy.envoyProxyNamespaceSelector }}
+          namespaceSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.authguard.authz.networkPolicy.envoyProxyPodSelector | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: {{ .Values.authguard.authn.service.port }} }
 {{- end }}

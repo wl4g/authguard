@@ -23,7 +23,7 @@ Authguard 是一个深度集成 Envoy Gateway 的通用、独立、高性能 IAM
 ### 归档
 
 - [IAM 设计历史讨论总结](plans/archive/iam-design-discussion-summary_ZH.md)：早期讨论和决策背景记录。
-- [IAM 授权模型早期决策草稿](plans/archive/iam-authorization-rationale-draft_ZH.md)：已被六表 singleton policy 模型取代的历史草稿。
+- [IAM 授权模型早期决策草稿](plans/archive/iam-authorization-rationale-draft_ZH.md)：已被当前 Principal/Action/Role/RoleBinding 模型取代的历史草稿。
 
 ### 业务案例
 

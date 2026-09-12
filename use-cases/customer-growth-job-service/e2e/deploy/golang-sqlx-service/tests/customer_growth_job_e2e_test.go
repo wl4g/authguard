@@ -24,8 +24,13 @@ import (
 )
 
 type authorizationFixture struct {
-	Version   int                     `json:"version"`
+	Version   int                     `json:"access_context_version"`
 	Scenarios []authorizationScenario `json:"scenarios"`
+}
+
+type authguardFixture struct {
+	Version int                  `json:"version"`
+	Authz   authorizationFixture `json:"authz"`
 }
 
 const testAccessContextSigningKey = "test-access-context-hmac-key-32-bytes-minimum"
@@ -262,15 +267,15 @@ func seedCustomerGrowthJobs(t *testing.T, db *sqlx.DB) {
 
 func loadAuthorizationFixture(t *testing.T) authorizationFixture {
 	t.Helper()
-	content, err := os.ReadFile(configPath(t, "authorization-scenarios.json"))
+	content, err := os.ReadFile(configPath(t, "authguard-e2e-scenarios.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var fixture authorizationFixture
+	var fixture authguardFixture
 	if err := json.Unmarshal(content, &fixture); err != nil {
 		t.Fatal(err)
 	}
-	return fixture
+	return fixture.Authz
 }
 
 func configPath(t *testing.T, name string) string {
@@ -279,7 +284,7 @@ func configPath(t *testing.T, name string) string {
 	if !ok {
 		t.Fatal("cannot resolve Go test source path")
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", "..", "..", "..", "config", name))
+	return filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", "..", "..", "config", name))
 }
 
 func valueOrEmpty(value *string) string {

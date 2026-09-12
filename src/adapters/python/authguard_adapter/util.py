@@ -7,7 +7,7 @@ import hmac
 import json
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from authguard_adapter.access import require_current, require_current_access
@@ -31,6 +31,7 @@ _DEFAULT_LOGGER = logging.getLogger("authguard.adapter")
 if not any(isinstance(handler, logging.NullHandler) for handler in _DEFAULT_LOGGER.handlers):
     _DEFAULT_LOGGER.addHandler(logging.NullHandler())
 _LOGGER = _DEFAULT_LOGGER
+_TELEMETRY_OBSERVER: Callable[[str, dict[str, Any]], None] | None = None
 
 
 def configure_logger(logger: logging.Logger | None) -> None:
@@ -51,6 +52,15 @@ def reset_logger() -> None:
 
     global _LOGGER
     _LOGGER = _DEFAULT_LOGGER
+
+
+def configure_telemetry_observer(
+    observer: Callable[[str, dict[str, Any]], None] | None,
+) -> None:
+    """Install an app-owned OTel metric/span bridge; ``None`` disables it."""
+
+    global _TELEMETRY_OBSERVER
+    _TELEMETRY_OBSERVER = observer
 
 
 def error_category(error: BaseException | None) -> str:
@@ -76,12 +86,17 @@ def _log_warning(event: str, **fields: Any) -> None:
 
 
 def _log(level: int, event: str, fields: dict[str, Any]) -> None:
-    if not _LOGGER.isEnabledFor(level):
-        return
     safe_fields = {
         key: safe_log_string(value) if isinstance(value, str) or value is None else value
         for key, value in fields.items()
     }
+    if _TELEMETRY_OBSERVER is not None:
+        try:
+            _TELEMETRY_OBSERVER(event, dict(safe_fields))
+        except Exception:  # Observability must never break authorization enforcement.
+            pass
+    if not _LOGGER.isEnabledFor(level):
+        return
     rendered = " ".join(f"{key}={value}" for key, value in safe_fields.items())
     message = f"event={event}" + (f" {rendered}" if rendered else "")
     _LOGGER.log(
@@ -145,14 +160,12 @@ def _decode_access_context(encoded: str) -> AccessContext:
         deny = _string_tuple(payload["deny_resource_urns"])
         context = AccessContext(
             version=payload["version"],
-            principal_id=_string(_aliased_field(payload, "principal_id", "subject_id")),
+            principal_id=_string(payload["principal_id"]),
             action=_string(payload["action"]),
             resource_urn=_string(payload["resource_urn"]),
             allow_resource_urns=allow,
             deny_resource_urns=deny,
-            policy_revision=_integer(
-                _aliased_field(payload, "policy_revision", "policy_version")
-            ),
+            policy_revision=_integer(payload["policy_revision"]),
             issued_at_epoch_seconds=_integer(payload["issued_at_epoch_seconds"]),
             expires_at_epoch_seconds=_integer(payload["expires_at_epoch_seconds"]),
         )
@@ -238,18 +251,6 @@ def _integer(value: Any) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise TypeError("expected integer")
     return value
-
-
-def _aliased_field(payload: dict[str, Any], canonical: str, legacy: str) -> Any:
-    has_canonical = canonical in payload
-    has_legacy = legacy in payload
-    if has_canonical and has_legacy and payload[canonical] != payload[legacy]:
-        raise ValueError(f"conflicting access context fields {canonical} and {legacy}")
-    if has_canonical:
-        return payload[canonical]
-    if has_legacy:
-        return payload[legacy]
-    raise KeyError(canonical)
 
 
 def validate_access_context(access_context: AccessContext, now: int | None = None) -> None:

@@ -25,14 +25,19 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "authguard.serverSelectorLabels" -}}
 {{ include "authguard.selectorLabels" . }}
-app.kubernetes.io/component: server
+app.kubernetes.io/component: authz
+{{- end -}}
+
+{{- define "authguard.authnSelectorLabels" -}}
+{{ include "authguard.selectorLabels" . }}
+app.kubernetes.io/component: authn
 {{- end -}}
 
 {{- define "authguard.serviceAccountName" -}}
-{{- if .Values.authguard.serviceAccount.create -}}
-{{- default (include "authguard.fullname" .) .Values.authguard.serviceAccount.name -}}
+{{- if .Values.authguard.authz.serviceAccount.create -}}
+{{- default (include "authguard.fullname" .) .Values.authguard.authz.serviceAccount.name -}}
 {{- else -}}
-{{- default "default" .Values.authguard.serviceAccount.name -}}
+{{- default "default" .Values.authguard.authz.serviceAccount.name -}}
 {{- end -}}
 {{- end -}}
 
@@ -45,17 +50,17 @@ app.kubernetes.io/component: server
 {{- end -}}
 
 {{- define "authguard.redisFullname" -}}
-{{- $redis := index .Values "redis-cluster" -}}
+{{- $redis := .Values.redis_cluster -}}
 {{- default (printf "%s-redis-cluster" .Release.Name | trunc 63 | trimSuffix "-") $redis.fullnameOverride -}}
 {{- end -}}
 
 {{- define "authguard.redisSecretName" -}}
-{{- $redis := index .Values "redis-cluster" -}}
+{{- $redis := .Values.redis_cluster -}}
 {{- default (include "authguard.redisFullname" .) $redis.existingSecret -}}
 {{- end -}}
 
 {{- define "authguard.redisPasswordKey" -}}
-{{- $redis := index .Values "redis-cluster" -}}
+{{- $redis := .Values.redis_cluster -}}
 {{- default "redis-password" $redis.existingSecretPasswordKey -}}
 {{- end -}}
 

@@ -124,13 +124,14 @@ func NewHeaderAccessContextResolverFromEnv() (HeaderAccessContextResolver, error
 }
 
 func (r HeaderAccessContextResolver) Resolve(
-	_ context.Context,
+	ctx context.Context,
 	headers HeaderReader,
 ) (*model.RequestAccess, error) {
 	encoded := headers.Header(util.AccessContextHeader)
 	if encoded == "" {
 		return nil, nil
 	}
+	util.LogDebug(ctx, "authguard.access_context.header.started", "resolver_mode", "header")
 	signingKey := r.signingKey
 	if signingKey == "" {
 		signingKey = os.Getenv(AccessContextHMACKeyEnv)
@@ -143,6 +144,12 @@ func (r HeaderAccessContextResolver) Resolve(
 		return nil, err
 	}
 	requestAccess := accessContext.RequestAccess()
+	util.LogDebug(ctx, "authguard.access_context.header.succeeded",
+		"resolver_mode", "header",
+		"principal_id", util.SafeLogString(requestAccess.PrincipalID),
+		"action", util.SafeLogString(requestAccess.Action),
+		"allow_count", len(requestAccess.Grants.AllowResourceURNs),
+		"deny_count", len(requestAccess.Grants.DenyResourceURNs))
 	return &requestAccess, nil
 }
 
@@ -182,6 +189,8 @@ func (r GRPCAccessContextResolver) Resolve(
 	if r.client == nil {
 		return nil, ErrScopeResolverUnavailable
 	}
+	started := time.Now()
+	util.LogDebug(ctx, "authguard.access_context.grpc.started", "resolver_mode", "grpc")
 	encoded, err := r.client.ResolveScope(ctx, token)
 	if err != nil {
 		return nil, err
@@ -191,6 +200,13 @@ func (r GRPCAccessContextResolver) Resolve(
 		return nil, err
 	}
 	requestAccess := accessContext.RequestAccess()
+	util.LogDebug(ctx, "authguard.access_context.grpc.succeeded",
+		"resolver_mode", "grpc",
+		"principal_id", util.SafeLogString(requestAccess.PrincipalID),
+		"action", util.SafeLogString(requestAccess.Action),
+		"allow_count", len(requestAccess.Grants.AllowResourceURNs),
+		"deny_count", len(requestAccess.Grants.DenyResourceURNs),
+		"duration_ms", time.Since(started).Milliseconds())
 	return &requestAccess, nil
 }
 

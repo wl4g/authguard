@@ -19,10 +19,11 @@ trusted x-authguard-context
 ```
 
 The use case has two complementary execution modes. Portable mode requires no
-identity provider, Kubernetes cluster, or external database: Authguard core
+identity provider, Kubernetes cluster, or external database: `authguard-authz`
 evaluates the condition matrix, and each project tests the SDK-to-SQL boundary
 against SQLite or H2. Deployment mode starts the complete request path on k3s:
-Keycloak, Envoy Gateway, one Authguard replica, Redis Cluster, one shared
+Keycloak as an E2E-only external IdP, Envoy Gateway, `authguard-authn`, one
+`authguard-authz` replica, Redis Cluster, one shared
 PostgreSQL instance, an LDAP directory, Jaeger, and all five HTTP microservices.
 It additionally proves the Envoy Gateway JWT public-key requirement with a
 deterministic realm key, the workload OAuth2 client_credentials flow, and the
@@ -32,13 +33,12 @@ resign-JWT Authguard-origin boundary inside a business microservice.
 
 ```text
 customer-growth-job-service/
-  config/
-    init.sql                shared schema and deterministic rows
-    authorization-scenarios.json      53 shared gateway and business scenarios
-    principal-discovery-scenarios.json  JIT, federation, LDAP, and SCIM fixtures
-    keycloak-realm.json     realm fixture with deterministic RSA keys and workload client
-    e2e-jwt-keys/           fixed realm-signing and resign-JWT RSA key pairs
   e2e/
+    config/
+      init.sql                       shared schema and deterministic rows
+      authguard-e2e-scenarios.json   AuthN, federation, and 53 AuthZ scenarios
+      keycloak-realm.json            external IdP and workload-client fixture
+      e2e-jwt-keys/                  fixed realm-signing and resign-JWT keys
     common/                            process, project lifecycle, and reports
     deploy/
       golang-sqlx-service/             Go + sqlx + SQLite/PostgreSQL
@@ -46,7 +46,7 @@ customer-growth-job-service/
       python-sqlalchemy-service/       Python + SQLAlchemy + SQLite/PostgreSQL
       springboot-jdbc-service/         Spring Boot + JDBC + SQLite/PostgreSQL
       springboot-jpa-service/          Spring Boot + JPA + H2/PostgreSQL
-    kubernetes/                        shared PostgreSQL and five workloads
+    helm/                              shared PostgreSQL and five workloads
     verifier/                          independent sNN verifier groups
     reports/                           ignored execution evidence
     runner.py                          clean rebuild, rounds, selection, summary
@@ -104,30 +104,31 @@ HTTPS_PROXY=http://127.0.0.1:8800 make e2e-k3s
 ```
 
 Each round removes and recreates an `e2e-` namespace and three Helm releases.
-Authguard first starts with the Action/Role catalog and no RoleBinding. The
-verifier sends authenticated warm-up requests through Envoy to JIT-project the
-Keycloak users and groups, resolves each group by the exact `(issuer,
-external_id)` key through the management API, then installs every RoleBinding
-with one revision-checked, atomic policy replacement. This keeps
-identity-provider IDs out of static policy configuration and remains idempotent
-when `--skip-clean` is used. The disposable cluster explicitly permits its
-internal HTTP OIDC issuer for JIT; production issuers should remain HTTPS-only.
+Authguard first starts with the Action/Role catalog and no RoleBinding. A mock
+external social IdP then drives the real browser protocol through Envoy's
+public AuthN listener: authorize redirect, callback, POST token exchange,
+userinfo lookup, `ExternalIdentity` normalization, durable account linking,
+and canonical-session issuance. AuthN and AuthZ share one PostgreSQL IAM schema,
+so AuthZ sees the resulting internal Principal without learning the provider
+subject. The administrator binds those Principal IDs in one revision-checked
+policy replacement. A second login must resolve to the same IDs before any
+business request is sent. Equal email values are never used for linking.
 
 The same verifier exercises every supported Principal-discovery path with live
-dependencies. Repeated OIDC requests prove JIT projection is idempotent.
+dependencies. Repeated materialization proves canonical projection is idempotent.
 Authguard then searches one LDAP-only user through the Keycloak Admin API and
 materializes it twice, proving Keycloak's LDAP federation path; a separate
 RFC 4511 connector resolves the same directory entry by its immutable UUID and
 also materializes it idempotently. Finally, SCIM RFC 7643 User and Group events
 exercise repeated upsert, disabled tombstone, and reactivation behavior. SCIM
-records using the same OIDC `(issuer, sub/externalId)` key must converge on the
-existing JIT Principal rather than creating a duplicate. The generated report
+records converge only when the request supplies the same canonical
+`principal_id`; equal external subjects or emails never trigger a merge. The generated report
 contains provider paths, lifecycle results, counts, and stable-identity
 assertions, but never bearer tokens, client secrets, or LDAP bind credentials.
 
 ### Deterministic realm signing key
 
-The realm imports a fixed RSA key pair (see `config/e2e-jwt-keys/`) through the
+The realm imports a fixed RSA key pair (see `e2e/config/e2e-jwt-keys/`) through the
 realm `keys[]` fixture instead of letting Keycloak generate one at first start.
 The paired public JWKS is rendered as a ConfigMap by the support chart, and the
 Authguard SecurityPolicy consumes it through `localJWKS.existingConfigMap`, so
@@ -138,8 +139,8 @@ verifier asserts the SecurityPolicy loads that exact ConfigMap.
 ### Workload client_credentials (machine identity)
 
 The realm defines the confidential client `e2e-growth-job-runner` with service
-accounts enabled and an audience mapper stamping
-`customer-growth-job-service`. The verifier exchanges the SA secret for an
+accounts enabled, an audience mapper stamping `customer-growth-job-service`,
+and canonical `principal_id`/`principal_kind=WORKLOAD` claims. The verifier exchanges the SA secret for an
 access token with `grant_type=client_credentials` — no browser, no user login —
 asserts the audience claim, then sends it through Envoy: the JWT provider
 verifies the signature (foreign tokens would fail with HTTP 401) and Authguard
@@ -152,12 +153,15 @@ Authguard re-signs every allowed request as a short-lived RS256 JWT carrying
 `authguardOrigin: true`. The rust-sqlx service mounts the paired public key
 (`resign-jwt-key.pub.pem`) and enforces the boundary in its middleware: the
 valid user JWT re-signed by Authguard passes through Envoy and is accepted,
-while the same Keycloak token sent directly to the workload — bypassing Envoy —
+while the same AuthN canonical token sent directly to the workload — bypassing Envoy —
 is rejected with HTTP 401, proving business microservices can refuse direct
 client calls.
 
-The services share database `e2e_customer_growth`, but connect through separate login
-roles and schemas: `e2e_customer_growth_go_sqlx`, `e2e_customer_growth_rust_sqlx`,
+The services share database `e2e_customer_growth`. AuthN and AuthZ share the
+dedicated `e2e_authguard` login and `authguard` IAM schema; that schema has one
+`iam_principal` table plus the AuthN-owned identity bindings and AuthZ-owned
+policy tables. Business services connect through separate login roles and schemas:
+`e2e_customer_growth_go_sqlx`, `e2e_customer_growth_rust_sqlx`,
 `e2e_customer_growth_python_sqlalchemy`, `e2e_customer_growth_spring_jdbc`, and `e2e_customer_growth_spring_jpa`.
 Cross-schema `USAGE` is denied and verified. The Python verifier calls the same
 HTTP list/get/create/update/delete contract for every implementation, verifies
@@ -165,14 +169,15 @@ direct and opaque scope delivery, and checks that rejected writes do not mutate
 PostgreSQL.
 
 The Kubernetes verifier also proves the authentication and authorization order
-from live runtime evidence: a tampered Keycloak JWT increments Envoy's
-`jwt_authn.denied` counter without calling Authguard, while a valid Keycloak JWT
+from live runtime evidence: a tampered AuthN JWT increments Envoy's
+`jwt_authn.denied` counter without calling Authguard, while a valid AuthN JWT
 increments `jwt_authn.allowed`, `ext_authz.ok`, and exactly one
 `envoy.service.auth.v3.Authorization/Check` request. It inspects Envoy's runtime
 xDS configuration to require `jwt_authn -> ext_authz -> router`, then queries the
 Jaeger API for one W3C trace containing `e2e-keycloak`, `e2e-envoy-proxy`, and
-`e2e-authguard` spans. The trace models the real causality as two verifier client
-branches—token issuance to Keycloak, followed by the protected request to Envoy;
+`authguard-authz` spans. The trace models the real causality as two verifier client
+branches—an auxiliary workload token issuance from optional Keycloak, followed
+by the protected request to Envoy;
 Authguard's Check span must be an Envoy descendant. The report records the trace
 ID and a local Jaeger UI command for independent review.
 

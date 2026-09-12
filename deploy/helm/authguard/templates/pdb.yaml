@@ -1,4 +1,4 @@
-{{- if .Values.authguard.disruptionBudget.enabled }}
+{{- if .Values.authguard.authz.disruptionBudget.enabled }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -6,8 +6,22 @@ metadata:
   labels:
     {{- include "authguard.labels" . | nindent 4 }}
 spec:
-  minAvailable: {{ .Values.authguard.disruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.authguard.authz.disruptionBudget.minAvailable }}
   selector:
     matchLabels:
       {{- include "authguard.serverSelectorLabels" . | nindent 6 }}
+{{- end }}
+{{- if and .Values.authguard.authn.enabled .Values.authguard.authn.disruptionBudget.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "authguard.fullname" . }}-authn
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.authguard.authn.disruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "authguard.authnSelectorLabels" . | nindent 6 }}
 {{- end }}

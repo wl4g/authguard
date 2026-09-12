@@ -23,7 +23,7 @@ The index below is organized by document purpose. The whitepaper is the canonica
 ### Archive
 
 - [IAM design discussion summary (ZH)](plans/archive/iam-design-discussion-summary_ZH.md): early discussion and decision background.
-- [Early IAM authorization-model rationale draft (ZH)](plans/archive/iam-authorization-rationale-draft_ZH.md): historical draft superseded by the six-table singleton-policy model.
+- [Early IAM authorization-model rationale draft (ZH)](plans/archive/iam-authorization-rationale-draft_ZH.md): historical draft superseded by the current Principal/Action/Role/RoleBinding model.
 
 ### Use cases
 

@@ -17,7 +17,7 @@ PROJECT_SOURCES = {
     ),
     "rust-sqlx-service": (
         "tests/customer_growth_job_e2e.rs",
-        "src/customer_growth_job_authorization.rs",
+        "src/authorization/mod.rs",
     ),
     "python-sqlalchemy-service": (
         "tests/test_customer_growth_job_e2e.py",
@@ -39,7 +39,7 @@ def verify(_context: RunContext) -> VerificationResult:
     errors: list[str] = []
     sql = (CONFIG_DIR / "init.sql").read_text(encoding="utf-8")
     fixture = json.loads(
-        (CONFIG_DIR / "authorization-scenarios.json").read_text(encoding="utf-8")
+        (CONFIG_DIR / "authguard-e2e-scenarios.json").read_text(encoding="utf-8")
     )
 
     with sqlite3.connect(":memory:") as connection:
@@ -49,10 +49,35 @@ def verify(_context: RunContext) -> VerificationResult:
         }
         row_count = len(database_ids)
 
-    scenarios = fixture.get("scenarios", [])
+    scenarios = fixture.get("authz", {}).get("scenarios", [])
     scenario_ids = [scenario.get("id") for scenario in scenarios]
-    if fixture.get("version") != 3:
-        errors.append("authorization fixture version must be 3")
+    if fixture.get("version") != 4:
+        errors.append("AuthGuard E2E fixture version must be 4")
+    authn = fixture.get("authn", {})
+    provider_flows = authn.get("provider_flows", [])
+    linking = authn.get("account_linking", {})
+    federation = fixture.get("principal_federation", {})
+    keycloak = federation.get("keycloak", {})
+    ldap = federation.get("ldap", {})
+    provider_ids = {flow.get("provider_id") for flow in provider_flows}
+    if provider_ids != {"github", "google", "wechat"}:
+        errors.append("AuthN fixture must cover GitHub, Google, and WeChat provider flows")
+    if linking.get("strategy") != "first-login" or linking.get("email_auto_link") is not False:
+        errors.append("AuthN 2C fixture must use first-login without email auto-link")
+    keycloak_users = keycloak.get("users", [])
+    keycloak_groups = keycloak.get("groups", [])
+    if len(keycloak_users) != 2 or len(keycloak_groups) != 2 or not keycloak.get("workload"):
+        errors.append("Keycloak federation must cover two users, two groups, and one workload")
+    federated_ids = [
+        identity.get("principal_id")
+        for identity in [*keycloak_users, *keycloak_groups, keycloak.get("workload", {})]
+    ]
+    if len(federated_ids) != len(set(federated_ids)) or any(not value for value in federated_ids):
+        errors.append("federated Keycloak principal IDs must be non-empty and unique")
+    if not ldap.get("direct", {}).get("provider_id") or not ldap.get("identity", {}).get(
+        "immutable_external_id"
+    ):
+        errors.append("direct LDAP federation must define a provider and immutable identity")
     if len(scenarios) < 30:
         errors.append("at least 30 authorization scenarios are required")
     if len(scenario_ids) != len(set(scenario_ids)):
@@ -87,7 +112,7 @@ def verify(_context: RunContext) -> VerificationResult:
         mapping_text = (DEPLOY_DIR / project_name / mapping_source).read_text(
             encoding="utf-8"
         )
-        for fixture_name in ("init.sql", "authorization-scenarios.json"):
+        for fixture_name in ("init.sql", "authguard-e2e-scenarios.json"):
             if fixture_name not in test_text:
                 errors.append(f"{project_name}: does not consume {fixture_name}")
         if "customer-growth" not in mapping_text:
@@ -98,6 +123,8 @@ def verify(_context: RunContext) -> VerificationResult:
         f"Shared authorization scenarios: {len(scenarios)}",
         f"Conditional gateway scenarios: {len(condition_scenarios)}",
         "CRUD, action isolation, *, **, explicit deny, IP, transport, MFA, and claims",
+        "AuthN covers realistic GitHub, Google, and WeChat OAuth2-like wire contracts",
+        "Enterprise federation covers Keycloak USER/GROUP/WORKLOAD and direct LDAP identity",
         "Every language reads the same SQL and JSON fixtures",
     ]
     details.extend(errors)

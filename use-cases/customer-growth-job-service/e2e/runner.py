@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-image-build",
         action="store_true",
-        help="Reuse the locally tagged Authguard and five workload images for k3s scenario 21.",
+        help="Reuse locally tagged images during k3s deployment phase 21.",
     )
     parser.add_argument(
         "--timeout",

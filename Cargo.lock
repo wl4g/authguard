@@ -146,7 +146,7 @@ name = "authguard-adapter-rust"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "authguard-core",
+ "authguard-common",
  "base64",
  "http",
  "serde_json",
@@ -156,7 +156,57 @@ dependencies = [
 ]
 
 [[package]]
-name = "authguard-core"
+name = "authguard-authn"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "authguard-common",
+ "axum",
+ "base64",
+ "rand 0.9.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "authguard-authz"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "authguard-common",
+ "axum",
+ "base64",
+ "envoy-types",
+ "ldap3",
+ "opentelemetry",
+ "opentelemetry-http",
+ "opentelemetry_sdk",
+ "prost",
+ "rand 0.9.5",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tonic",
+ "tonic-prost",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-opentelemetry",
+]
+
+[[package]]
+name = "authguard-common"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -164,13 +214,10 @@ dependencies = [
  "axum",
  "base64",
  "config",
- "envoy-types",
  "hmac",
  "humantime-serde",
  "ipnet",
- "ldap3",
  "opentelemetry",
- "opentelemetry-http",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "prometheus-client",
@@ -180,9 +227,9 @@ dependencies = [
  "redis",
  "reqwest",
  "rsa",
- "rusqlite",
  "serde",
  "serde_json",
+ "serde_yaml",
  "sha2",
  "sqlx",
  "thiserror",
@@ -190,8 +237,6 @@ dependencies = [
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
- "tower",
- "tower-http",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
@@ -2485,6 +2530,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yaml"
+version = "0.9.34+deprecated"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3282,6 +3340,12 @@ name = "unicode-segmentation"
 version = "1.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"

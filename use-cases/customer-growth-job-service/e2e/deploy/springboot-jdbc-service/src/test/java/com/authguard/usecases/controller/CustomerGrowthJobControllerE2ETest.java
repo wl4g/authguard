@@ -32,7 +32,7 @@ class CustomerGrowthJobControllerE2ETest {
 
     for (AuthorizationScenario scenario : fixture.scenarios()) {
       try (TestApplication application = newTestApplication()) {
-        RequestAccessScope accessScope = enterContext(fixture.version(), scenario);
+        RequestAccessScope accessScope = enterContext(fixture.accessContextVersion(), scenario);
         try {
           ScenarioResult result = executeScenario(application, scenario);
           assertThat(result.allowed()).as("scenario %s", scenario.id()).isEqualTo(scenario.expectedAllowed());

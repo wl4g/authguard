@@ -1,13 +1,13 @@
 # =============================================================================
-#  Authguard - Envoy Gateway external URN authorization service
+#  AuthGuard shared runtime configuration
 #
 #  Canonical keys use snake_case. Container overrides use double underscores:
 #  AUTHGUARD__SERVER__PORT=8081
-#  AUTHGUARD__AUTH__ADMIN_TOKEN=<secret>
+#  AUTHGUARD__AUTHZ__API_TOKEN=<secret>
 # =============================================================================
 
 server:
-  service_name: authguard
+  service_name: authguard-authz
   host: 0.0.0.0
   port: 8080
   scope_port: 8081
@@ -20,6 +20,10 @@ server:
   performance:
     worker_threads: 2
     max_in_flight_requests: 4096
+
+logging:
+  mode: JSON  # HUMAN | JSON
+  level: "info,tower_http=info"
 
 # Management traffic is exposed on a separate ClusterIP port and is not routed through the public Gateway.
 mgmt:
@@ -40,17 +44,35 @@ mgmt:
     timeout: 5s
     sample_rate: 1.0
 
-logging:
-  mode: JSON  # HUMAN | JSON
-  level: "info,tower_http=info"
+# Both authguard-authn and authguard-authz deserialize this one typed file.
+# Each process resolves only its owned authn/authz secrets.
+authn:
+  providers: {}
+  accountLinking:
+    # Supported strategies:
+    # - explicit (default): only authoritative Providers may create a Principal;
+    #   secondary identities require an authenticated explicit-link flow.
+    # - first-login: any previously unbound Provider identity may create a new
+    #   Principal and identity binding. Repeated callbacks for that exact
+    #   (provider, issuer, subject) resolve to the same Principal.
+    # first-login is suitable for 2C signup, but it never merges identities by
+    # email; linking different login methods still requires an authenticated
+    # explicit-link flow.
+    strategy: explicit
+    authoritativeProviders: []
+    allowLink: {}
 
-auth:
-  # Envoy Gateway verifies OIDC/JWT before forwarding this token to extAuth.
+authz:
+  # Envoy verifies an AuthN-issued canonical token before forwarding it to
+  # extAuth. AuthZ never resolves provider issuer/subject pairs.
+  # An identity whose principal_id is absent from iam_principal is always
+  # rejected. Authentication-only 2C routes should omit ext_authz; 2C routes
+  # that need authorization use AuthN first-login to materialize the Principal.
   identity:
     token_header: authorization
-    issuer_claim: iss
-    external_id_claim: sub
-    # Values must be issuer-local stable group identifiers, not display names.
+    principal_id_claim: principal_id
+    principal_kind_claim: principal_kind
+    # Values are internal stable Group Principal IDs, not provider group names.
     groups_claim: authguard_group_ids
   # Small scopes travel directly; large scopes use a Redis-backed opaque token.
   scope_delivery:
@@ -58,25 +80,19 @@ auth:
     max_direct_header_bytes: 8192
     context_ttl: 30s
     scope_token_ttl: 30s
-  # Principal projections remain local. JIT consumes only identities already
-  # verified by Envoy; federated search is control-plane only; SCIM is opt-in.
+  # Optional control-plane federation only. Login normalization and identity
+  # binding belong to authguard-authn and never run on the AuthZ hot path.
   principal_discovery:
-    jit:
-      enabled: true
-      discovery_id: verified-oidc
-      trusted_issuers: [https://idp.example.com/realms/example-corp]
-      allow_insecure_http: false
-    # keycloak/ldap/custom are flat sibling sections of jit/scim — all are
+    # keycloak/ldap/custom are flat sibling sections of scim — all are
     # principal discovery sources. Disabled entries are ignored at startup
     # and by validation. At most ONE active provider per protocol is allowed
     # (startup rejects
     # duplicates), so a candidate is always unambiguous: every result
-    # carries its source provider_id + issuer, and admin materialization
-    # re-resolves it at that source before a role binding is granted.
+    # carries its source provider_id + issuer. Control-plane materialization re-resolves
+    # it and requires the canonical principal_id already resolved by AuthN.
     # Keycloak searches the Admin REST API with a confidential OAuth 2.0
-    # client (client_credentials grant). The canonical `issuer` must equal
-    # the OIDC `iss` verified by Envoy so `(issuer, external_id)` converges
-    # with JIT/SCIM; when omitted it is derived from `base_url` + `realm`.
+    # client (client_credentials grant). Keycloak is an optional external
+    # integration, never a runtime dependency or default deployment.
     # keycloak:
     #   - enabled: false
     #     discovery_id: corporate-keycloak
@@ -134,8 +150,8 @@ auth:
     #
     # In-house identity systems (e.g. an enterprise DSP directory) integrate
     # through configurable request/response mapping plus a pre-issued bearer
-    # JWT — no proprietary protocol code is needed. The `issuer` must equal
-    # the OIDC `iss` verified by Envoy so projections converge with JIT.
+    # JWT for management-plane search only. Login-time proprietary protocols
+    # and token translation belong to AuthN Provider adapters.
     # custom:
     #   - enabled: false
     #     discovery_id: dsp-directory
@@ -168,13 +184,12 @@ auth:
     #     max_page_size: 100
     #     allow_insecure_http: false
     #
-    # SCIM runs in push mode: an external sync agent authenticates with its
-    # own OIDC client-credentials token carrying the SCIM audience and POSTs
-    # normalized resources to /adm/v1/principal-discovery/scim/refresh, which
+    # SCIM runs in push mode: an external sync agent authenticates at the
+    # Envoy edge and POSTs
+    # normalized resources to /api/v1/principal-discovery/scim/events, which
     # ingests them into Authguard storage as principal projections, so the
-    # hot AuthN path never calls the IdP. Authguard itself never calls out
-    # with these credentials; `auth` documents the agent's client for
-    # provisioning tooling and is validated for completeness.
+    # hot AuthN path never calls the IdP. Sync-agent credentials remain in the
+    # external connector deployment and are not Authguard runtime config.
     # Refer SCIM's specification: RFC-7643 core schema, RFC-7644 protocol.
     # https://www.rfc-editor.org/rfc/rfc7643.html
     # https://www.rfc-editor.org/rfc/rfc7644.html
@@ -183,12 +198,8 @@ auth:
     scim:
       enabled: false
       discovery_id: corporate-scim
-      # Must exactly equal the OIDC `iss`; SCIM externalId should equal OIDC `sub`.
+      # SCIM events must include the canonical principal_id resolved by AuthN.
       issuer: https://idp.example.com/realms/example-corp
-      auth:
-        token_url: ""  # overrides the IdP token endpoint when required
-        client_id: authguard-scim-sync
-        client_secret: ""  # or client_secret_file: /run/secrets/scim-client-secret
   # On every allowed check Authguard re-signs the verified client identity as
   # a short-lived JWT (RS256) carrying `authguardOrigin: true` and replaces
   # the authorization header for the upstream microservice. All attributes of
@@ -196,22 +207,19 @@ auth:
   # microservice verifying this signature proves the request passed through
   # Envoy Gateway and rejects clients calling its API directly. The RSA
   # private key stays in Authguard (inject
-  # AUTHGUARD__AUTH__RESIGN_JWT__PRIVATE_KEY from a Secret); business
+  # AUTHGUARD__AUTHZ__RESIGN_TOKEN__PRIVATE_KEY from a Secret); business
   # workloads verify with the paired public key only.
   # Disabled leaves the original identity token stripped without replacement.
-  resign_jwt:
+  resign_token:
     enabled: false
     ttl: 60s
     private_key: ""  # PKCS#8 PEM RSA private key, or private_key_file: /run/secrets/...
-  # Keep empty in source. Inject AUTHGUARD__AUTH__ADMIN_TOKEN from a Secret.
-  admin_token: ""
+  # Keep empty in source. Inject AUTHGUARD__AUTHZ__API_TOKEN from a Secret.
+  api_token: ""
 
 storage:
   provider: SQLite
   bootstrap_policy: null
-  policy_refresh_interval: 5s
-  # Readiness fails when no complete policy refresh succeeds within this window.
-  policy_max_staleness: 30s
   sqlite:
     url: "sqlite://authguard.db"
     max_connections: 1

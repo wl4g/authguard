@@ -20,7 +20,7 @@ from app.repository.customer_growth_job_repository import CustomerGrowthJobRepos
 from app.service.customer_growth_job_service import CustomerGrowthJobService
 
 
-CONFIG_DIR = Path(__file__).resolve().parents[4] / "config"
+CONFIG_DIR = Path(__file__).resolve().parents[3] / "config"
 TEST_SIGNING_KEY = "test-access-context-hmac-key-32-bytes-minimum"
 
 
@@ -49,7 +49,7 @@ class PythonCustomerGrowthJobServiceE2ETest(unittest.TestCase):
                 engine = create_engine("sqlite:///:memory:")
                 with engine.begin() as db:
                     controller = new_customer_growth_job_controller(db)
-                    request = access_request(fixture["version"], scenario)
+                    request = access_request(fixture["access_context_version"], scenario)
                     with AccessFilter().enter(request) as access_scope:
                         self.assertEqual(access_scope.authenticated, scenario["gateway_allowed"])
                         allowed, ids, status = execute_scenario(db, controller, scenario)
@@ -180,7 +180,10 @@ def seed_customer_growth_jobs(db: Connection) -> None:
 
 
 def load_authorization_fixture() -> dict[str, object]:
-    return json.loads((CONFIG_DIR / "authorization-scenarios.json").read_text(encoding="utf-8"))
+    fixture = json.loads(
+        (CONFIG_DIR / "authguard-e2e-scenarios.json").read_text(encoding="utf-8")
+    )
+    return fixture["authz"]
 
 
 if __name__ == "__main__":

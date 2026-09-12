@@ -20,8 +20,8 @@ public final class E2EFixtures {
 
   public static AuthorizationFixture authorizationScenarios() {
     try {
-      return OBJECT_MAPPER.readValue(
-          configPath("authorization-scenarios.json").toFile(), AuthorizationFixture.class);
+      var root = OBJECT_MAPPER.readTree(configPath("authguard-e2e-scenarios.json").toFile());
+      return OBJECT_MAPPER.treeToValue(root.required("authz"), AuthorizationFixture.class);
     } catch (IOException error) {
       throw new IllegalStateException("Cannot load shared authorization scenarios", error);
     }
@@ -42,14 +42,14 @@ public final class E2EFixtures {
   private static Path configPath(String name) {
     Path current = Path.of("").toAbsolutePath().normalize();
     while (current != null) {
-      Path local = current.resolve("config").resolve(name);
+      Path local = current.resolve("e2e/config").resolve(name);
       if (Files.isRegularFile(local)
           && current.getFileName() != null
           && current.getFileName().toString().equals("customer-growth-job-service")) {
         return local;
       }
       Path repositoryRelative =
-          current.resolve("use-cases/customer-growth-job-service/config").resolve(name);
+          current.resolve("use-cases/customer-growth-job-service/e2e/config").resolve(name);
       if (Files.isRegularFile(repositoryRelative)) {
         return repositoryRelative;
       }
@@ -58,7 +58,7 @@ public final class E2EFixtures {
     throw new IllegalStateException("Cannot locate use-case config file: " + name);
   }
 
-  public record AuthorizationFixture(int version, List<AuthorizationScenario> scenarios) {}
+  public record AuthorizationFixture(int accessContextVersion, List<AuthorizationScenario> scenarios) {}
 
   public record AuthorizationScenario(
       String id,

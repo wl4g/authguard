@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import logging
 import os
+import sys
 from typing import Any, Callable
 
 from flask import Flask, Response, jsonify, request
@@ -22,10 +24,16 @@ from authguard_adapter.access import (
     GrpcAccessContextResolver,
 )
 from authguard_adapter.filter import AccessMiddleware
+from authguard_adapter.util import configure_logger
 
 
 def create_app() -> Flask:
     app = Flask(__name__)
+    adapter_logger = logging.getLogger("authguard.e2e.adapter")
+    adapter_logger.handlers = [logging.StreamHandler(sys.stdout)]
+    adapter_logger.setLevel(logging.DEBUG)
+    adapter_logger.propagate = False
+    configure_logger(adapter_logger)
     engine = _database_engine()
 
     @app.get("/healthz")

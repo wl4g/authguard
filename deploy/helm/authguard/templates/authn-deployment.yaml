@@ -1,0 +1,97 @@
+{{- if .Values.authguard.authn.enabled }}
+{{- $provider := include "authguard.secretsProvider" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "authguard.fullname" . }}-authn
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: authn
+spec:
+  replicas: {{ .Values.authguard.authn.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector:
+    matchLabels:
+      {{- include "authguard.authnSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secrets: {{ .Values.secrets | toJson | sha256sum }}
+        {{- if eq $provider "vault" }}
+        {{- include "authguard.vaultAnnotations" . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "authguard.authnSelectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "authguard.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: authguard-authn
+          image: "{{ .Values.authguard.authn.image.repository }}:{{ .Values.authguard.authn.image.tag }}"
+          imagePullPolicy: {{ .Values.authguard.authn.image.pullPolicy }}
+          command: ["/usr/local/bin/authguard-authn"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          env:
+            - name: AUTHGUARD_CONFIG_FILE
+              value: /etc/authguard/authguard.yaml
+            - name: AUTHGUARD_AUTHN_BIND
+              value: 0.0.0.0:{{ .Values.authguard.authn.service.port }}
+            {{- if or (eq $provider "gcp") (eq $provider "aws") }}
+            - name: AUTHGUARD_ENV_FILE
+              value: {{ include "authguard.csiSecretsMountPath" . }}/env
+            {{- else if eq $provider "vault" }}
+            - name: AUTHGUARD_ENV_FILE
+              value: /vault/secrets/env
+            {{- end }}
+          {{- if and (eq $provider "kubernetes") .Values.secrets.kubernetes.existingSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secrets.kubernetes.existingSecret }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.authguard.authn.service.port }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+          resources:
+            {{- toYaml .Values.authguard.authn.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/authguard
+              readOnly: true
+            {{- if or (eq $provider "gcp") (eq $provider "aws") }}
+            - name: csi-secrets
+              mountPath: {{ include "authguard.csiSecretsMountPath" . }}
+              readOnly: true
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "authguard.fullname" . }}-config
+        {{- if or (eq $provider "gcp") (eq $provider "aws") }}
+        - name: csi-secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ printf "%s-%s-secrets" (include "authguard.fullname" .) $provider }}
+        {{- end }}
+        - name: tmp
+          emptyDir: {}
+{{- end }}

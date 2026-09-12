@@ -28,6 +28,7 @@ from authguard_adapter.model import (
 from authguard_adapter.util import (
     compile_scope,
     configure_logger,
+    configure_telemetry_observer,
     current_scope,
     current_scope_for_action,
     decode_access_context,
@@ -60,6 +61,7 @@ __all__ = [
     "UrnPattern",
     "compile_scope",
     "configure_logger",
+    "configure_telemetry_observer",
     "current_scope",
     "current_scope_for_action",
     "decode_access_context",

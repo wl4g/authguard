@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 
 	"authguard/adapters/golang/access"
 	authfilter "authguard/adapters/golang/filter"
+	"authguard/adapters/golang/util"
 	"authguard/use-cases/customer-growth-job-service/e2e/deploy/golang-sqlx-service/pkg/controller"
 	"authguard/use-cases/customer-growth-job-service/e2e/deploy/golang-sqlx-service/pkg/dto"
 	"authguard/use-cases/customer-growth-job-service/e2e/deploy/golang-sqlx-service/pkg/repository"
@@ -24,6 +26,10 @@ import (
 )
 
 func main() {
+	util.ConfigureLogger(slog.New(slog.NewJSONHandler(
+		os.Stdout,
+		&slog.HandlerOptions{Level: slog.LevelDebug},
+	)))
 	database := openDatabase()
 	defer database.Close()
 

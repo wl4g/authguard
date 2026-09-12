@@ -1,0 +1,226 @@
+{{- $name := include "customer-growth-e2e.keycloakName" . -}}
+{{- $keycloakSecretName := include "customer-growth-e2e.keycloakSecretName" . -}}
+{{- $principalSecretName := include "customer-growth-e2e.principalDiscoverySecretName" . -}}
+{{- $jaegerName := include "customer-growth-e2e.jaegerName" . -}}
+{{- $issuer := printf "http://%s.%s.svc.cluster.local:8080" $name .Release.Namespace -}}
+{{- $clientSecret := randAlphaNum 48 -}}
+{{- $authguardLdapBindPassword := randAlphaNum 48 -}}
+{{- $existingPrincipalSecret := lookup "v1" "Secret" .Release.Namespace $principalSecretName -}}
+{{- $existingKeycloakSecret := lookup "v1" "Secret" .Release.Namespace $keycloakSecretName -}}
+{{- if and $existingPrincipalSecret (hasKey $existingPrincipalSecret.data "AUTHGUARD_KEYCLOAK_CLIENT_SECRET") -}}
+{{- $clientSecret = index $existingPrincipalSecret.data "AUTHGUARD_KEYCLOAK_CLIENT_SECRET" | b64dec -}}
+{{- end -}}
+{{- if and $existingPrincipalSecret (hasKey $existingPrincipalSecret.data "AUTHGUARD_LDAP_BIND_PASSWORD") -}}
+{{- $authguardLdapBindPassword = index $existingPrincipalSecret.data "AUTHGUARD_LDAP_BIND_PASSWORD" | b64dec -}}
+{{- end -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $principalSecretName }}
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  # One Secret backs every runtime secret under the kubernetes provider:
+  # the connector credentials resolve through ${KEY} references (expand_env_refs),
+  # AUTHGUARD__AUTHZ__API_TOKEN is a native config override, and the
+  # access-context HMAC key is read directly through secret_env.
+  AUTHGUARD_KEYCLOAK_CLIENT_SECRET: {{ $clientSecret | quote }}
+  AUTHGUARD_LDAP_BIND_PASSWORD: {{ $authguardLdapBindPassword | quote }}
+  AUTHGUARD__AUTHZ__API_TOKEN: {{ required "authguard.apiToken is required" .Values.authguard.apiToken | quote }}
+  AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY: {{ .Values.authguard.accessContext.signingKey | quote }}
+  # AuthN signs canonical sessions; Envoy receives only the paired public JWKS.
+  AUTHGUARD_AUTHN_SESSION_PRIVATE_KEY: |
+{{ required "keycloak.realmSigningPrivateKey must contain the AuthN test signing key" .Values.keycloak.realmSigningPrivateKey | indent 4 }}
+  # base64 of the PKCS#8 PEM: the Authguard resign-key init container
+  # decodes this env var back into private_key_file.
+  AUTHGUARD_RESIGN_TOKEN_PRIVATE_KEY: {{ required "keycloak.resignJwtPrivateKey must contain the resign JWT private key" .Values.keycloak.resignJwtPrivateKey | b64enc | quote }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $keycloakSecretName }}
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  bootstrap-admin-username: {{ .Values.keycloak.bootstrapAdminUsername | quote }}
+  bootstrap-admin-password: {{ .Values.keycloak.bootstrapAdminPassword | quote }}
+  ldap-config.cfg: |
+    [ldap]
+      enabled = true
+      listen = "0.0.0.0:389"
+
+    [ldaps]
+      enabled = false
+
+    [behaviors]
+      IgnoreCapabilities = true
+
+    [backend]
+      datastore = "config"
+      baseDN = "dc=example,dc=org"
+      nameformat = "cn"
+      groupformat = "ou"
+
+    [[users]]
+      name = "svc-authguard"
+      givenname = "Authguard"
+      sn = "Principal Discovery"
+      mail = "svc-authguard@example-corp.example"
+      uidnumber = 5001
+      primarygroup = 5500
+      passsha256 = {{ sha256sum $authguardLdapBindPassword | quote }}
+      othergroups = []
+
+    [[users]]
+      name = "ldap-retention-analyst"
+      givenname = "LDAP Retention"
+      sn = "Analyst"
+      mail = "ldap-retention-analyst@example-corp.example"
+      uidnumber = 1001
+      primarygroup = 5501
+      passsha256 = "ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f"
+      othergroups = [5501]
+      [[users.customattributes]]
+        displayName = ["LDAP Retention Analyst"]
+        department = ["Customer Growth"]
+
+    [[groups]]
+      name = "Users"
+      gidnumber = 5500
+      description = "LDAP service accounts"
+
+    [[groups]]
+      name = "customer-growth-analysts"
+      gidnumber = 5501
+      description = "Customer growth analytics team"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-realm
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+data:
+  example-corp-realm.json: |
+{{ required "keycloak.realm must contain the E2E realm JSON" .Values.keycloak.realm | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+    app.kubernetes.io/component: e2e-keycloak
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: e2e-keycloak
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+    app.kubernetes.io/component: e2e-keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: e2e-keycloak
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: e2e-keycloak
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: keycloak
+          image: {{ .Values.keycloak.image | quote }}
+          imagePullPolicy: {{ .Values.keycloak.pullPolicy }}
+          args:
+            - start-dev
+            - --import-realm
+            - --health-enabled=true
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          env:
+            - { name: KC_BOOTSTRAP_ADMIN_USERNAME, valueFrom: { secretKeyRef: { name: {{ $keycloakSecretName }}, key: bootstrap-admin-username } } }
+            - { name: KC_BOOTSTRAP_ADMIN_PASSWORD, valueFrom: { secretKeyRef: { name: {{ $keycloakSecretName }}, key: bootstrap-admin-password } } }
+            - { name: KC_HTTP_ENABLED, value: "true" }
+            - { name: KC_HOSTNAME, value: {{ $issuer | quote }} }
+            - { name: KC_HOSTNAME_STRICT, value: "false" }
+            - { name: E2E_PRINCIPAL_DISCOVERY_CLIENT_SECRET, valueFrom: { secretKeyRef: { name: {{ $principalSecretName }}, key: AUTHGUARD_KEYCLOAK_CLIENT_SECRET } } }
+            - { name: E2E_WORKLOAD_CLIENT_SECRET, value: {{ .Values.keycloak.workloadClientSecret | quote }} }
+            # Keycloak substitutes the placeholder into the raw realm JSON, so
+            # the pod must see the PEM with \n JSON escapes, not real newlines:
+            # replace turns newlines into \n, quote re-escapes the backslashes.
+            - { name: E2E_REALM_SIGNING_PRIVATE_KEY, value: {{ required "keycloak.realmSigningPrivateKey must contain the fixed realm RSA private key" .Values.keycloak.realmSigningPrivateKey | replace "\n" "\\n" | quote }} }
+            - { name: E2E_REALM_SIGNING_CERTIFICATE, value: {{ required "keycloak.realmSigningCertificate must contain the fixed realm RSA certificate" .Values.keycloak.realmSigningCertificate | replace "\n" "\\n" | quote }} }
+            {{- if .Values.jaeger.enabled }}
+            - { name: KC_TRACING_ENABLED, value: "true" }
+            - { name: KC_TRACING_SAMPLER_TYPE, value: "always_on" }
+            - { name: KC_TELEMETRY_ENDPOINT, value: {{ printf "http://%s.%s.svc.cluster.local:4317" $jaegerName .Release.Namespace | quote }} }
+            - { name: KC_TELEMETRY_PROTOCOL, value: "grpc" }
+            - { name: KC_TELEMETRY_SERVICE_NAME, value: {{ $name | quote }} }
+            - { name: KC_TELEMETRY_RESOURCE_ATTRIBUTES, value: {{ printf "deployment.environment.name=e2e,k8s.namespace.name=%s,service.namespace=customer-growth-job-service" .Release.Namespace | quote }} }
+            {{- end }}
+          ports:
+            - { name: http, containerPort: 8080 }
+          startupProbe:
+            httpGet: { path: /realms/master, port: http }
+            periodSeconds: 3
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /realms/example-corp, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 2
+          resources:
+            {{- toYaml .Values.keycloak.resources | nindent 12 }}
+          volumeMounts:
+            - name: realm
+              mountPath: /opt/keycloak/data/import/example-corp-realm.json
+              subPath: example-corp-realm.json
+              readOnly: true
+      volumes:
+        - name: realm
+          configMap:
+            name: {{ $name }}-realm
+---
+# The deterministic realm signing public key as a JWKS, mounted as the
+# localJWKS.existingConfigMap of the Authguard SecurityPolicy. Keycloak
+# imports the same RSA key through E2E_REALM_SIGNING_PRIVATE_KEY, so JWT
+# verification never depends on a dynamically generated realm key.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-realm-jwks
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+data:
+  jwks: {{ required "keycloak.realmSigningJwks must contain the fixed realm public JWKS" .Values.keycloak.realmSigningJwks | quote }}
+---
+# The deterministic resign-JWT public key (PKCS#1 PEM) for the workloads'
+# JWT verification filter.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-resign-public-key
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+data:
+  resign-jwt-public-key.pem: |
+{{ required "keycloak.resignJwtPublicKey must contain the fixed resign JWT public key" .Values.keycloak.resignJwtPublicKey | indent 4 }}

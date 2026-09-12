@@ -1,6 +1,6 @@
 use std::{error::Error, fmt, str::FromStr, time::Instant};
 
-pub use authguard_core::model::{SqlCompileError, UrnError};
+pub use authguard_common::{SqlCompileError, UrnError};
 
 use crate::{
     access::{self, AccessError},
@@ -9,8 +9,8 @@ use crate::{
     },
 };
 
-pub const ACCESS_CONTEXT_HEADER: &str = authguard_core::model::ACCESS_CONTEXT_HEADER;
-pub const SCOPE_TOKEN_HEADER: &str = authguard_core::model::SCOPE_TOKEN_HEADER;
+pub const ACCESS_CONTEXT_HEADER: &str = authguard_common::ACCESS_CONTEXT_HEADER;
+pub const SCOPE_TOKEN_HEADER: &str = authguard_common::SCOPE_TOKEN_HEADER;
 pub const REQUEST_ID_HEADER: &str = "x-request-id";
 
 /// Encodes the trusted, versioned context returned by Authguard extAuth.
@@ -69,7 +69,7 @@ pub fn sign_access_context(
     key: impl AsRef<[u8]>,
 ) -> Result<String, AccessContextError> {
     let encoded = context.encode()?;
-    authguard_core::model::AccessContextSigner::new(key)?.sign_encoded(&encoded)
+    authguard_common::AccessContextSigner::new(key)?.sign_encoded(&encoded)
 }
 
 #[derive(Debug)]

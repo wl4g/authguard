@@ -1,7 +1,6 @@
 package com.authguard.adapter.model;
 
 import com.authguard.adapter.util.AuthguardUtils;
-import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.time.Duration;
 import java.time.Instant;
@@ -99,12 +98,12 @@ public final class AuthguardTypes {
 
   public record AccessContext(
       @JsonProperty("version") int version,
-      @JsonProperty("principal_id") @JsonAlias("subject_id") String principalId,
+      @JsonProperty("principal_id") String principalId,
       @JsonProperty("action") String action,
       @JsonProperty("resource_urn") String resourceUrn,
       @JsonProperty("allow_resource_urns") List<String> allowResourceUrns,
       @JsonProperty("deny_resource_urns") List<String> denyResourceUrns,
-      @JsonProperty("policy_revision") @JsonAlias("policy_version") long policyRevision,
+      @JsonProperty("policy_revision") long policyRevision,
       @JsonProperty("issued_at_epoch_seconds") long issuedAtEpochSeconds,
       @JsonProperty("expires_at_epoch_seconds") long expiresAtEpochSeconds) {
     public AccessContext {

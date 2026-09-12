@@ -10,7 +10,7 @@ from pathlib import Path
 E2E_DIR = Path(__file__).resolve().parents[1]
 USE_CASE_DIR = E2E_DIR.parent
 PROJECT_ROOT = USE_CASE_DIR.parents[1]
-CONFIG_DIR = USE_CASE_DIR / "config"
+CONFIG_DIR = E2E_DIR / "config"
 DEPLOY_DIR = E2E_DIR / "deploy"
 REPORTS_DIR = E2E_DIR / "reports"
 ADAPTERS_DIR = PROJECT_ROOT / "src" / "adapters"
@@ -146,8 +146,24 @@ DEFAULT_SCENARIOS = {
 
 OPTIONAL_SCENARIOS = {
     "21": (
-        "k3s: Keycloak JWT -> Envoy ext_authz -> Authguard with Jaeger evidence",
+        "k3s phase 1/5: Helm deployment and middleware initialization",
         "verifier.s21_k3s_gateway_verifier",
+    ),
+    "22": (
+        "k3s phase 2/5: Keycloak/LDAP federation and administrator pre-authorization",
+        "verifier.s22_principal_preauthorization_verifier",
+    ),
+    "23": (
+        "k3s phase 3/5: AuthN callback, normalization, linking, and tracing",
+        "verifier.s23_authentication_verifier",
+    ),
+    "24": (
+        "k3s phase 4/5: OIDC user/workload, Envoy, AuthZ, and Biz CRUD",
+        "verifier.s24_gateway_authorization_verifier",
+    ),
+    "25": (
+        "k3s phase 5/5: PostgreSQL, logs, metrics, Jaeger, and runtime health",
+        "verifier.s25_runtime_evidence_verifier",
     ),
 }
 

@@ -1,1709 +1,438 @@
-# Authguard - Universal Enterprise IAM Authentication Resources Level Authorization System Design
+# AuthGuard: Unified Authentication and Resource Authorization Architecture
 
-- **Status:** Architecture Baseline
-- **Date:** 2026-09-03
-- **Scope:** Authguard / Envoy Gateway external authorization / enterprise IAM / multi-language business services
-- **Current landing:** One Authguard Rust service, Envoy Gateway integration, adapters, and use cases
+## 1. Product position
 
-## 1. Summary
+AuthGuard is a standalone, unified, general-purpose, high-performance authentication and authorization product for enterprise and internet systems. It integrates directly with Envoy Gateway and is organized around two core modules:
 
-- This document defines a generic, standalone, enterprise-grade resource
-authorization architecture. It is not bound to any business system. A business
-microservice only needs to expose its objects as protected resources, then authorize
-them through Resource URNs, actions, roles, role bindings, conditions, and authguard adapters SDK.
+- `authguard-authn`: authentication, external identity normalization, and account linking;
+- `authguard-authz`: resource authorization for stable canonical Principals.
 
-- Authguard is a standalone authorization plane designed for deep Envoy Gateway
-integration. Envoy Gateway owns ingress, OIDC/JWT authentication, routing, and
-traffic policy. Authguard combines enterprise RBAC with resource-oriented URN
-role bindings so the external-authorization data plane and business adapters can answer
-two questions with one policy model:
-
-  1. May this Principal perform this action on this concrete resource?
-  2. Which resource rows may this Principal see inside a business service database
-     query?
-
-- From a B2B/B2C scenario access-management perspective, Authguard is most suitable for
-B2B and B2B2C systems. The practical boundary is not the business label; it is
-whether multiple people or system principals collaborate while holding different
-roles and different resource scopes inside the same team, tenant, or resource
-set. Enterprise customer-growth analysis jobs, enterprise SaaS, cloud resource platforms, data
-platforms, supply-chain/procurement systems, and corporate treasury systems
-usually have these characteristics. B2C systems can use the same URN model as
-well, especially for merchant consoles, platform operations, support, risk, and
-audit back offices. For a simple rule such as "a consumer may only access their
-own orders", direct field predicates are usually enough and a full IAM
-authorization plane may be heavier than necessary.
-
-- Core decisions:
-
-  - Authentication answers "who is calling".
-  - Authorization answers "which action can the caller perform on which resource".
-  - `iam_principal` is an authorization-side projection of an identity already
-    authenticated by an external system; it never stores credentials.
-  - `USER`, `WORKLOAD`, and `GROUP` are one Principal abstraction. OIDC identities
-    are uniquely identified by `(issuer, external_id)`, where `external_id` is
-    the `sub` claim. A bare `sub`, email address, or username is never an identity
-    key.
-  - Actions use `iam_action`, roles use `iam_role`, role composition uses
-    `iam_role_action`, and assignments use `iam_role_binding`.
-  - `IPrincipalDiscovery<Input>` unifies trusted JIT (Just-In-Time) projection, control-plane federated
-    search, and RFC 7643 User/Group subset ingestion. All three paths normalize and idempotently
-    materialize the same `iam_principal` record. The data plane may perform local
-    JIT for an already verified identity; federated search and SCIM ingestion do
-    not participate in a data-plane authorization decision.
-  - Resource identity uses an internal `urn:iam:...` Resource URN based on the
-    RFC 8141 URN syntax style.
-  - IAM core does not maintain an `iam_resource` table. Business tables remain the
-    source of truth for resource existence, attributes, and lifecycle.
-  - Request tuples are route/resource matchers, not the resource permission model.
-  - Resource listing is handled by business Resource Adapters that compile the
-    action-specific `AuthorizationScope` into SQL scopes.
-
-- The standard deployment consists of the Envoy Gateway controller, its managed
-Envoy Proxy data plane, and one Authguard image. Authguard does not reimplement
-a general API gateway or copy evaluators into business services. Workloads only
-consume trusted access context through adapters.
-
-### 1.1 Global physical call view
-
-- Control plane (B2B scenario Pre-Assign-Authz): an administrator grants Bob rights
-before Bob has ever accessed an application:
+The default runtime topology is:
 
 ```text
-Admin UI/API: "search Bob/Workload"
-  │  POST /adm/v1/principal-discovery/search          (parallel pull)
-  ▼
-federation fan-out:
-  KeycloakPrincipalDiscovery  ─▶ Keycloak Admin API
-  LdapPrincipalDiscovery      ─▶ LDAP (RFC-4511)
-  CustomPrincipalDiscovery    ─▶ HTTP + pre-issued bearer JWT
-  │  candidates: (issuer, external_id) + display metadata, not materialized yet
-  ▼
-POST /adm/v1/principal-discovery/materialize
-  └─▶ server-side re-resolve (anti-spoofing) ─▶ upsert iam_principal
-POST /adm/v1/role-bindings
-  └─▶ iam_role_binding(effect + resource URN + conditions)
-
-converge on the same iam_principal:
-  SCIM push (RFC 7643/7644)   ─▶ IdP lifecycle events (pre-provision / disable)
-  JIT projection (data plane) ─▶ first verified request
+Envoy Gateway
+authguard-authn
+authguard-authz
 ```
 
-- Data plane (one business request from Bob/Workload):
+Keycloak, Entra, Okta, GitHub, WeChat, and corporate DSP platforms remain external identity systems. They are supported integrations, not AuthGuard runtime dependencies.
+
+> Envoy owns the edge. AuthGuard AuthN authenticates and normalizes external identities, including account linking. AuthGuard AuthZ authorizes one stable canonical Principal. External IdPs remain external.
+
+## 2. Non-goals
+
+This architecture does not introduce:
+
+- a required or default Keycloak deployment;
+- AuthGuard Kubernetes CRDs, Controllers, or Operators;
+- OAuth login protocols implemented in Lua or Wasm;
+- Envoy patches for GitHub, WeChat, or other providers;
+- a complex authentication DSL;
+- provider-specific login code in AuthZ;
+- unsafe email-based automatic account linking.
+
+AuthGuard also does not replace Envoy Gateway or copy business resources into its IAM database.
+
+## 3. Component responsibilities
+
+### 3.1 Envoy Gateway: edge and PEP
+
+Envoy Gateway owns the common entry point for Biz UI login requests, callbacks, and business traffic. It owns TLS, routing, traffic policy, standard OIDC/JWT capabilities, and the hot-path `jwt_authn -> ext_authz(authguard-authz)` chain.
+
+For requests carrying an AuthN-issued canonical session/token, Envoy verifies signature, issuer, audience, and lifetime before forwarding the trusted token to AuthZ. AuthZ does not implement OAuth protocols or repeat provider authentication.
+
+Standard OIDC should use Envoy Gateway's native OIDC/JWT support first. AuthN maps the verified external identity to a canonical Principal. Non-standard OAuth2, OAuth2-like, and proprietary providers still enter through Envoy, while all protocol variance remains inside AuthN.
+
+### 3.2 authguard-authn
+
+AuthN is a lightweight Rust Authentication / Identity Provider Adapter Engine. It owns:
+
+- authorize request construction;
+- callback, state, PKCE, and login-session boundaries;
+- authorization-code token exchange;
+- optional identity/userinfo lookup;
+- stable subject extraction;
+- claims normalization;
+- `ExternalIdentity` creation;
+- identity binding lookup and account linking;
+- canonical Principal Context output.
+
+The bounded configuration model covers common provider differences:
+
+- GET or POST token exchange;
+- client credentials in header, body, or query;
+- different token response shapes;
+- `sub`, GitHub `id`, WeChat `unionid/openid`, or a corporate employee ID;
+- optional identity APIs;
+- simple JSON field-path extraction;
+- corporate DSP token translation.
+
+Configuration is preferred. A minimal Provider SPI handles protocols that cannot be expressed cleanly in YAML.
+
+### 3.3 authguard-authz
+
+AuthZ owns only authorization concerns:
+
+- canonical Principal materialization and status;
+- `USER`, `WORKLOAD`, and `GROUP`;
+- RoleBinding, Role, and Action;
+- Resource URNs and parent resources;
+- conditions and ALLOW/DENY evaluation;
+- Authorization Scope and trusted workload access context;
+- optional control-plane Principal federation/discovery integrations.
+
+AuthZ never processes OAuth callbacks, passwords, LDAP login binds, GitHub `/user`, WeChat userinfo, DSP tokens, provider access tokens, authorization codes, login sessions, or account linking.
+
+Keycloak/LDAP/SCIM discovery can remain an optional AuthZ control-plane integration for candidate search and authorization-side materialization. Materialization requires the canonical `principal_id` already resolved by AuthN. These connectors never participate in the AuthZ hot path.
+
+SCIM ingestion is an HTTP push boundary. SCIM defines HTTP resource provisioning; it does not define a WebSocket or long-poll delivery channel. When an upstream IdP cannot push changes, a separate connector or reconciliation agent may poll that IdP and push normalized SCIM events to AuthGuard. AuthZ does not own a generic discovery refresh scheduler.
+
+## 4. Principal is not an external identity
 
 ```text
-User(Bob) ─ (e.g, on Windows/macOS AD login with Kerberos TGT ─▶ SSO(WWW-Authenticate: Negotiate) ─▶ IdP/DSP/Keycloak get access token)
-Workload(Service Account)  ─ (e.g, on GKE internal google-flavor auth ─▶ GCP IAM get access token)
-  │
-  ▼
-Envoy Gateway: verify JWT (iss, aud, JWKS)
-  │
-  ▼ gRPC ext_authz
-Authguard:
-  · db: load policies from iam_principal projection + iam_role/binding
-  · route_matchers: validate method / path / query params / path params
-  · conditions: validate headers / MFA / trusted claims
-  │
-  ▼ ALLOW
-  ├─▶ small lists: x-authguard-context header (direct allow/deny URNs)
-  └─▶ large lists: x-authguard-scope-token ─▶ Redis IAuthorizationCache
-  └─▶ optional business JWT: Authguard re-signs an RS256 JWT carrying
-      `authguardOrigin: true` and overwrites the authorization header
-  │
-  ▼
-Envoy forwards the request
-  │
-  ▼
-Business Microservice
-  │  adapter SDK: IAccessContextResolver
-  │    HeaderAccessContextResolver ─▶ Local Read from headers directly. (short lists)
-  │    GrpcAccessContextResolver   ─▶ Remote Read from Authguard. (large lists)
-  │  optional: verify the business JWT with the Authguard public key
-  ▼
-SQL WHERE scope ─▶ row-level fine-grained data permissions
-```
-
-Both sides converge on the same `iam_principal`: control-plane pre-authorization
-and data-plane JIT projection materialize only the stable identifier and display
-metadata of a trusted identity. The data-plane hot path never calls back into an
-IdP / LDAP / SCIM; adapters fail closed when scope resolution or SQL compilation
-fails.
-
-### 1.2 Minimal model
-
-```text
-principal(USER / WORKLOAD / GROUP)
-  ─ role binding(effect, resource URN, conditions)
-  ─ role
-  ─ role action
-  ─ action
-```
-
-The role-binding target is a Resource URN:
-
-```text
-urn:iam:<partition>:<service>:<region>:<tenant>:<resource-path>
-```
-
-Examples:
-
-```text
-urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/retention-analytics/job/daily-churn-risk-score
-urn:iam:prod:github:global:octo-org:repo/payment-service
-urn:iam:prod:s3:us-east-1:123456789012:bucket/audit-logs/object/2026/08/**
-```
-
-Wildcard rules must remain small and predictable:
-
-- `*` matches one segment.
-- `**` is allowed only as the final resource-path segment.
-- Partial segment wildcards such as `pay*` are not supported.
-
-This restriction is what makes binding patterns safe to compile into SQL
-predicates.
-
-### 1.3 A minimal authorization story
-
-Alice signs in through an OIDC provider. The provider proves Alice's identity;
-it does not decide which business resources she may access. After Envoy has
-verified the token, Authguard JIT-projects the trusted external identity:
-
-```text
-issuer      = https://idp.example.com/realms/company
-external_id = 00u123                    # verified OIDC sub
-kind        = USER
-  -> iam_principal:alice
-```
-
-An administrator could reach the same record by federated search before Alice's
-first request. The administrator binds the projected Principal to `reader`:
-
-```text
-iam_principal:alice
-  -> iam_role_binding
-       effect       = ALLOW
-       resource_urn = urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/retention-analytics/job/*
-  -> iam_role:reader
-  -> iam_role_action
-  -> iam_action:customer-growth.job.read
-  -> iam_action:customer-growth.job.run.read
-```
-
-When Alice requests a customer-growth analysis job run:
-
-```text
-GET /customer-growth/workspaces/customer-insights/projects/retention-analytics/jobs/daily-churn-risk-score/runs/run-123
-```
-
-The route matcher produces:
-
-```text
-action       = customer-growth.job.run.read
-resource_urn = urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/retention-analytics/job/daily-churn-risk-score/run/run-123
-parent_urns  = [
-  urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/retention-analytics/job/daily-churn-risk-score,
-  urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/retention-analytics,
-  urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights
-]
-```
-
-The evaluator finds Alice's active role binding, verifies that `reader` contains
-`customer-growth.job.run.read`, and confirms that its URN pattern covers the
-requested job. The request is allowed.
-
-## 2. Goals
-
-### 2.1 Functional goals
-
-- Accept Envoy Gateway-verified OIDC/JWT user and workload identities.
-- Support principals, roles, role bindings, action catalogs, conditions, and
-  route/resource matchers.
-- Discover Principals through trusted JIT (Just-In-Time) projection, control-plane federated
-  search, and RFC 7643 User/Group subset ingestion without requiring an IdP-wide
-  preload.
-- Support platform, tenant/domain, and resource-level authorization.
-- Support a GitHub-like organization/repository authorization experience without
-  binding the model to GitHub concepts.
-- Support arbitrary business resource types such as repositories, customer-growth jobs,
-  bots, workflows, datasets, and channels.
-- Support hierarchical inheritance, such as a workspace owner inheriting access
-  to customer-growth jobs under that workspace.
-- Enforce authorization through Envoy Gateway external authorization.
-- Expose UI auth context for menus, buttons, and access-denied states.
-- Observe authorization decisions and management requests through Prometheus/OTel;
-  authentication auditing belongs to Envoy/IdP, and a durable authorization
-  audit event store is not implemented yet.
-
-### 2.2 Engineering goals
-
-- High cohesion: protocol routing, authorization evaluation, policy runtime,
-  identity resolution, persistence, and observability remain explicit
-  responsibilities with narrow interfaces.
-- Low coupling: IAM core does not depend on business table schemas.
-- No duplicate resource truth: IAM does not mirror business resources into a
-  core resource table.
-- Cross-language portability: Java, Go, Python, and Rust implementations share
-  model semantics, decision algorithms, and test contracts.
-- One deployment shape: Authguard is Envoy Gateway's external authorization
-  service; adapters only provide workload context and SQL scopes.
-
-### 2.3 Non-goals
-
-- UI hiding is not a security boundary.
-- Authguard does not mirror every account from an external identity provider.
-- A full SCIM mirror or bulk preload is not required by the core authorization
-  path. RFC 7643 User/Group subset ingestion is an implemented, opt-in,
-  incremental lifecycle integration, not a complete RFC 7644 server.
-- Authguard is not a general API gateway, OIDC session manager, login UI, or IdP.
-- Request method/path/query is not the resource permission model.
-- IAM core does not own business resource lifecycle.
-- Arbitrary regex resource patterns are not supported in v1.
-- Legacy compatibility models are not retained.
-
-### 2.4 Relationship to generic policy engines (OPA, SpiceDB, Cerbos)
-
-| Dimension | OPA / SpiceDB / Cerbos | Authguard |
-|---|---|---|
-| Identity acquisition loop | No identity pipeline; identity data must be fed externally | Built-in federated search (Keycloak/LDAP/custom) + SCIM + JIT: search a person -> bind -> effective before first login |
-| Row-level data filtering | OPA has only partial-evaluation community patterns; Cerbos stops at query plans | One role binding compiles to SQL WHERE through adapter SDKs |
-| Pushdown-safe model | Rego is Turing-complete; arbitrary policy cannot be guaranteed to compile into SQL predicates | Restrained URN + bounded wildcards (`*`/`**`) is exactly what makes safe pushdown possible |
-| Decision delivery semantics | OPA-Envoy sets custom headers after ALLOW per Rego | Dual mode: small lists inline in `x-authguard-context`, large lists via scope token -> Redis + gRPC |
-| Home turf | OPA = K8s admission / arbitrary domain rules | Authguard = 2B/2B2C enterprise resource authorization loop |
-
-The two classes are complementary, not substitutes: generic domains such as
-K8s admission are OPA's home turf and Authguard's non-goals. If arbitrary ABAC
-beyond `conditions` is ever needed, Rego/Cedar can be embedded at the
-`ConditionsMatch` evaluation point without changing the core model.
-
-## 3. Overall model
-
-Unified authorization chain:
-
-```text
-external identity
-  -> iam_principal
-  -> iam_role_binding(effect + resource URN + conditions)
-  -> iam_role
-  -> iam_role_action
-  -> iam_action
-  -> authorization decision
-```
-
-Single-request decision chain:
-
-```text
-HTTP request
-  -> Envoy Gateway authn filter
-  -> route/resource matcher
-  -> action identifier
-  -> resource URN + parent resource URNs
-  -> effective role bindings
-  -> role/action check
-  -> condition check
-  -> ALLOW / DENY
-```
-
-Resource-listing chain:
-
-```text
-current principal
-  -> role-binding evaluation for the requested action
-  -> AuthorizationScope(allow Resource URNs, deny Resource URNs)
-  -> business Resource Adapter
-  -> SQL predicate / query scope
-  -> business DB
-```
-
-### 3.1 Core relationship map
-
-```text
-verified identity ─────▶ iam_principal
-                              │
-                              ▼
-                     iam_role_binding
-                   effect + resource_urn
-                         + conditions
-                              │
-                              ▼
-                          iam_role
-                              │
-                              ▼
-                       iam_role_action
-                              │
-request ── matcher ─────▶ iam_action
-                              │
-                              ▼
-                     decision: ALLOW / DENY
-```
-
-Only the business system knows its resource tables. IAM sees Resource URNs and
-actions; business Resource Adapters translate binding patterns into query scopes.
-
-## 4. Core concepts
-
-### 4.1 Principal
-
-A Principal is the single authorization subject abstraction. `kind` distinguishes
-`USER`, `WORKLOAD`, and `GROUP`, so humans, service accounts, microservice
-workloads, and externally managed groups use the same binding model without
-additional principal subtype tables.
-
-`iam_principal` is a sparse authorization-side projection, not an identity
-source of truth. It stores only principals that have been observed through a
-trusted authentication flow or selected for authorization by an administrator.
-It does not store passwords, sessions, MFA secrets, or the full external user
-profile.
-
-### 4.2 External identity reference
-
-Every projected Principal has a source-specific stable reference:
-
-```text
-issuer + external_id
-```
-
-For OIDC, `issuer` is the exact normalized `iss` claim and `external_id` is the
-verified `sub` claim. OpenID Connect defines only the combination of `iss` and
-`sub` as a locally unique, never-reassigned identifier for the End-User. A bare
-`sub` can collide across issuers; email, preferred username, and display name
-can change or be reassigned and MUST NOT be identity keys.
-
-For LDAP, SCIM, cloud IAM, or a custom enterprise IdP, `IPrincipalDiscovery<Input>`
-normalizes the source's stable account ID into the same pair. `issuer` is the
-canonical authority URI configured for that source. If a source does not
-guarantee identifiers are unique across Principal kinds, its implementation
-MUST namespace `external_id` before projection. Human-readable profile fields
-are display metadata only.
-
-Groups likewise require issuer-local stable identifiers. The default
-`auth.identity.groups_claim` is `authguard_group_ids`. With Keycloak, claim
-values MUST be group UUIDs and are normalized to
-`external_id = group:<UUID>`. JIT and Keycloak federated discovery use that same
-UUID, preventing a group name/path and UUID from creating two Principals. Group
-names, display names, and paths are display metadata and MUST NOT be stable
-role-binding keys.
-
-### 4.3 Principal discovery and projection
-
-Authguard implements three complementary acquisition paths behind one public
-`IPrincipalDiscovery<Input>` boundary:
-
-1. **Trusted JIT (Just-In-Time) projection:** after Envoy verifies a user or workload token,
-   Authguard idempotently upserts the `(issuer, external_id)` projection. This
-   records only identities that actually use protected applications.
-2. **Control-plane federated search:** when an administrator configures a
-   policy in the Authguard UI/API for an employee account, a machine/service
-   account, or another workload account, they normally do not know the external
-   authentication identifier (OIDC `sub`, LDAP `entryUUID`, and so on). The
-   administrator searches a configured discovery source. Authguard ships a
-   Keycloak Admin API connector (which also exposes identities federated by
-   Keycloak from LDAP/AD) and a direct RFC 4511 LDAP connector. Authguard
-   re-resolves a selected candidate server-side by its stable reference before
-   materializing the Principal and creating a role binding.
-3. **SCIM-subset ingestion:** the implemented adapter accepts bounded RFC 7643
-   User/Group fields and normalizes user/group upserts or delete events into the
-   same Principal projection. Delete marks an existing projection `DISABLED`.
-
-Federated search must cover account identifiers; `GROUP` is searched as well,
-but only to fetch display metadata such as group name/path so administrators
-can recognize candidates in the binding UI. The stable authorization key is
-always the immutable `issuer + external_id` (for example `group:<UUID>`), never
-a display name from search results. Search discovers and displays external
-groups; it never copies Keycloak groups, realm roles, or similar external
-objects into a second authorization-policy authority inside Authguard.
-
-The three modes suit different authorization scenarios, and the difference is
-structural. **JIT projection** fits 2C Internet consumer authorization. A
-consumer flow is single-owner by nature: users do not collaborate in teams
-with differing permissions, each user owns only their own data, and there is
-no administrator who pre-assigns rights before access happens. Every consumer
-request traverses the same gateway, so the first verified register/login is
-the moment Authguard first observes the identity — JIT materializes the
-Principal then and there, with no provisioning pipeline and no full-directory
-preload. That Principal also enables defense in depth behind the gateway: the
-business microservice can double-check authorization from the context
-Authguard injects, compiling it into a SQL scope so a consumer can only CRUD
-their own rows. **SCIM ingestion and federated search** fit 2B enterprise
-scenarios, where the shape is the opposite: employees and workload/service
-accounts collaborate under differing permissions, an administrator grants
-rights — often before the account has ever logged in — and the IdP/HR system
-centrally owns the account lifecycle: federated search finds the external
-identifier, SCIM applies pushed lifecycle changes.
-
-JIT plus federated search is the default for Internet platforms, including
-identity populations of hundreds of millions: Authguard stores only Principals
-that actually access a protected application or receive a binding. SCIM-subset
-ingestion remains opt-in and incremental; enabling it does not require a full
-preload. The current endpoint is not a complete RFC 7644 SCIM server: it does not
-expose `/scim/v2/Users` or `/scim/v2/Groups`, SCIM discovery, filtering, or bulk
-protocol endpoints. Delete ingestion disables the projection without cascading
-through role bindings.
-
-SCIM provisioning is push-oriented: an IdP or provisioning agent acts as the
-SCIM Client and sends lifecycle changes to the Service Provider. The adapter's
-`refresh` operation means “apply this supplied change”; it does not poll an IdP.
-A source-specific pull importer, when required, is a separate control-plane
-connector or scheduled bridge and is not presented as SCIM. Its machine
-credential and the SCIM Client credential are distinct, least-privilege
-service identities and never participate in data-plane authorization.
-
-JIT means insert when first observed and absent, not write on every request. To
-avoid TTL-delayed Principal disablement or revocation, every authorization
-request batch-loads the primary and Group Principals from the local repository
-by `issuer + external_id` and checks their status. Authentication-account
-disablement remains enforced by the IdP/Gateway and short access-token lifetime;
-local Principal disablement and role-binding revocation fail closed immediately.
-
-Keycloak can search users from configured LDAP/Active Directory federation
-providers through its administration capabilities. That is a Keycloak feature,
-not an OIDC feature: OIDC standardizes authentication and claims, but does not
-define an API for globally searching an issuer's user population.
-Keycloak groups, realm/client roles, client scopes, and protocol mappers remain
-valid ways to emit coarse identity claims. Authguard discovers only stable
-Principal identifiers and bounded display metadata; it does not copy those
-objects into a second authorization-policy authority.
-
-Federated search and SCIM ingestion are control-plane/provisioning functions.
-The authorization data path resolves trusted identity references against the
-local Principal repository and immutable policy snapshot; it MUST NOT call
-Keycloak, LDAP, a SCIM server, or cloud IAM on each request.
-`IAuthorizationCache` stores only short-lived opaque scope-token contexts. It
-does not cache policies or Principals. Policy evaluation uses an immutable
-in-process `PolicyRuntime` refreshed directly from durable storage by revision.
-
-The protocol-neutral application boundary is deliberately named
-`IPrincipalDiscovery<Input>`, not `IPrincipalDirectory` or
-`IPrincipalSearcher`: directories are only one possible source, while discovery
-also covers verified JIT identity and SCIM-subset lifecycle events. It is a generic,
-strongly typed contract rather than one tagged request with unsupported modes:
-
-```text
-IPrincipalDiscovery<Input>
-  provider() -> 'static str              -- JIT / SCIM / FED_KEYCLOAK / FED_LDAP / FED_CUSTOM
-  provider_id() -> &str                  -- configured discovery_id stamped on projections
-  Discover(input: Input) -> Output
-  ResolvePrincipal(reference) -> Option<PrincipalProjection>
-
-JitPrincipalDiscovery
-  IPrincipalDiscovery<VerifiedOidcPrincipal> -> PrincipalProjection
-
-KeycloakPrincipalDiscovery
-  IPrincipalDiscovery<PrincipalSearchQuery> -> PrincipalSearchPage
-  Keycloak Admin API connector, provider = FED_KEYCLOAK
-
-LdapPrincipalDiscovery
-  IPrincipalDiscovery<PrincipalSearchQuery> -> PrincipalSearchPage
-  RFC 4511 connector, provider = FED_LDAP
-
-CustomPrincipalDiscovery
-  IPrincipalDiscovery<PrincipalSearchQuery> -> PrincipalSearchPage
-  Configurable HTTP + bearer-JWT connector, provider = FED_CUSTOM
-  request/response schema mapped in configuration for in-house systems
-
-ScimPrincipalDiscovery
-  IPrincipalDiscovery<ScimRefreshRequest> -> ScimProjectionEvent
-  Refresh(input: ScimRefreshRequest) -> ScimProjectionEvent
-```
-
-Each implementation validates only its own input and produces a strongly typed
-result containing the canonical `issuer`, `external_id`, `kind`, source
-identifier, and bounded metadata needed to upsert `iam_principal`. Storage and
-authorization handlers consume the normalized projection rather than any OIDC,
-Keycloak, LDAP, custom HTTP, cloud-IAM, or SCIM payload. The control-plane flow is:
-
-Source-level API documentation links the standards governing each implemented
-boundary: JIT identity projection links OpenID Connect Core, the Keycloak
-connector links Keycloak Admin/User Storage documentation, the LDAP connector
-links RFC 4511 (protocol), RFC 4515 (filters), and RFC 2696 (paging), and SCIM
-data normalization links RFC 7643 and RFC 7644. The custom connector has no
-external standard to cite; it is the escape hatch for in-house systems (e.g. an
-enterprise DSP directory) whose vendor API has no public protocol, mapped
-through configurable URL/request/response bindings plus a pre-issued bearer JWT.
-These links delimit protocol
-responsibility; they neither claim a complete RFC 7644 server nor create a
-data-plane dependency.
-
-```text
-GET  /adm/v1/principals
-     -> search local projections
-POST /adm/v1/principal-discovery/search
-     -> federated search against the selected configured sources
-POST /adm/v1/principal-discovery/materialize
-     -> server-side re-resolution, then materialize the selected candidate
-POST /adm/v1/principal-discovery/scim/refresh
-     -> ingest one RFC 7643 User/Group subset upsert/delete change
-POST /adm/v1/role-bindings
-     -> bind the internal principal_id
-```
-
-External candidates never become binding targets directly. Materialization
-produces the stable internal `principal_id` referenced by `iam_role_binding`.
-
-At most **one active connector per protocol** (`FED_KEYCLOAK`, `FED_LDAP`,
-`FED_CUSTOM`) is allowed; config validation rejects duplicates at startup. This
-keeps every search candidate unambiguous: each result carries its source
-`provider_id` + `issuer`, where `provider_id` is the connector's configured
-`discovery_id` (the protocol label only identifies the connector type, e.g.
-for search filtering). Because one connector is configured per protocol, that
-discovery id still resolves to exactly one source, and materialization
-re-resolves the candidate at that same source before a role binding is
-granted. A search still fans out across the *different* configured protocols
-in parallel and merges their pages, but each candidate row remains
-attributable to exactly one origin.
-
-### 4.4 Action
-
-Action means "what to do" and uses dot-separated names, e.g:
-
-```text
-resource.read
-resource.write
-resource.delete
-resource.access.manage
-resource.run.trigger
-resource.trace.read
-domain.member.manage
-platform.admin
-```
-
-The table is named `iam_action`, not `iam_permission`. Permission is the runtime
-authorization result; action is the atomic operation that roles compose.
-
-Resource targets are not encoded in action strings. They are resolved by
-route/resource matchers and role bindings.
-
-### 4.5 Role
-
-Role is a collection of actions. Normal bindings SHOULD assign roles instead of
-loose individual actions.
-
-Recommended built-in roles:
-
-| Role | Scope | Capability |
-|---|---|---|
-| owner | resource/domain | Full management, including access |
-| maintainer | resource/domain | Manage resources, but not access owners |
-| writer | resource | Modify resources and trigger execution |
-| operator | resource | Execute, cancel, approve, but not modify definitions |
-| reader | resource/domain | Read only |
-| auditor | platform/domain | Read-only audit and evidence access |
-
-### 4.6 Role binding
-
-A role binding is one explicit authorization relation:
-
-```text
-principal
-  has one role
-  on resource_urn
-  with effect ALLOW or DENY
-  under optional conditions
-```
-
-One row binds exactly one Principal and one Role. Multiple roles require
-multiple rows; this keeps revocation, uniqueness, evaluation, and audit simple.
-
-### 4.7 Resource URN
-
-A protected resource is any business object. IAM identifies resources with
-Resource URNs.
-
-The internal format follows the RFC 8141 URN syntax style:
-
-```text
-urn:iam:<partition>:<service>:<region>:<tenant>:<resource-path>
-```
-
-Segments:
-
-| Segment | Meaning |
-|---|---|
-| `iam` | Internal URN namespace identifier |
-| `partition` | Management partition or environment, such as `prod`, `staging`, `corp` |
-| `service` | Business system or microservice, such as `customer-growth`, `collaboration` |
-| `region` | Region; use `global` for non-regional resources |
-| `tenant` | Stable isolation boundary such as tenant, organization, namespace, or account |
-| `resource-path` | Business-defined path, recommended as `<type>/<id>[/<subtype>/<id>]` |
-
-Examples:
-
-```text
-urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights
-urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/retention-analytics
-urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/retention-analytics/job/daily-churn-risk-score
-urn:iam:prod:collaboration:global:acme:channel/customer-support
-urn:iam:prod:collaboration:global:acme:dataset/customer-faq
-```
-
-Wildcard pattern examples:
-
-```text
-urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/retention-analytics/job/*
-urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/**
-urn:iam:prod:collaboration:global:acme:channel/*
-urn:iam:prod:*:global:*:**
-```
-
-v1 wildcard rules MUST remain predictable, compilable, and query-pushdown
-friendly:
-
-- Exact segments match exactly.
-- `*` matches one colon segment or one resource-path segment.
-- `**` is allowed only at the end of `resource-path` and matches a subtree.
-- Arbitrary regex is not supported.
-- Partial segment globbing such as `foo*bar` is not supported.
-
-### 4.8 URN, ARN, and request tuples
-
-ARN is the AWS resource naming convention. This design borrows the resource
-locator idea but does not reuse the `arn:` prefix, because that would imply AWS
-ARN compatibility.
-
-RFC 8141 defines the outer URN syntax as `urn:<NID>:<NSS>`. This design uses
-`iam` as an internal NID and defines fixed NSS segments. If public
-cross-organization interoperability is required later, a formal NID registration
-or explicit namespace compatibility statement is required.
-
-Request tuples such as method, URI/path, query params, and path params are only
-used by route/resource matchers:
-
-```text
-request tuple
-  -> action
-  -> resource URN
-  -> parent resource URNs
-```
-
-They do not replace Resource URNs. The currently implemented source IP, method,
-TLS, MFA, and trusted-claim constraints belong in role-binding `conditions`.
-
-### 4.9 Why `parent_urns` exists
-
-A request usually targets a leaf resource, but authorization is often granted on
-a parent scope.
-
-Examples:
-
-```text
-GitHub:             repo inherits from org
-Customer growth:    job inherits from project and workspace
-S3:                 object inherits from bucket or access point
-```
-
-If the matcher returned only the leaf Resource URN, an org/namespace/bucket
-binding would require one of two bad designs:
-
-- materialize bindings to every child resource;
-- make the evaluator query business tables to discover parents.
-
-Both break the goal of keeping IAM core independent from business data. Instead,
-the route/resource matcher returns a deterministic chain:
-
-```text
-resource_urn = concrete leaf resource
-parent_urns  = concrete parent resources, nearest first
-```
-
-Example:
-
-```text
-resource_urn = urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/retention-analytics/job/daily-churn-risk-score
-parent_urns  = [
-  urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/retention-analytics,
-  urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights
-]
-```
-
-`parent_urns` MUST contain concrete URNs, not wildcard patterns. Wildcards belong
-only in `iam_role_binding.resource_urn`. The evaluator checks the binding pattern against
-`[resource_urn] + parent_urns`.
-
-This keeps inheritance explicit, avoids binding expansion, and lets each business
-service define its own parent chain without coupling IAM core to business
-tables.
-
-### 4.10 Why IAM core has no resource table
-
-IAM core does not maintain an `iam_resource` table. Resource existence,
-attributes, and lifecycle are owned by business tables, such as customer-growth
-workspace/project/job tables or collaboration channel/dataset tables.
-
-Reasons:
-
-- Avoid dual-write inconsistency between IAM resource tables and business
-  resource tables.
-- Avoid binding IAM core to concrete business schemas.
-- Avoid deleted resource leakage caused by stale IAM resource rows.
-- Allow different services to protect different resource types with the same IAM
-  model.
-
-IAM stores only authorization targets:
-
-```text
-iam_role_binding.resource_urn
-```
-
-Resource search, authorization pickers, cross-service inventory, and offline
-audit indexes remain owning-service or observability projections outside the
-Authguard authorization schema. Their staleness MUST NOT affect authorization
-correctness.
-
-## 5. Data model
-
-The normalized authorization schema intentionally contains six tables:
-
-```text
-iam_policy
-iam_principal
-iam_action
-iam_role
-iam_role_action
-iam_role_binding
-```
-
-The schema is initialized by one numbered pair:
-`migrations/001_init.ddl.sql` contains structural DDL and
-`migrations/001_init.dml.sql` contains only initial singleton-policy data.
-SQLite and PostgreSQL consume this same logical migration. The flat `model/`
-package owns storage-independent authorization models and HTTP/gRPC DTOs;
-persistence row mapping remains private to `storage/record.rs`. A storage row
-is deliberately called a record rather than a business model.
-
-External account directories, business resources, sessions, credentials,
-resource inventories, and audit pipelines remain outside this core schema.
-
-### 5.1 `iam_policy`
-
-```text
-id
-name
-description
-revision
-created_at
-updated_at
-```
-
-v1 enforces exactly one `iam_policy` row with a database unique index. It is the
-singleton aggregate root for the current authorization catalog, not a collection
-of independent policies or a serialized snapshot table, and it does not duplicate normalized
-role/action/binding data. `revision` is an optimistic concurrency token used by
-control-plane updates and immutable `PolicyRuntime` publication. If historical versions
-are required later, they belong in an append-only audit/event store rather than
-another table in the hot authorization model.
-
-### 5.2 `iam_principal`
-
-```text
-id
-kind             -- USER / WORKLOAD / GROUP
+ExternalIdentity
+----------------
+provider
 issuer
-external_id      -- OIDC sub or another provider-stable identifier
-display_name
+subject
+claims
+        │
+        │ account linking / identity binding
+        ▼
+Principal
+---------
+internal stable principal_id
+USER / WORKLOAD / GROUP
 status
-attributes
-last_seen_at
-created_at
-updated_at
+authorization state
 ```
 
-Constraints and boundaries:
+An `ExternalIdentity` is the normalized result of provider authentication. A `Principal` is an AuthGuard-owned stable authorization subject. They are separate objects.
 
-- `unique(issuer, external_id)` is the external identity key across Authguard.
-- For OIDC, use the verified `iss + sub`; never deduplicate by a bare `sub`,
-  email, username, or display name.
-- The row is an authorization projection only. It contains no password, token,
-  session, MFA secret, or locally managed credential.
-- `attributes` is bounded display/authorization metadata from a trusted
-  discovery source. PostgreSQL uses JSONB and SQLite uses JSON-valid TEXT.
-- JIT projection, a server-resolved federated candidate, and a SCIM-subset ingestion
-  change all use the same idempotent upsert.
-- Without SCIM, identities that never access Authguard and never receive a
-  binding are not materialized. When SCIM is enabled, only changes accepted by
-  the configured provisioning scope are projected; a full directory mirror is
-  not required.
-
-### 5.3 `iam_action`
-
-`iam_action` stores action identifiers and HTTP route/resource matchers.
+One Principal can have multiple login identities:
 
 ```text
-policy_id
-identifier      -- for example customer-growth.job.read
-description
-route_matchers  -- PostgreSQL JSONB array / SQLite validated JSON TEXT
+                 Principal P123
+                       ▲
+             ┌─────────┴─────────┐
+             │                   │
+Corporate DSP identity      GitHub identity
+sub=EMP00123               id=987654
 ```
 
-Matcher element:
+Every AuthZ `RoleBinding.principal_id` references `P123`, never a GitHub ID, WeChat openid/unionid, DSP subject, email, or username.
 
-```json
-{
-  "id": "customer-growth-job-read",
-  "methods": ["GET"],
-  "hosts": ["growth.example.com"],
-  "path": "/api/v1/customer-growth/jobs/{job_id}",
-  "resource_urn": "urn:iam:prod:customer-growth:global:{tenant_id}:workspace/customer-insights/project/retention-analytics/job/{job_id}",
-  "parent_urns": [
-    "urn:iam:prod:customer-growth:global:{tenant_id}:workspace/customer-insights/project/retention-analytics",
-    "urn:iam:prod:customer-growth:global:{tenant_id}:workspace/customer-insights"
-  ]
-}
-```
-
-Rules:
-
-- `(policy_id, identifier)` is the primary key and identifies an action in the
-  singleton policy.
-- `route_matchers` contains all HTTP tuple-to-resource matchers protected by the action.
-- A matcher has exactly `id`, `methods`, `hosts`, `path`, `resource_urn`, and
-  `parent_urns` fields.
-- `path` is a segment template: `{name}` captures one segment, `*` matches one
-  segment, and a trailing `**` matches the remainder.
-- `resource_urn` and `parent_urns` may reference path variables, `method`,
-  `host`, and trusted identity claims. Missing variables or invalid generated
-  URNs fail closed.
-- `parent_urns` lists concrete parent Resource URNs used for inheritance checks.
-- `route_matchers=[]` means the action is internal or role-composition only and does
-  not directly match HTTP routes.
-
-### 5.4 `iam_role`
-
-```text
-id
-policy_id
-name
-description
-```
-
-`(policy_id, id)` is the primary key and `(policy_id, name)` is unique. Current
-roles carry neither status nor built-in flags.
-
-### 5.5 `iam_role_action`
-
-```text
-policy_id
-role_id
-action_identifier
-```
-
-Constraint:
-
-```text
-primary key (policy_id, role_id, action_identifier)
-```
-
-### 5.6 `iam_role_binding`
-
-```text
-policy_id
-id
-principal_id
-role_id
-effect                       -- ALLOW / DENY
-resource_urn                 -- exact URN or limited wildcard expression
-conditions                   -- PostgreSQL JSONB object / SQLite validated JSON TEXT
-```
-
-Constraints:
-
-- The referenced Role belongs to `policy_id`; the Principal is a global external
-  identity projection reusable across policies.
-- One binding references exactly one Principal and one Role.
-- `resource_urn` may be exact or use only the supported `*`/trailing `**`
-  wildcard grammar.
-- `(policy_id, id)` is the current database uniqueness boundary for bindings;
-  the implementation does not claim content-based deduplication of otherwise
-  equivalent bindings.
-- Explicit DENY bindings take precedence over ALLOW bindings.
-
-Group membership is not stored in a separate v1 table. A trusted authentication
-context or `IPrincipalDiscovery` implementation may resolve external groups as
-`GROUP` Principals, after which their role bindings use this same table. If
-Authguard later owns local group membership, that is a separately versioned
-capability rather than a nullable or self-referential addition to the six-table
-core.
-
-## 6. Authorization decision
-
-### 6.1 Request algorithm
-
-```text
-1. Authn middleware verifies the caller.
-2. Identity resolver derives the exact issuer + external_id pair.
-3. A repository batch lookup by issuer + external_id resolves active
-   iam_principal records, including GROUP Principals for trusted stable group
-   IDs. Principals are never read from the authorization cache.
-4. Route matcher finds action/resource_urn/parent_urns from `iam_action.route_matchers`.
-5. Evaluator loads active iam_role_binding rows for those Principals.
-6. Evaluator expands each binding's role through iam_role_action.
-7. Evaluator checks action match.
-8. Evaluator checks binding `resource_urn` against request `resource_urn` and `parent_urns`.
-9. Evaluator checks `conditions`.
-10. Explicit DENY wins.
-11. Default deny.
-12. Record bounded decision metrics and a tracing event.
-```
-
-### 6.2 Core pseudocode
-
-Single-request authorization can be reduced to this pseudocode:
-
-```text
-function Authorize(request):
-    identity = Authenticate(request)
-    if identity is None:
-        return DENY("unauthenticated")
-
-    principals = ResolveRepositoryPrincipals(identity.issuer, identity.externalId,
-                                             identity.stableGroupExternalIds)
-
-    match = MatchAction(request.method, request.path, request.query)
-    if match is None:
-        return DENY("no matching protected action")
-
-    resource_urns = [match.resource_urn] + match.parent_urns
-    bindings = LoadActiveRoleBindings(principals)
-
-    decision = DENY("default deny")
-
-    for binding in bindings:
-        if not AnyPatternMatches(binding.resource_urn, resource_urns):
-            continue
-
-        role_actions = ActionsOfRole(binding.role_id)
-        if match.action not in role_actions:
-            continue
-
-        if not ConditionsMatch(binding.conditions, request, principals, match.resource_urn):
-            continue
-
-        if binding.effect == "DENY":
-            return DENY("explicit deny", binding.id)
-
-        decision = ALLOW("matched role binding", binding.id)
-
-    return decision
-```
-
-This pseudocode intentionally does not read business resource tables. Business
-handlers or Resource Adapters decide whether the resource exists. The evaluator
-only decides whether the current principal may access the Resource URN if it
-exists.
-
-### 6.3 Effective role bindings
-
-Effective authorization comes from:
-
-```text
-direct Principal role bindings
-+ trusted GROUP Principal role bindings
-```
-
-Resource inheritance is not materialized as extra bindings. It is evaluated by
-matching binding patterns against `resource_urn` and `parent_urns`.
-
-### 6.4 Conditions
-
-`conditions` expresses ABAC conditions, not resource identity.
-
-Example:
-
-```json
-{
-  "sourceIp": {
-    "inCidr": ["10.0.0.0/8"],
-    "notInCidr": ["10.20.0.0/16"]
-  },
-  "request": {
-    "methods": ["GET", "POST"],
-    "secureTransport": true
-  },
-  "subject": {
-    "mfa": true,
-    "claims": {"department": "growth"}
-  }
-}
-```
-
-Attribute sources:
-
-- Source IP, request method, and transport scheme come from Envoy's
-  `CheckRequest`.
-- MFA and subject claims come from the verified identity token and explicitly
-  configured trusted-claim mappings.
-
-If a required condition attribute cannot be obtained reliably, the condition
-does not match. Time-window and resource-tag/resource-attribute conditions are
-not implemented currently.
-
-## 7. Resource listing and Resource Adapters
-
-Request interception answers "can this request execute". Enterprise systems
-also need "which resources can the user see".
-
-IAM does not list resources. The business service lists resources and compiles
-IAM authorization scopes into its query.
-
-### 7.1 Current SDK resource-mapping contract
-
-Each business service defines a `ResourceSqlMapping` that maps URN segments to
-its table columns. The four current SDKs validate the request action and compile
-allow/deny URN expressions into a parameterized SQL scope:
-
-```text
-ResourceSqlMapping + RequestAccess(action, allow_urns, deny_urns)
-  -> parameterized SQL predicate + arguments
-```
-
-Responsibilities:
-
-- IAM core evaluates active `RoleBinding` values for the current Principal set
-  and emits an action-specific `AuthorizationScope`.
-- Resource Adapter understands business tables and compiles
-  `urn` into query scopes.
-- Business DB remains the source of truth for existence, attributes, and
-  lifecycle.
-
-Resource-listing pseudocode:
-
-```text
-function ListResources(principal, action, resourceType, filters):
-    principals = ResolveLocalPrincipals(principal)
-    bindings = LoadActiveRoleBindings(principals)
-
-    allowed_patterns = []
-    denied_patterns = []
-
-    for binding in bindings:
-        if action not in ActionsOfRole(binding.role_id):
-            continue
-
-        if not ConditionsMatchForList(binding.conditions, principals):
-            continue
-
-        if binding.effect == "DENY":
-            denied_patterns.append(binding.resource_urn)
-        else:
-            allowed_patterns.append(binding.resource_urn)
-
-    scope = ResourceAdapter(resourceType).CompileListScope(
-        allow = allowed_patterns,
-        deny  = denied_patterns,
-        filters = filters
-    )
-
-    return BusinessDB.Query(resourceType, scope)
-```
-
-The key rule is that IAM emits an `AuthorizationScope` containing allow/deny
-Resource URN expressions, while business adapters emit SQL predicates. IAM must
-not scan business tables directly.
-
-### 7.2 Enterprise customer growth job query example
-
-Action-specific `AuthorizationScope` derived from effective role bindings:
-
-```text
-allow urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/retention-analytics/**
-allow urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/lifetime-value-forecasting/job/daily-customer-lifetime-value-forecast
-deny  urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/retention-analytics/job/vip-retention-risk-audit
-```
-
-The customer growth job Resource Adapter can compile this scope into:
+### 4.1 Persistence model
 
 ```sql
-WHERE
-  tenant_id = 'example-corp'
-  AND workspace_id = 'customer-insights'
-  AND (
-    project_id = 'retention-analytics'
-    OR (
-      project_id = 'lifetime-value-forecasting'
-      AND job_id = 'daily-customer-lifetime-value-forecast'
-    )
-  )
-  AND NOT (
-    project_id = 'retention-analytics'
-    AND job_id = 'vip-retention-risk-audit'
-  )
+iam_principal
+  id
+  kind
+  display_name
+  status
+  authorization_state
+
+iam_principal_identity
+  principal_id
+  provider
+  issuer
+  subject
+  claims
 ```
 
-This demonstrates a real team member combining project-wide access, one direct
-job binding, and an explicit sensitive-job denial in the same list query.
-
-### 7.3 Pattern pushdown limits
-
-To support stable SQL pushdown, v1 role-binding `resource_urn` patterns support only:
+The identity table enforces:
 
 ```text
-exact
-*
-trailing /*
-trailing /**
+UNIQUE(provider, issuer, subject)
 ```
 
-Arbitrary regex is not supported. Otherwise evaluation degrades to full scan
-plus application filtering, which is not acceptable for enterprise systems.
+One external identity cannot be bound to multiple Principals, while one Principal may have many identities. AuthN owns `iam_principal_identity`; AuthZ consumes or projects only the canonical Principal ID.
 
-### 7.4 Consistency strategy
+### 4.2 Canonical AuthN output
 
-Business tables are the source of truth, so there is no dual-write consistency
-problem between IAM resources and business resources.
-
-Role-binding creation can use either strategy:
-
-- Strong validation: call the business Resource Adapter before creating a role binding.
-- Weak validation: allow bindings for future resources.
-
-After a resource is deleted, bindings may be cleaned asynchronously. Lists come
-from business tables, so deleted resources are not shown because a stale binding
-exists. Requests still return not found from business handlers.
-
-## 8. Authorization scenarios
-
-### 8.1 Growth analysts read one workspace subtree
-
-Role binding:
+Every identity source must become:
 
 ```text
-iam_principal:growth-analysts (GROUP)
-  -> bind reader
-  -> urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/**
-```
-
-Request:
-
-```text
-GET /customer-growth/jobs
-```
-
-Matcher:
-
-```text
-action      = customer-growth.job.read
-resource_urn = urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/retention-analytics
-```
-
-Decision:
-
-```text
-ALLOW
-```
-
-Reason: the binding pattern covers the job and the reader role contains
-`customer-growth.job.read`.
-
-### 8.2 A user has access to one customer-retention job
-
-Role binding:
-
-```text
-iam_principal:revenue-analyst (USER)
-  -> bind reader
-  -> urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/retention-analytics/job/daily-churn-risk-score
-```
-
-For a list request, the business repository pushes authorization scope and
-business predicates into the same query:
-
-```sql
-WHERE tenant_id = 'example-corp'
-  AND workspace_id = 'customer-insights'
-  AND project_id = 'retention-analytics'
-  AND job_id = 'daily-churn-risk-score'
-```
-
-The result contains only `daily-churn-risk-score`; membership in the same
-workspace does not expose other jobs.
-
-### 8.3 Read access cannot update a job
-
-Role binding:
-
-```text
-iam_principal:growth-auditors (GROUP)
-  -> bind reader
-  -> urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/**
-```
-
-Request:
-
-```text
-PUT /customer-growth/jobs/1
-```
-
-Matcher:
-
-```text
-action = customer-growth.job.update
-```
-
-Decision:
-
-```text
-DENY
-```
-
-Reason: the reader role does not contain `customer-growth.job.update`, even though
-the Resource URN matches.
-
-### 8.4 Explicit DENY wins
-
-Role bindings:
-
-```text
-iam_principal:growth-editors (GROUP)
-  -> bind writer
-  -> urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/retention-analytics/job/*
-
-iam_principal:external-analyst (USER)
-  -> bind DENY writer
-  -> urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/retention-analytics/job/vip-retention-risk-audit
-```
-
-The Principal can update other jobs in the retention project, but cannot update
-`vip-retention-risk-audit`.
-
-### 8.5 A Workload Principal has an independent resource scope
-
-An automation workload uses the `WORKLOAD` Principal kind and receives a
-separate role binding with an exact read scope:
-
-```text
-allowed_actions = [customer-growth.job.read]
-allowed_urns = [
-  urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/lifetime-value-forecasting/job/daily-customer-lifetime-value-forecast
-]
-```
-
-The workload can read only that job and does not inherit extra permissions from
-any human Principal. Credential issuance and secret storage remain the IdP's
-responsibility.
-
-### 8.6 Deleted resource with stale role binding
-
-A role binding still exists:
-
-```text
-bind reader on urn:iam:prod:customer-growth:global:example-corp:workspace/customer-insights/project/retention-analytics/job/retired-cohort-job
-```
-
-But `retired-cohort-job` has been deleted from the business job table.
-
-Result:
-
-- list jobs does not show `retired-cohort-job`, because lists come from business tables.
-- direct requests return not found.
-- asynchronous cleanup may delete the stale binding, but the stale binding does not
-  create privilege escalation.
-
-### 8.7 GitHub-like organization and repository authorization
-
-GitHub organization/repository access is hierarchical: an organization owns
-repositories; teams or users receive repository roles; organization-level
-settings can apply broad defaults. The same shape maps directly to this IAM
-model.
-
-```text
-GitHub org       -> tenant/domain
-GitHub team      -> iam_principal(kind=GROUP)
-GitHub repo      -> Resource URN
-GitHub repo role -> iam_role
-```
-
-Example URNs:
-
-```text
-urn:iam:prod:github:global:analytics-labs:org/analytics-labs
-urn:iam:prod:github:global:analytics-labs:repo/analytics
-urn:iam:prod:github:global:analytics-labs:repo/analytics-ui
-```
-
-Team role binding:
-
-```text
-iam_principal:platform-team (GROUP)
-  -> bind maintainer
-  -> urn:iam:prod:github:global:analytics-labs:repo/analytics
-```
-
-Organization-wide role binding:
-
-```text
-iam_principal:security-reviewers (GROUP)
-  -> bind reader
-  -> urn:iam:prod:github:global:analytics-labs:repo/*
-```
-
-List repositories compiles to:
-
-```sql
-WHERE org = 'analytics-labs'
-  AND (
-    repo = 'analytics'
-    OR :has_all_org_repo_read = true
-  )
-```
-
-This is the same model used for customer-growth analysis workspaces and jobs. The resource
-names differ, but Principal/Role/RoleBinding/Action semantics do not.
-
-### 8.8 AWS S3-style cross-region resource authorization
-
-S3 is a different shape from GitHub: bucket names are global, object keys are
-paths, access points can be regional, and Multi-Region Access Points provide a
-global endpoint over buckets in multiple regions. The same URN model still
-works because region and resource-path are first-class segments.
-
-Bucket and object examples:
-
-```text
-urn:iam:prod:s3:global:111122223333:bucket/company-audit-logs
-urn:iam:prod:s3:global:111122223333:bucket/company-audit-logs/object/2026/08/22/report.json
-```
-
-Regional access point:
-
-```text
-urn:iam:prod:s3:us-west-2:111122223333:access-point/audit-reader
-urn:iam:prod:s3:us-west-2:111122223333:access-point/audit-reader/object/*
-```
-
-Multi-region access point:
-
-```text
-urn:iam:prod:s3:global:111122223333:multi-region-access-point/audit-global/object/*
-```
-
-Role binding:
-
-```text
-iam_principal:global-auditors (GROUP)
-  -> bind reader
-  -> urn:iam:prod:s3:*:111122223333:access-point/audit-reader/object/**
-```
-
-Condition:
-
-```json
-{
-  "sourceIp": {"inCidr": ["10.0.0.0/8"]},
-  "request": {"tls": true}
+AuthenticatedPrincipalContext {
+    principalId
+    kind
+    stableGroupIds
+    trustedClaims
+    acr
+    amr
 }
 ```
 
-The important point is that region is just one URN segment. GitHub-like resources
-can use `global`; S3-like resources can use concrete regions or `global` for
-global endpoints. The evaluator remains unchanged.
+`stableGroupIds` contains internal Group Principal IDs, not provider group names. Provider IDs, provider subjects, access/refresh tokens, authorization codes, and raw token responses never enter AuthZ.
 
-## 9. Authentication boundary and identity input
+## 5. Provider configuration
 
-Authguard does not implement OAuth/OIDC sessions, cookies, LDAP binds, or login
-pages. Envoy Gateway's native OIDC filter handles the browser authorization-code
-callback; Helm `redirectURL` is the public callback. LDAP, password, and other
-sources should first be converted by an enterprise IdP into OIDC/JWT identity
-that Envoy can verify.
+`authguard-authn` and `authguard-authz` read one shared `authguard.yaml`. The
+`authn` root section is owned by AuthN; authorization/runtime sections are owned
+by AuthZ. Each process deserializes only its boundary, so sharing the file does
+not create a crate dependency. There is no separate AuthN YAML.
 
-```text
-login or workload identity
-  -> enterprise IdP / Keycloak issues an audience-restricted access token
-  -> Envoy Gateway strictly validates issuer, audience, and local/remote JWKS
-  -> forward the verified JWT to Authguard gRPC ext_authz
-  -> Authguard extracts issuer + external_id(sub), groups, and trusted claims
-  -> resolve local Principal projections and map action + Resource URN
-  -> evaluate source IP, TLS, HTTP method, MFA, and claims
+A Provider entry answers only:
+
+1. How do I authenticate?
+2. How do I obtain a stable external identity?
+
+```yaml
+authn:
+  providers:
+    github:
+      type: oauth2
+      issuer: https://github.com
+      authorization:
+        endpoint: https://github.com/login/oauth/authorize
+        scopes: [read:user, user:email]
+      token:
+        endpoint: https://github.com/login/oauth/access_token
+        method: POST
+      identity:
+        endpoint: https://api.github.com/user
+        subject: $.id
+        username: $.login
+        email: $.email
+
+    wechat:
+      type: oauth2-like
+      issuer: https://open.weixin.qq.com
+      authorization:
+        endpoint: https://open.weixin.qq.com/connect/qrconnect
+        scopes: [snsapi_login]
+      token:
+        endpoint: https://api.weixin.qq.com/sns/oauth2/access_token
+        method: GET
+        query:
+          appid: ${clientId}
+          secret: ${clientSecret}
+          code: ${authorizationCode}
+      identity:
+        subject: $.unionid
+        fallbackSubject: $.openid
+
+    corporate-dsp:
+      type: custom
+      adapter: corporate-dsp
+      issuer: https://dsp.example.com
+
+  accountLinking:
+    strategy: explicit
+    authoritativeProviders: [corporate-dsp]
+    allowLink:
+      corporate-dsp: [github, wechat]
 ```
 
-Authguard decodes claims from the trusted token but does not describe payload
-decoding as signature verification. The production trust boundary must include
-an Envoy authentication policy, cluster network isolation for the Authguard
-Service, and no workload bypass around the Gateway. Login access tokens carry
-stable identity and coarse claims, not large allow/deny URN lists; Authguard
-computes resource permissions for each request to avoid oversized JWTs, delayed
-revocation, and audience leakage.
+Simple field paths such as `$.data.user.id` are supported. Conditional expressions, functions, scripts, and a general-purpose DSL are intentionally excluded.
 
-Two distinct client flows enter this boundary, and they must not be confused:
+Provider entries must not declare `authoritative`, `secondary`, `canCreatePrincipal`, or `canLink`. Account governance belongs only to `accountLinking`.
 
-- **Browser users (humans)** — e.g. an operator logging into the flowgent UI
-  with GitHub. Envoy Gateway's OIDC filter owns the entire
-  authorization-code flow: it redirects to the IdP, handles the callback
-  redirect, exchanges the code for tokens, and maintains the session. The
-  user logs in on the IdP UI; the application never sees or stores an OAuth
-  callback implementation of its own. Envoy forwards the verified ID token to
-  Authguard (`x-authguard-id-token`, OIDC mode).
-- **Workloads (machines)** — job services, sync agents, CI runners. No browser
-  redirect exists; the workload authenticates as itself with its own business
-  service account through OAuth2/OIDC **client_credentials**, obtains a
-  short-lived audience-restricted access token, and sends it as
-  `Authorization: Bearer`. Envoy's JWT provider verifies that token (JWT
-  mode). Workloads never use the browser flow and never impersonate users.
+### 5.1 Minimal Provider SPI
 
-Downstream of that boundary, Authguard may re-sign its own internal business
-JWT (see §10): the original credential is verified by Envoy exactly as before,
-and only the ALLOW response rewrites the forwarded token. Authguard therefore
-stays a verifier-independent re-signer — it never accepts an unverified token
-and never asks Envoy to relax its JWT/OIDC policy.
+The custom SPI has one core responsibility:
 
-OIDC Core requires the `iss + sub` combination when an application needs a
-stable identifier. `sub` alone is only locally unique within one issuer. Authguard
-therefore maps verified `iss` to `iam_principal.issuer` and verified `sub` to
-`iam_principal.external_id`; email and username remain mutable display metadata.
+```rust
+async fn authenticate(callback: ProviderCallback) -> Result<ExternalIdentity, ProviderError>;
+```
 
-Principal acquisition is deliberately sparse:
+A custom adapter may implement corporate signatures, token translation, or proprietary endpoints, but it must still return `ExternalIdentity`. It cannot write authorization policy or pass provider tokens into AuthZ.
 
-- Trusted JIT projection idempotently records a Principal after its first valid
-  request. At Internet scale, this avoids importing tens or hundreds of millions
-  of accounts that never receive an Authguard binding.
-- Federated search lets an administrator pre-authorize a user, workload, or
-  group that has not accessed the application. The protocol-neutral
-  `KeycloakPrincipalDiscovery` / `LdapPrincipalDiscovery` /
-  `CustomPrincipalDiscovery` connectors normalize source candidates, and
-  Authguard re-resolves the selected candidate before insertion. The custom
-  connector maps an in-house system's request/response schema in configuration
-  and authenticates with a pre-issued bearer JWT.
-- SCIM-subset ingestion accepts normalized RFC 7643 User/Group upsert/delete
-  changes through `ScimPrincipalDiscovery`. It supports enterprise
-  pre-provisioning and prompt disablement while remaining incremental and
-  opt-in; it is not an RFC 7644 server.
+## 6. Account linking
 
-Keycloak can federate LDAP/Active Directory and expose those users through its
-administration search. Generic OIDC itself does not define an administrative
-user-search protocol. Authguard also ships a direct LDAP connector and a
-configurable HTTP/JWT custom connector for in-house systems; future
-cloud-IAM connectors use the same boundary. Every connector is confined to the
-control plane. Every runtime authorization request
-loads local `iam_principal` state from the repository and uses an immutable
-policy snapshot plus trusted token claims; an IdP or directory outage must not
-enter the data-plane dependency chain. Principals are not stored in
-`IAuthorizationCache`.
+The secure default is:
 
-All three implementations use the generic `IPrincipalDiscovery<Input>` contract
-and converge on the same `iam_principal` upsert. JIT projection targets 2C
-Internet consumer authorization with on-demand materialization; federated
-search and SCIM ingestion target 2B enterprise authorization for centrally
-managed employees and workload/service accounts. JIT plus federated search
-remains the minimal/default Internet deployment; enabling the implemented SCIM
-adapter does not add SCIM or an external directory to the runtime authorization
-path.
+```yaml
+accountLinking:
+  strategy: explicit
+```
 
-## 10. Workload access context
+Equal email addresses never cause automatic linking. Email is profile or human-verification metadata, not an identity key.
 
-An allow decision creates a short-lived context carrying `policy_revision` and bound to the
-Principal, action, and request resource. `auth.scope_delivery.direct_urn_limit`
-selects exactly one delivery form:
+Recommended enterprise flow:
 
-- When allow plus deny count is less than or equal to the threshold, the gRPC `CheckResponse` overwrites
-  `x-authguard-context` with versioned Base64URL JSON containing allow/deny URN
-  expressions.
-- Above the threshold, or when the direct header exceeds its size limit,
-  Authguard stores the full context in the configured `IAuthorizationCache`
-  with a short TTL and injects only an unpredictable `x-authguard-scope-token`;
-  the workload adapter resolves it through Authguard `:8081` gRPC `ResolveScope`.
+```text
+first Corporate DSP login
+  -> create Principal P123
+  -> bind DSP identity to P123
 
-Every successful response first removes client-supplied `x-authguard-context`
-and `x-authguard-scope-token` through gRPC `headers_to_remove`, then overwrites
-exactly one result. Both headers present, expiration, unknown token, action
-mismatch, or resolver failure must fail closed.
+authenticated P123 session
+  -> user explicitly links GitHub
+  -> authenticate GitHub
+  -> bind GitHub identity to P123
 
-All SDKs expose the same `IAccessContextResolver` boundary:
-`HeaderAccessContextResolver` decodes an Envoy-injected direct context, while
-`GrpcAccessContextResolver` calls internal gRPC for a scope token. The
-filter/interceptor owns only request lifecycle and framework glue. Repositories
-combine action-aware Resource SQL mappings with business predicates for
-list/get/update/delete; create evaluates the candidate Resource URN first.
+later GitHub login
+  -> lookup GitHub identity binding
+  -> P123
+  -> AuthZ
+```
 
-Envoy `Authorization/Check` exclusively uses `:8080`, and workload
-`ResolveScope` exclusively uses `:8081`. The default NetworkPolicy restricts
-these ports independently using Envoy and `authguard.io/scope-client`
-selectors; a workload cannot call the Envoy Check listener that issues direct
-contexts or scope tokens.
+An unbound secondary-provider login must require authoritative-provider confirmation instead of creating a second Principal. `accountLinking.strategy` supports `explicit` (the secure default) and `first-login`. In `first-login`, any previously unbound `(provider, issuer, subject)` creates one Principal and binding, which fits 2C signup. It does not infer that identities from different Providers belong to the same human and never links by email; additional login methods still require an authenticated explicit-link flow.
 
-Each Authguard replica evaluates policy against the immutable compiled snapshot
-owned by `PolicyRuntime`. A background task refreshes it directly from the
-durable repository by revision. A Redis Cluster deployment serves only as the
-cross-replica scope-token store; scope-token cache misses or failures fail
-closed. Policies and Principals are never stored in the Memory/Redis cache.
+Principal creation and the first identity binding must be transactional. `UNIQUE(provider, issuer, subject)` prevents concurrent double binding; conflicts fail closed.
 
-### 10.1 Business JWT re-signing
+## 7. Protocol semantics
 
-Optionally (`auth.resign_jwt.enabled`), every ALLOW re-signs a short-lived
-JWT for the business microservice and replaces the `authorization` header
-(Envoy removes the original identity token first). The token is an RS256
-compact JWT (`RSASSA-PKCS1-v1_5` with SHA-256, RFC 8017 § 8.2):
+### 7.1 GitHub OAuth is not OIDC
 
-- `iss: "authguard"` marks the re-signer, `authguardOrigin: true` marks
-  re-signed provenance — the client-issued token never carries this claim.
-- `sub` copies the verified external_id and `principal_id` names the local
-  Principal, so the microservice can map directly into the Authguard model.
-- `authguard_group_ids` carries the issuer-local stable group IDs.
-- `iat`/`exp` use `scope_token_ttl`, and scalar identity claims (e.g. tenant_id,
-  MFA state) are copied; `iss`/`sub`/`authguard_group_ids` are never overwritten
-  by client-supplied values.
-- **The stable identity is preserved, and the `authguardOrigin: true`
-  marker claim is added.** A microservice verifying this signature proves the
-  request passed through Envoy Gateway and rejects clients that call its API
-  directly.
-- The RSA private key (≥ 2048 bits, PKCS#8 PEM) lives only in Authguard —
-  injected via `AUTHGUARD__AUTH__RESIGN_JWT__PRIVATE_KEY`. Business workloads
-  hold only the paired public key (PKCS#1 PEM for bootstrap tooling) and
-  verify with any standard JWT library; no Authguard SDK call is required.
-- Disabled (default) leaves the original identity token stripped without
-  replacement. Envoy's own JWT/OIDC verification (§9) is unchanged.
+GitHub OAuth commonly returns an access token and requires the GitHub user API to obtain identity. AuthGuard must not assume an OIDC ID Token or parse an OIDC `sub` from the access token.
 
-The business JWT is an identity convenience for the workload, not an
-authorization decision: permission enforcement still comes from
-`x-authguard-context` / `x-authguard-scope-token`, which remain action-bound
-and fail closed.
+### 7.2 ID Token is not UserInfo
 
-## 11. Control-plane credential and initial policy
+- ID Token: OIDC authentication-event claims for the OIDC Client;
+- Access Token: credential for a resource API;
+- UserInfo: optional OIDC endpoint called with an access token;
+- provider identity API: for example GitHub `/user`, which does not become OIDC UserInfo merely because it returns user data.
 
-`/adm/v1/**` uses a distinct Bearer credential injected from a Kubernetes Secret
-as `AUTHGUARD__AUTH__ADMIN_TOKEN`. The control plane is disabled when it is
-absent. `GET|PUT /adm/v1/policy` reads or atomically replaces the singleton
-policy aggregate; actions, roles, and role bindings expose collection/resource
-CRUD. Principal APIs list/read local projections, update status, and delete an
-unreferenced projection safely. Separate Principal discovery APIs provide
-federated search, server-side materialization, and SCIM-subset ingestion. A policy mutation validates the complete
-aggregate, persists it through SQLite or PostgreSQL, and only then atomically
-publishes the immutable in-memory revision. Failure
-at either stage leaves the active snapshot unchanged. Replicas synchronize by
-repository revision while every hot authorization path reads only its immutable L1
-snapshot. Multi-replica production uses PostgreSQL plus Redis Cluster. Workload
-OIDC/JWT credentials must not be reused for control-plane access.
+AuthN selects the correct source, extracts a stable subject, and normalizes immediately. AuthZ is unaware of the distinction.
 
-## 12. Example of [Flowgent](https://github.com/flowgent-labs/flowgent)
+## 8. Typical flows
 
-| Flowgent concept | Generic IAM concept |
-|---|---|
-| namespace | tenant / resource domain |
-| agent flow | protected resource |
-| flow run / task / trace | child resource or execution evidence under agent-flow |
-| LLM provider / MCP / skill / notification channel | other protected resources |
+### 8.1 Standard OIDC
 
-Route matcher example:
+```text
+Enterprise OIDC / Keycloak / Entra
+  -> Envoy Gateway native OIDC/JWT
+  -> AuthN identity normalization / binding lookup
+  -> canonical session/token
+  -> Envoy jwt_authn
+  -> authguard-authz ext_authz
+  -> Biz Service
+```
 
-```json
-{
-  "id": "flow-run-trace-read",
-  "methods": ["GET"],
-  "hosts": [],
-  "path": "/api/v1/{namespace}/flows/{flow}/runs/{run}/trace",
-  "resource_urn": "urn:iam:prod:flowgent:global:{namespace}:agent-flow/{flow}/run/{run}",
-  "parent_urns": [
-    "urn:iam:prod:flowgent:global:{namespace}:agent-flow/{flow}",
-    "urn:iam:prod:flowgent:global:{namespace}:namespace/{namespace}",
-    "urn:iam:prod:flowgent:global:platform:platform/root"
-  ]
+### 8.2 GitHub / WeChat
+
+```text
+GitHub / WeChat
+  -> Envoy Gateway
+  -> authguard-authn callback / token exchange / identity lookup
+  -> ExternalIdentity
+  -> Account Linking
+  -> Canonical Principal Context
+  -> Envoy jwt_authn -> authguard-authz
+```
+
+### 8.3 Corporate DSP
+
+```text
+Corporate DSP
+  -> Envoy Gateway
+  -> authguard-authn DSP Provider Adapter
+  -> ExternalIdentity
+  -> Account Linking
+  -> Canonical Principal Context
+  -> authguard-authz
+```
+
+## 9. Authorization model
+
+The minimal AuthZ request is:
+
+```text
+AuthorizationRequest {
+  principal_id
+  group_principal_ids
+  action
+  resource_urn
+  parent_urns
+  conditions
 }
 ```
 
-`agent-flow` is only an example protected resource type. It is not built into
-the IAM model.
+AuthZ verifies that the canonical Principal is materialized and active, maps the HTTP route to Action and Resource URN, matches user/group RoleBindings, applies conditions, gives explicit DENY precedence, and otherwise defaults to deny.
 
-## 13. Example of [Sigbot](https://github.com/sigbot-projects/sigbot-core) integration
+An identity whose `principal_id` is absent from `iam_principal` is rejected with `UNAUTHENTICATED`; AuthZ never creates a Principal and has no allow-unknown bypass. A 2C route requiring only authentication should omit `ext_authz`. A 2C route requiring subscription, tenant, entitlement, or resource authorization uses AuthN `first-login` first, so AuthZ still receives a materialized canonical Principal.
 
-| Sigbot concept | Generic IAM concept |
-|---|---|
-| organization / team | tenant / resource domain |
-| bot | protected resource |
-| skill / tool / channel / memory | protected resource or bot child resource |
-| conversation / evidence | evidence resource under bot or channel |
+Authorization Scope continues to be delivered as a signed direct context or a short-lived opaque scope token for workload SDK resource filtering.
 
-Examples:
+## 10. Keycloak position
 
-```text
-urn:iam:prod:sigbot:global:strategy:bot/customer-support
-urn:iam:prod:sigbot:global:strategy:bot/customer-support/memory/customer-faq
-urn:iam:prod:sigbot:global:strategy:channel/slack-main
-```
+Keycloak is an optional external enterprise IdP integration, never an AuthGuard runtime dependency. Enterprises often already operate Keycloak, Entra, Okta, a corporate DSP, or SAML/Kerberos federation. AuthGuard integrates with the existing platform and never requires another Keycloak deployment.
 
-## 14. Module boundaries
+Existing Keycloak Principal discovery/federation remains an optional management-plane integration. The default Helm topology does not deploy Keycloak.
 
-### 14.1 Authguard Rust workspace
+> Keycloak is supported, never required.
 
-`route/authorization.rs` depends on the narrow `IAuthorizationHandler`
-interface. `DefaultAuthorizationHandler` owns ACL evaluation and access-context
-delivery; `PolicyHandler` owns policy use cases and durable synchronization,
-while `PolicyRuntime` owns the compiled immutable snapshot. There is no
-duplicate authorization service layer.
+## 11. Module and dependency boundaries
 
 ```text
-core/route   -- Envoy authorization gRPC and management HTTP protocol adapters
-core/handler/authorization.rs -- ACL evaluation and request-access delivery
-core/handler/policy.rs        -- policy compilation, immutable runtime, policy CRUD
-core/handler/principal.rs     -- Principal projection/discovery use cases
-core/handler/management.rs    -- health, readiness, status, and metrics use cases
-core/storage -- SQLite/PostgreSQL policy persistence
-core/cache   -- Memory/Redis opaque scope-token context cache
-core/config  -- authguard.yaml loading, environment overrides, validation
-core/model        -- storage-independent authorization models, SQL scopes, and transport DTOs
-core/principal/mod.rs        -- discovery models, traits, and errors
-core/principal/jit.rs        -- trusted OIDC JIT projection
-core/principal/keycloak.rs   -- Keycloak Admin API search connector
-core/principal/ldap.rs       -- direct RFC 4511 LDAP connector
-core/principal/custom.rs     -- configurable HTTP/JWT in-house identity API connector
-core/principal/scim.rs       -- RFC 7643 User/Group subset ingestion
-core/storage/record.rs       -- private SQLite/PostgreSQL row records
-core/utils        -- identity parsing, HTTP tuple-to-URN mapping, OTel, metrics
-core/migrations/001_init.ddl.sql -- authorization schema DDL
-core/migrations/001_init.dml.sql -- initial singleton-policy DML
+src/authn                       authguard-authn crate
+  provider/                     configurable adapter and minimal SPI
+  principal/jit.rs              policy-gated account linking/JIT materialization
+  route/authentication.rs       OAuth/OAuth-like HTTP entry points
+  handler/authentication.rs     authentication flow orchestration
+  server.rs                     process initialization and listener lifecycle
+
+src/common                      authguard-common crate
+  config/config.rs              one AppConfig model/singleton and nested ENV overlay
+  model/{principal,identity,role,policy}.rs
+                                cohesive IAM contracts and persistence projections
+  storage/base_{sqlite,postgres}.rs
+                                entity-neutral pools and schema initialization
+  storage/principal_{sqlite,postgres}.rs
+                                shared canonical Principal and identity binding persistence
+  storage/authn/flow_{sqlite,postgres}.rs
+                                AuthN flow repositories
+  storage/authz/role_{sqlite,postgres}.rs
+                                AuthZ role and authorization catalog repositories
+  principal/{mod,custom}.rs     common discovery contract and custom HTTP connector
+  route/management.rs           health, metrics, and runtime diagnostics
+  apm/cache/utils               genuinely shared infrastructure
+
+src/authz                        authguard-authz crate
+  route/mod.rs                  authenticated composition of AuthGuard APIs
+  route/{policy,principal}.rs   transport-only control-plane APIs
+  route/authorization.rs        Envoy ext_authz/access-context gRPC entry points
+  handler/{authorization,principal}.rs
+                                authorization catalog and Principal use cases
+  handler/envoy_authz.rs        ext_authz evaluation and scope delivery
+  principal/{ldap,keycloak,scim}/
+                                optional 2B control-plane federation connectors
+  server.rs                     process initialization and listener lifecycle
+
+migrations/                     single authoritative IAM schema
 ```
 
-### 14.2 Language adapters
+Dependency rules:
 
-```text
-adapters/rust    -- Rust SDK and SQL scope helpers
-adapters/golang  -- Go SDK and SQL scope helpers
-adapters/python  -- Python SDK and SQL scope helpers
-adapters/java    -- Java/Spring SDK and SQL scope helpers
-```
+- AuthN does not depend on AuthZ policy implementation;
+- AuthZ does not depend on AuthN Provider implementations;
+- AuthN, AuthZ, and the Rust workload SDK depend on `authguard-common`; the SDK
+  never imports the AuthZ server crate;
+- the modules cooperate through a versioned canonical Principal Context or equivalent wire contract;
+- provider-specific types never appear in AuthZ public APIs;
+- business services depend on AuthGuard access context, not an IdP SDK.
 
-### 14.3 Business service use cases
+AuthN and AuthZ normally use one logical IAM database and one schema. A second
+database is not required: `iam_principal` is defined once as the shared
+aggregate root, AuthN owns `iam_principal_identity` and transient
+`iam_authn_flow`, and AuthZ owns policy/action/role/binding tables. The single
+top-level migration is serialized during startup. This ownership boundary keeps
+a future physical split possible without duplicating today's schema.
 
-```text
-use-cases/customer-growth-job-service/e2e/deploy/rust-sqlx-service
-use-cases/customer-growth-job-service/e2e/deploy/golang-sqlx-service
-use-cases/customer-growth-job-service/e2e/deploy/python-sqlalchemy-service
-use-cases/customer-growth-job-service/e2e/deploy/springboot-jdbc-service
-use-cases/customer-growth-job-service/e2e/deploy/springboot-jpa-service
-```
+Configuration initialization follows Spring Boot-like precedence:
+`built-in defaults < authguard.yaml < environment`. A nested property is
+addressed dynamically with `AUTHGUARD__<SECTION>__<...>`, so adding a field to
+the serializable configuration model does not require a new environment-variable
+mapping.
 
-Shared across languages:
+Both servers publish Prometheus metrics and structured tracing events for their
+critical flows. Workload SDKs do not initialize global exporters; Rust emits
+`tracing` events directly, while Go/Python/Java expose application-owned logger
+and telemetry-observer bridges so the host service can attach its existing OTel
+Meter/Tracer without creating a second SDK provider.
 
-- Resource URN grammar.
-- Action identifier naming.
-- `iam_action.route_matchers` JSON schema.
-- Role-binding evaluation algorithm.
-- Auth context API contract.
-- Golden test fixtures.
+## 12. Flowgent and Sigbot
 
-## 15. Security principles
+Flowgent, Sigbot, and other business systems only deploy or reuse Envoy Gateway, `authguard-authn`, and `authguard-authz`. Provider selection and account linking remain AuthN configuration and state. Business code never handles provider callbacks, token exchange, or identity binding.
 
-1. Default deny.
-2. DENY takes precedence over ALLOW.
-3. External identities are authorized only through their local Principal projection.
-4. Browser JavaScript does not read HttpOnly JWTs.
-5. OIDC identities are keyed by verified `iss + sub`, never by mutable profile fields.
-6. Principal status is checked from the repository on every request; cache TTL
-   must not delay disablement or revocation.
-7. Secrets do not enter IAM audit metadata.
-8. Role bindings are explicitly created, updated, and deleted through revision-safe control-plane APIs.
-9. Federated identity search and SCIM-subset ingestion never participate in a
-   data-plane decision.
-10. UI authorization is experience only; middleware/gateway is the security boundary.
-11. Business tables own resource truth; IAM core does not maintain a core resource table.
-12. Current decisions emit bounded metrics and tracing; a durable audit event
-    store is a follow-up capability.
+## 13. Final principles
 
-## 16. References
-
-- RFC 8141: Uniform Resource Names (URNs): <https://www.rfc-editor.org/rfc/rfc8141.html>
-- OpenID Connect Core 1.0, `iss` and `sub`: <https://openid.net/specs/openid-connect-core-1_0.html>
-- Keycloak Server Administration Guide, user federation: <https://www.keycloak.org/docs/latest/server_admin/>
-- Keycloak Admin REST API, user search: <https://www.keycloak.org/docs-api/latest/rest-api/index.html>
-- Keycloak Server Developer Guide, User Storage SPI: <https://www.keycloak.org/docs/latest/server_development/index.html>
-- RFC 4511: Lightweight Directory Access Protocol (LDAP): <https://www.rfc-editor.org/rfc/rfc4511.html>
-- RFC 7643: SCIM Core Schema: <https://www.rfc-editor.org/rfc/rfc7643.html>
-- RFC 7644: SCIM Protocol: <https://www.rfc-editor.org/rfc/rfc7644.html>
-- AWS IAM Amazon Resource Names (ARNs): <https://docs.aws.amazon.com/IAM/latest/UserGuide/reference-arns.html>
-- GitHub repository roles for an organization: <https://docs.github.com/en/organizations/managing-user-access-to-your-organizations-repositories/managing-repository-roles/repository-roles-for-an-organization>
-- Amazon S3 IAM resource types and policy resources: <https://docs.aws.amazon.com/AmazonS3/latest/userguide/security_iam_service-with-iam.html>
+- Envoy owns the edge;
+- AuthN owns external authentication normalization and account linking;
+- AuthZ owns authorization for one stable canonical Principal;
+- Principal is not `(issuer, subject)`;
+- Provider configuration describes protocols, not account governance;
+- explicit linking is the safe default, with no email auto-linking;
+- Keycloak is supported, never required;
+- external IdPs remain external.

@@ -138,10 +138,25 @@ public final class AuthguardAccess {
       if (encoded == null || encoded.isBlank()) {
         return Optional.empty();
       }
+      AuthguardUtils.logDebug(
+          "authguard.access_context.header.started", "resolver_mode", "header");
       String key =
           signingKey == null ? requiredSecretEnvironment(ACCESS_CONTEXT_HMAC_KEY_ENV) : signingKey;
       AccessContext context = AuthguardUtils.verifySignedAccessContext(encoded, key);
-      return Optional.of(context.requestAccess());
+      RequestAccess requestAccess = context.requestAccess();
+      AuthguardUtils.logDebug(
+          "authguard.access_context.header.succeeded",
+          "resolver_mode",
+          "header",
+          "principal_id",
+          requestAccess.principalId(),
+          "action",
+          requestAccess.action(),
+          "allow_count",
+          requestAccess.grants().allowResourceUrns().size(),
+          "deny_count",
+          requestAccess.grants().denyResourceUrns().size());
+      return Optional.of(requestAccess);
     }
   }
 
@@ -164,8 +179,26 @@ public final class AuthguardAccess {
       if (token == null || token.isBlank()) {
         return Optional.empty();
       }
+      long started = System.nanoTime();
+      AuthguardUtils.logDebug(
+          "authguard.access_context.grpc.started", "resolver_mode", "grpc");
       AccessContext context = AuthguardUtils.decodeAccessContext(client.resolveScope(token));
-      return Optional.of(context.requestAccess());
+      RequestAccess requestAccess = context.requestAccess();
+      AuthguardUtils.logDebug(
+          "authguard.access_context.grpc.succeeded",
+          "resolver_mode",
+          "grpc",
+          "principal_id",
+          requestAccess.principalId(),
+          "action",
+          requestAccess.action(),
+          "allow_count",
+          requestAccess.grants().allowResourceUrns().size(),
+          "deny_count",
+          requestAccess.grants().denyResourceUrns().size(),
+          "duration_ms",
+          elapsedMillis(started));
+      return Optional.of(requestAccess);
     }
 
     @Override

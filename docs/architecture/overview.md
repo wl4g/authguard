@@ -1,180 +1,93 @@
-# Authguard Architecture Overview
+# AuthGuard Architecture Overview
 
-Authguard is a standalone Resource URN authorization system designed for deep
-Envoy Gateway integration. It does not reimplement a general API gateway. Envoy
-Gateway owns ingress, OIDC/JWT authentication, routing, and traffic policy;
-Authguard owns Envoy extAuth gRPC-to-action/Resource-URN mapping, authorization decisions, the
-policy control plane, and trusted access context for workload row filtering.
-
-It is most useful for B2B/B2B2C systems with multi-account, multi-role, and
-multi-resource access management. The practical boundary is whether multiple
-users or workloads collaborate with different scopes inside the same team,
-tenant, or resource set. B2C can use it too, but simple owner-only filtering
-usually does not require a complete IAM plane.
-
-`iam_principal` is a sparse authorization-side projection of an identity that
-an external system has already authenticated. `USER`, `WORKLOAD`, and `GROUP`
-share this one abstraction; Authguard stores no password or session. For OIDC,
-the only stable key is the verified `(issuer, external_id)` pair, where
-`external_id` is `sub`. A bare `sub`, email, or username is not an identity key.
-
-Principals enter Authguard through one generic `IPrincipalDiscovery<Input>` boundary: trusted
-JIT projection handles first valid access, control-plane federated search lets
-administrators authorize before first login, and SCIM-subset ingestion accepts
-optional enterprise lifecycle changes. The shipped federated connectors support
-Keycloak Admin API search (including identities federated by Keycloak from
-LDAP/AD), direct RFC 4511 LDAP search, and a configurable HTTP + bearer-JWT
-connector for in-house identity systems.
-The SCIM implementation is an incremental ingestion adapter for a subset of RFC
-7643 User and Group data, not a complete RFC 7644 SCIM server. All three paths
-normalize and idempotently write the same `iam_principal` table; no
-protocol-specific account table is introduced. A SCIM source `issuer` MUST
-exactly equal the corresponding OIDC token `iss`; a SCIM User `externalId`
-SHOULD equal OIDC `sub`, and a SCIM Group `externalId` SHOULD equal the
-provider-stable group ID (the Keycloak group UUID). This makes SCIM, JIT, and
-federated discovery converge on the same Principal. Internet deployments with hundreds of millions of
-identities use JIT plus federated search as the default path and materialize only
-Principals that access or receive authorization. When SCIM is enabled, it should
-use incremental provisioning rather than require a full preload.
-SCIM is push-oriented: the IdP/provisioning agent is the Client and Authguard
-applies submitted changes. `refresh` is not an IdP polling loop; any optional
-pull importer is a separate source-specific control-plane connector.
-
-Keycloak can search users federated from LDAP/AD, but that is a Keycloak
-administration feature rather than an OIDC protocol feature. Keycloak groups,
-realm/client roles, and OIDC scopes remain useful coarse identity claims; they
-are not imported as Authguard resource policy. The data plane
-never searches Keycloak, LDAP, SCIM, or cloud IAM remotely. Every authorization
-request batch-loads the primary and Group Principals from the local repository
-by `issuer + external_id`, so disablement and revocation fail closed immediately.
-`IAuthorizationCache` stores only short-lived opaque scope-token contexts. The
-compiled policy is an immutable in-process snapshot refreshed by durable
-repository revision. Neither policies nor Principals enter Memory/Redis cache.
-
-The default `auth.identity.groups_claim` is `authguard_group_ids`. Its values
-MUST be issuer-local stable group IDs, which are Keycloak group UUIDs for the
-shipped connector. JIT and Keycloak federated discovery both normalize them as
-`group:<UUID>`. A group name, display name, or path is display metadata and MUST
-NOT be used as a stable authorization key.
+AuthGuard is a standalone, unified authentication and authorization product designed for deep Envoy Gateway integration. Its default topology is:
 
 ```text
-User or workload
-  -> enterprise IdP / Keycloak issues a short-lived access token
-  -> Envoy Gateway strictly validates issuer, audience, and local/remote JWKS
-  -> Envoy forwards only the verified JWT token; Authguard extracts issuer + external_id(sub)
-  -> Authguard :8080 envoy.service.auth.v3.Authorization/Check (Envoy extAuth only)
-  -> Authguard resolves active Principals from the repository and evaluates its compiled L1 snapshot
-       (policy refreshes by durable repository revision; Redis stores only scope-token contexts)
-  -> Envoy removes client x-authguard-* headers and injects exactly one of:
-       x-authguard-context       HMAC-SHA256-signed short-lived allow/deny URN context
-       x-authguard-scope-token   short-lived opaque token for a large scope
-  -> when auth.resign_jwt.enabled, Authguard also re-signs a short-lived JWT
-       (RS256, authguardOrigin: true) and replaces the authorization header;
-       business workloads verify with the public key only
-  -> workload adapter IAccessContextResolver
-       HeaderAccessContextResolver decodes the Envoy-injected context
-       GrpcAccessContextResolver calls Authguard :8081 gRPC ResolveScope
-  -> repository compiles action-specific allow/deny URNs into a SQL scope
-
-IAM administrator
-  -> IPrincipalDiscovery<Input>
-       JitPrincipalDiscovery        first use of a trusted identity
-       KeycloakPrincipalDiscovery   control-plane search (Keycloak Admin API)
-       LdapPrincipalDiscovery       control-plane search (direct RFC 4511 LDAP)
-       CustomPrincipalDiscovery     control-plane search (configurable HTTP + JWT)
-       ScimPrincipalDiscovery       RFC 7643 User/Group subset ingestion
-  -> idempotently materialize iam_principal
-  -> Authguard /adm/v1/** (policy and role-binding control plane)
+Envoy Gateway
+authguard-authn
+authguard-authz
 ```
 
-The login JWT carries stable identity, tenant, group, and MFA claims rather than
-large resource-URN lists. Authguard computes the resource scope per request from
-principal, action, Resource URN, and request conditions such as IP/TLS/MFA.
-JWT mode accepts only an `Authorization: Bearer ...` token already verified by
-Envoy; OIDC mode accepts only Envoy's forwarded verified ID token. Authguard
-extracts claims from that token, does not repeat JWT signature verification,
-and accepts no separate issuer, subject, group, or MFA claim headers.
-`auth.scope_delivery.direct_urn_limit` selects direct context versus scope token.
-Both forms are short lived, carry `policy_revision`, are action-bound, and fail closed when
-missing, expired, or mismatched.
-The optional `auth.resign_jwt` re-signs an RS256 JWT on every ALLOW:
-`iss: authguard`, `sub: external_id`, `principal_id`, `authguard_group_ids`,
-`authguardOrigin: true`, `iat`/`exp` (TTL `scope_token_ttl`), plus copied scalar
-claims. The stable identity is preserved — the re-signer re-issues `iss`/`sub`
-and adds the `authguardOrigin: true` marker claim — so the workload verifying
-this signature proves the request passed through Envoy Gateway and rejects
-clients calling its API directly. The RSA
-private key stays in Authguard; Envoy's original JWT verification is
-unchanged, and disabled mode keeps the original identity token stripped.
-The two gRPC services have distinct listeners: Envoy Check uses `8080`, while
-SDK ResolveScope uses `8081`. The default NetworkPolicy independently restricts
-them to Envoy and `authguard.io/scope-client` selectors, so workloads cannot
-reach the context-issuing Check service.
+AuthN and AuthZ mount and read the same `authguard.yaml`; configuration is
+partitioned by root section, not by duplicating files.
 
-A direct context is `agctx1.<payload>.<signature>`. Each SDK verifies its
-HMAC-SHA256 signature before decoding the Base64URL v3 payload. Authguard and
-workloads share a high-entropy key of at least 32 bytes through
-`AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY`; unsigned, tampered, or wrong-key contexts
-fail closed. Helm can reference an existing Secret through
-`authguard.accessContext.existingSecret` and `authguard.accessContext.key`; if
-neither an existing Secret nor an explicit signing key is supplied, it
-generates and reuses a 64-character key. Independently deployed workloads must
-mount the same Secret/environment variable.
+Responsibilities are intentionally narrow:
 
-The normalized authorization schema has six tables:
-`iam_policy`, `iam_principal`, `iam_action`, `iam_role`, `iam_role_action`, and
-`iam_role_binding`. Business resources and external account directories remain
-their owning systems' source of truth.
+- Envoy Gateway owns the edge, TLS, routing, standard OIDC/JWT capabilities, and the PEP;
+- `authguard-authn` owns Provider protocols, `ExternalIdentity` normalization, and account linking;
+- `authguard-authz` authorizes only internal stable `principal_id` values.
 
-The standards basis is explicit: [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html)
-requires the `iss + sub` combination for a stable OIDC End-User key; the
-[Keycloak administration guide](https://www.keycloak.org/docs/latest/server_admin/)
-documents LDAP/AD user federation; and [SCIM Core Schema RFC 7643](https://www.rfc-editor.org/rfc/rfc7643.html)
-with [SCIM Protocol RFC 7644](https://www.rfc-editor.org/rfc/rfc7644.html) defines
-standard identity provisioning.
+> Envoy owns the edge. AuthGuard owns identity normalization and authorization.
 
-Current implementation structure:
+## Identity and Principal
 
-Authorization routes depend on `IAuthorizationHandler`.
-`DefaultAuthorizationHandler` contains ACL evaluation and request-access
-delivery; `PolicyHandler` coordinates CRUD and durable synchronization, while
-`PolicyRuntime` owns the compiled immutable snapshot. No duplicate
-authorization service package remains.
+External identity and authorization Principal are separate:
 
 ```text
-src/core/src
-  server.rs     API/management listeners and graceful shutdown
-  route/        Envoy gRPC and management HTTP protocol adapters
-  handler/
-    authorization.rs  ACL evaluation and request-access delivery
-    policy.rs    policy compilation, immutable runtime, and policy CRUD
-    principal.rs Principal projection/discovery use cases
-    management.rs health, readiness, status, and metrics use cases
-  config/       authguard.yaml loading, environment overrides, validation
-  model/        storage-independent authorization models, SQL scopes, and transport DTOs
-  principal/
-    mod.rs       shared discovery models, traits, and errors
-    jit.rs       trusted OIDC just-in-time projection
-    keycloak.rs  Keycloak Admin API search connector
-    ldap.rs      direct RFC 4511 LDAP connector
-    custom.rs    configurable HTTP/JWT in-house identity API connector
-    scim.rs      RFC 7643 User/Group subset ingestion
-  storage/      SQLite/PostgreSQL repositories and private row records
-  cache/        Memory/Redis opaque scope-token context cache
-  utils/        identity parsing, HTTP tuple mapping, OTel tracing, and metrics
-src/core/migrations
-  001_init.ddl.sql portable authorization schema DDL
-  001_init.dml.sql initial singleton-policy DML
-src/adapters    Rust, Go, Python, and Java SDKs
-use-cases       Enterprise customer-growth analysis-job business-service E2E examples
-deploy          One Authguard image, Envoy Gateway Helm, Grafana dashboard
+(provider, issuer, subject)
+          │
+          │ iam_principal_identity / Account Linking
+          ▼
+internal stable principal_id
 ```
 
-Rust models are not persistence entities: the flat `model/` package owns all
-storage-independent authorization semantics and boundary DTOs, while
-`storage/record.rs` is the sole database-row representation. Both repositories
-consume the same numbered DDL/DML migration pair.
+One Principal may bind corporate DSP, GitHub, WeChat, and other identities. AuthZ never receives a GitHub ID, openid/unionid, DSP token, authorization code, or Provider access token.
 
-See the [IAM authorization whitepaper](iam-authorization-whitepaper.md) for the
-canonical model and the [Envoy Gateway implementation plan](../plans/envoy-gateway-integration-implementation-plan_ZH.md)
-for the current delivery architecture.
+AuthN emits one canonical contract:
+
+```text
+AuthenticatedPrincipalContext {
+  principalId
+  kind
+  stableGroupIds
+  trustedClaims
+  acr
+  amr
+}
+```
+
+The AuthZ hot path batch-loads local Principal state by canonical IDs. Unknown or disabled Principals fail closed; AuthZ no longer JIT-creates a Principal from `iss/sub`.
+
+## Providers and account linking
+
+Provider YAML describes only authorization endpoints, token exchange, optional identity APIs, stable-subject extraction, and simple claim mapping. GET/POST differences, credentials in header/body/query, GitHub `/user`, WeChat `unionid/openid`, and DSP token translation remain inside AuthN.
+
+The default account-linking strategy is `explicit`. Equal email addresses never cause automatic linking. Enterprises can declare a corporate DSP authoritative and allow users to explicitly bind GitHub/WeChat from an authenticated Principal session. Internet deployments may explicitly choose `first-login`.
+
+## AuthZ model
+
+AuthZ retains:
+
+- `USER`, `WORKLOAD`, and `GROUP`;
+- Action, Role, and RoleBinding;
+- Resource URNs, parent URNs, and conditions;
+- explicit DENY precedence and default deny;
+- signed access contexts and opaque scope tokens;
+- optional control-plane Keycloak, LDAP, and SCIM Principal federation/materialization.
+
+Discovery connectors do not participate in login or the hot path. Materializing a candidate requires the canonical `principal_id` already resolved by AuthN.
+
+## Protocol boundary
+
+- GitHub OAuth is not OIDC; it commonly uses an access token to call GitHub `/user`;
+- an ID Token is not UserInfo, and an Access Token is not a user identity;
+- standard OIDC should prefer Envoy Gateway native support;
+- GitHub/WeChat/DSP variance belongs in AuthN, without Envoy patches or Lua/Wasm;
+- AuthGuard introduces no Kubernetes CRD or Controller.
+
+## Keycloak
+
+Keycloak is an optional external enterprise IdP integration, never a runtime dependency. Existing Keycloak Principal discovery/federation remains an optional management-plane capability. The default Helm topology does not deploy Keycloak.
+
+> Keycloak is supported, never required.
+
+## Source structure
+
+```text
+src/authn/       authguard-authn: Providers, ExternalIdentity, linking, identity bindings
+src/authz/        authguard-authz: Principals, policy, ext_authz, Authorization Scope
+src/adapters/    workload access-context SDKs
+deploy/          default Envoy Gateway + AuthN + AuthZ deployment
+```
+
+See the [authentication and authorization whitepaper](iam-authorization-whitepaper.md) for the complete model and flows.

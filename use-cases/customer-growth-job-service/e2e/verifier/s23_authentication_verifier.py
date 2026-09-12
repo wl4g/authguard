@@ -1,0 +1,28 @@
+"""Phase 23: verify AuthN OAuth-like normalization and account linking."""
+
+from __future__ import annotations
+
+import time
+import traceback
+
+from common.kubernetes import KubernetesE2E
+from common.model import RunContext, VerificationResult
+
+
+def verify(context: RunContext) -> VerificationResult:
+    started = time.monotonic()
+    environment = KubernetesE2E(context)
+    passed = False
+    try:
+        environment.verify_authentication()
+        passed = True
+    except Exception:
+        environment.details.append(traceback.format_exc())
+    return VerificationResult(
+        scenario_id="23",
+        title="k3s phase 3/5: AuthN callback, normalization, linking, and tracing",
+        passed=passed,
+        duration_seconds=time.monotonic() - started,
+        details=environment.details,
+        commands=environment.commands,
+    )

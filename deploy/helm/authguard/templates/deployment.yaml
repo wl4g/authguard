@@ -9,9 +9,9 @@ metadata:
   name: {{ include "authguard.fullname" . }}
   labels:
     {{- include "authguard.labels" . | nindent 4 }}
-    app.kubernetes.io/component: server
+    app.kubernetes.io/component: authz
 spec:
-  replicas: {{ .Values.authguard.replicaCount }}
+  replicas: {{ .Values.authguard.authz.replicaCount }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -28,12 +28,12 @@ spec:
         {{- if eq $provider "vault" }}
         {{- include "authguard.vaultAnnotations" . | nindent 8 }}
         {{- end }}
-        {{- with .Values.authguard.podAnnotations }}
+        {{- with .Values.authguard.authz.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
       labels:
         {{- include "authguard.serverSelectorLabels" . | nindent 8 }}
-        {{- with .Values.authguard.podLabels }}
+        {{- with .Values.authguard.authz.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
@@ -46,19 +46,19 @@ spec:
         runAsGroup: 65532
         fsGroup: 65532
         seccompProfile: { type: RuntimeDefault }
-      {{- with .Values.authguard.imagePullSecrets }}
+      {{- with .Values.authguard.authz.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if .Values.authguard.resignKeyInit.enabled }}
+      {{- if .Values.authguard.authz.resignKeyInit.enabled }}
       initContainers:
         # Decodes the base64 PKCS#8 PEM resign-JWT key from the injected
         # environment (or the mounted KEY=VALUE env file) into the
-        # private_key_file configured under auth.resign_jwt. The runtime image
+        # private_key_file configured under authz.resign_token. The runtime image
         # is distroless, so the decode runs here.
         - name: resign-key-decode
-          image: "{{ .Values.authguard.resignKeyInit.image.repository }}:{{ .Values.authguard.resignKeyInit.image.tag }}"
-          imagePullPolicy: {{ .Values.authguard.resignKeyInit.image.pullPolicy }}
+          image: "{{ .Values.authguard.authz.resignKeyInit.image.repository }}:{{ .Values.authguard.authz.resignKeyInit.image.tag }}"
+          imagePullPolicy: {{ .Values.authguard.authz.resignKeyInit.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
@@ -73,12 +73,12 @@ spec:
           command: ["sh", "-c"]
           args:
             - |
-              key="${AUTHGUARD_RESIGN_JWT_PRIVATE_KEY:-}"
+              key="${AUTHGUARD_RESIGN_TOKEN_PRIVATE_KEY:-}"
               if [ -z "$key" ] && [ -f /etc/authguard/csi/env ]; then
-                key="$(sed -n 's/^AUTHGUARD_RESIGN_JWT_PRIVATE_KEY=//p' /etc/authguard/csi/env | head -n 1)"
+                key="$(sed -n 's/^AUTHGUARD_RESIGN_TOKEN_PRIVATE_KEY=//p' /etc/authguard/csi/env | head -n 1)"
               fi
               if [ -z "$key" ] && [ -f /vault/secrets/env ]; then
-                key="$(sed -n 's/^AUTHGUARD_RESIGN_JWT_PRIVATE_KEY=//p' /vault/secrets/env | head -n 1)"
+                key="$(sed -n 's/^AUTHGUARD_RESIGN_TOKEN_PRIVATE_KEY=//p' /vault/secrets/env | head -n 1)"
               fi
               if [ -n "$key" ]; then
                 printf '%s' "$key" | base64 -d > /etc/authguard/secrets/resign-jwt-private-key.pem
@@ -93,9 +93,9 @@ spec:
             {{- end }}
       {{- end }}
       containers:
-        - name: authguard
-          image: "{{ .Values.authguard.image.repository }}:{{ .Values.authguard.image.tag }}"
-          imagePullPolicy: {{ .Values.authguard.image.pullPolicy }}
+        - name: authguard-authz
+          image: "{{ .Values.authguard.authz.image.repository }}:{{ .Values.authguard.authz.image.tag }}"
+          imagePullPolicy: {{ .Values.authguard.authz.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -104,7 +104,7 @@ spec:
             - name: AUTHGUARD_CONFIG_FILE
               value: /etc/authguard/authguard.yaml
             - name: AUTHGUARD_REPLICA_COUNT
-              value: {{ .Values.authguard.replicaCount | quote }}
+              value: {{ .Values.authguard.authz.replicaCount | quote }}
             {{- if or (eq $provider "gcp") (eq $provider "aws") }}
             - name: AUTHGUARD_ENV_FILE
               value: {{ include "authguard.csiSecretsMountPath" . }}/env
@@ -112,7 +112,7 @@ spec:
             - name: AUTHGUARD_ENV_FILE
               value: /vault/secrets/env
             {{- end }}
-            {{- if and (index .Values "redis-cluster").enabled (index .Values "redis-cluster").usePassword }}
+            {{- if and .Values.redis_cluster.enabled .Values.redis_cluster.usePassword }}
             - name: AUTHGUARD__CACHE__REDIS__PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -125,35 +125,35 @@ spec:
                 name: {{ .Values.secrets.kubernetes.existingSecret }}
           {{- end }}
           ports:
-            - { name: authz-grpc, containerPort: {{ .Values.authguard.service.grpcPort }}, protocol: TCP }
-            - { name: scope-grpc, containerPort: {{ .Values.authguard.service.scopeGrpcPort }}, protocol: TCP }
-            {{- if .Values.authguard.mgmt.enabled }}
-            - { name: mgmt, containerPort: {{ .Values.authguard.service.mgmtPort }}, protocol: TCP }
+            - { name: authz-grpc, containerPort: {{ .Values.authguard.authz.service.grpcPort }}, protocol: TCP }
+            - { name: scope-grpc, containerPort: {{ .Values.authguard.authz.service.scopeGrpcPort }}, protocol: TCP }
+            {{- if .Values.authguard.authz.mgmt.enabled }}
+            - { name: mgmt, containerPort: {{ .Values.authguard.authz.service.mgmtPort }}, protocol: TCP }
             {{- end }}
-          {{- if .Values.authguard.mgmt.enabled }}
+          {{- if .Values.authguard.authz.mgmt.enabled }}
           livenessProbe:
             httpGet:
-              path: {{ .Values.authguard.mgmt.livenessPath }}
+              path: {{ .Values.authguard.authz.mgmt.livenessPath }}
               port: mgmt
             periodSeconds: 10
             timeoutSeconds: 2
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: {{ .Values.authguard.mgmt.readinessPath }}
+              path: {{ .Values.authguard.authz.mgmt.readinessPath }}
               port: mgmt
             periodSeconds: 5
             timeoutSeconds: 2
             failureThreshold: 3
           startupProbe:
             httpGet:
-              path: {{ .Values.authguard.mgmt.livenessPath }}
+              path: {{ .Values.authguard.authz.mgmt.livenessPath }}
               port: mgmt
             periodSeconds: 2
             failureThreshold: 30
           {{- end }}
           resources:
-            {{- toYaml .Values.authguard.resources | nindent 12 }}
+            {{- toYaml .Values.authguard.authz.resources | nindent 12 }}
           volumeMounts:
             - name: config
               mountPath: /etc/authguard
@@ -183,19 +183,19 @@ spec:
         {{- end }}
         - name: tmp
           emptyDir: {}
-      {{- with .Values.authguard.nodeSelector }}
+      {{- with .Values.authguard.authz.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.authguard.affinity }}
+      {{- with .Values.authguard.authz.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.authguard.tolerations }}
+      {{- with .Values.authguard.authz.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.authguard.topologySpreadConstraints }}
+      {{- with .Values.authguard.authz.topologySpreadConstraints }}
       topologySpreadConstraints:
         {{- toYaml . | nindent 8 }}
       {{- end }}

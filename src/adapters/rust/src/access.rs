@@ -1,7 +1,7 @@
 use std::{cell::RefCell, env, error::Error, fmt, sync::Arc, time::Instant};
 
 use async_trait::async_trait;
-use authguard_core::model::{
+use authguard_common::{
     access_context_v1::access_context_service_client::AccessContextServiceClient,
     AccessContextSigner,
 };
@@ -76,6 +76,11 @@ impl IAccessContextResolver for HeaderAccessContextResolver {
             return Ok(None);
         };
         let started = Instant::now();
+        tracing::debug!(
+            event = "authguard.access_context.header.started",
+            resolver_mode = "header",
+            "direct access-context resolution started"
+        );
         let encoded = self.signer.verify(encoded).map_err(|error| {
             tracing::debug!(
                 event = "authguard.access_context.verify.failed",
@@ -96,6 +101,15 @@ impl IAccessContextResolver for HeaderAccessContextResolver {
         })?;
         tracing::debug!(
             event = "authguard.access_context.verify.succeeded",
+            resolver_mode = "header",
+            principal_id = %context.principal_id,
+            action = %context.action,
+            allow_count = context.allow_resource_urns.len(),
+            deny_count = context.deny_resource_urns.len(),
+            duration_ms = util::elapsed_millis(started),
+        );
+        tracing::debug!(
+            event = "authguard.access_context.header.succeeded",
             resolver_mode = "header",
             principal_id = %context.principal_id,
             action = %context.action,
@@ -225,9 +239,24 @@ impl IAccessContextResolver for GrpcAccessContextResolver {
         else {
             return Ok(None);
         };
+        let started = Instant::now();
+        tracing::debug!(
+            event = "authguard.access_context.grpc.started",
+            resolver_mode = "grpc",
+            "opaque scope-token resolution started"
+        );
         let encoded = self.client.resolve_scope(token).await?;
         let context = util::decode_access_context(&encoded)
             .map_err(|error| AccessError::InvalidContext(error.to_string()))?;
+        tracing::debug!(
+            event = "authguard.access_context.grpc.succeeded",
+            resolver_mode = "grpc",
+            principal_id = %context.principal_id,
+            action = %context.action,
+            allow_count = context.allow_resource_urns.len(),
+            deny_count = context.deny_resource_urns.len(),
+            duration_ms = util::elapsed_millis(started),
+        );
         Ok(Some(RequestAccess::from_context(&context)))
     }
 }

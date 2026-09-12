@@ -114,15 +114,13 @@ class PythonAdapterUtilTest(unittest.TestCase):
         self.assertNotIn("subject_id", payload)
         self.assertNotIn("policy_version", payload)
 
-    def test_access_context_codec_accepts_v3_legacy_field_aliases(self) -> None:
+    def test_access_context_codec_rejects_noncanonical_field_names(self) -> None:
         payload = decode_encoded_payload(encode_access_context(sample_context()))
         payload["subject_id"] = payload.pop("principal_id")
         payload["policy_version"] = payload.pop("policy_revision")
 
-        decoded = decode_access_context(encode_unchecked_payload(payload))
-
-        self.assertEqual("revenue-analyst", decoded.principal_id)
-        self.assertEqual(1, decoded.policy_revision)
+        with self.assertRaises(ValueError):
+            decode_access_context(encode_unchecked_payload(payload))
 
     def test_current_context_compiles_sql_scope(self) -> None:
         access.set_current(AccessGrantSet((JOB_WILDCARD,)))
