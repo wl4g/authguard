@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use authguard_common::storage::{IdentityBindingRepository, IdentityRepositoryError};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -8,8 +8,8 @@ use thiserror::Error;
 
 use crate::config::{AccountLinkingProperties, LinkingStrategy};
 use crate::model::{
-    AuthenticatedPrincipalContext, ExternalIdentity, IamPrincipalInfo, IdentityModelError,
-    PrincipalKind, PrincipalStatus,
+    AuthenticatedPrincipalContext, AuthenticationResult, ExternalIdentity, IamPrincipalInfo,
+    IdentityModelError, PrincipalKind, PrincipalStatus,
 };
 
 /// JIT Principal materialization used by consumer/2C deployments.
@@ -37,10 +37,10 @@ where
     /// Returns an error for invalid identities, rejected linking, or storage failure.
     pub async fn discover(
         &self,
-        identity: &ExternalIdentity,
+        authentication: &AuthenticationResult,
         kind: PrincipalKind,
     ) -> Result<AuthenticatedPrincipalContext, AccountLinkingError> {
-        self.linking.resolve_login(identity, kind).await
+        self.linking.resolve_login(authentication, kind).await
     }
 }
 
@@ -69,9 +69,10 @@ where
     /// identities, uniqueness conflicts, or repository failures.
     pub async fn resolve_login(
         &self,
-        identity: &ExternalIdentity,
+        authentication: &AuthenticationResult,
         kind: PrincipalKind,
     ) -> Result<AuthenticatedPrincipalContext, AccountLinkingError> {
+        let identity = &authentication.external_identity;
         let started = std::time::Instant::now();
         tracing::info!(
             event = "authguard.authn.account_linking.started",
@@ -100,7 +101,7 @@ where
                     provider: identity.provider.clone(),
                 });
             };
-        let context = Self::context(principal, identity)?;
+        let context = Self::context(principal, authentication)?;
         tracing::info!(
             event = "authguard.authn.account_linking.succeeded",
             provider = %identity.provider,
@@ -121,8 +122,9 @@ where
     pub async fn link_identity(
         &self,
         authenticated_principal_id: &str,
-        identity: &ExternalIdentity,
+        authentication: &AuthenticationResult,
     ) -> Result<AuthenticatedPrincipalContext, AccountLinkingError> {
+        let identity = &authentication.external_identity;
         let started = std::time::Instant::now();
         tracing::info!(
             event = "authguard.authn.account_link.started",
@@ -157,7 +159,7 @@ where
             });
         }
         let principal = self.repository.bind_identity(authenticated_principal_id, identity).await?;
-        let context = Self::context(principal, identity)?;
+        let context = Self::context(principal, authentication)?;
         tracing::info!(
             event = "authguard.authn.account_link.succeeded",
             provider = %identity.provider,
@@ -170,7 +172,7 @@ where
 
     fn context(
         principal: IamPrincipalInfo,
-        identity: &ExternalIdentity,
+        authentication: &AuthenticationResult,
     ) -> Result<AuthenticatedPrincipalContext, AccountLinkingError> {
         if principal.status != PrincipalStatus::Active {
             return Err(AccountLinkingError::PrincipalDisabled(principal.id));
@@ -179,23 +181,11 @@ where
             principal_id: principal.id,
             kind: principal.kind,
             stable_group_ids: Vec::new(),
-            trusted_claims: identity
-                .claims
-                .iter()
-                .filter_map(|(name, value)| {
-                    let value = match value {
-                        serde_json::Value::String(value) => value.clone(),
-                        serde_json::Value::Bool(value) => value.to_string(),
-                        serde_json::Value::Number(value) => value.to_string(),
-                        _ => return None,
-                    };
-                    Some((name.clone(), value))
-                })
-                .collect::<HashMap<_, _>>(),
-            acr: None,
-            // Provider names and external subjects stay in AuthN. AuthZ sees
-            // only the protocol-neutral authentication method.
-            amr: vec!["oauth".to_string()],
+            // Authentication-side claims (email, wallet metadata, IdP data)
+            // never cross the Principal/AuthZ boundary.
+            trusted_claims: std::collections::HashMap::new(),
+            acr: authentication.acr.clone(),
+            amr: authentication.amr.clone(),
         })
     }
 }
@@ -251,6 +241,7 @@ mod tests {
     use super::*;
     use crate::model::ExternalIdentityKey;
     use async_trait::async_trait;
+    use chrono::Utc;
 
     #[derive(Default)]
     struct MemoryRepository {
@@ -341,6 +332,10 @@ mod tests {
         }
     }
 
+    fn authentication(provider: &str, subject: &str) -> AuthenticationResult {
+        AuthenticationResult::new(identity(provider, subject), ["test"], None, Utc::now())
+    }
+
     fn service() -> AccountLinkingService<MemoryRepository> {
         AccountLinkingService::new(
             AccountLinkingProperties {
@@ -359,7 +354,7 @@ mod tests {
     async fn explicit_strategy_rejects_unbound_secondary_login() {
         let service = service();
         let result =
-            service.resolve_login(&identity("github", "987654"), PrincipalKind::User).await;
+            service.resolve_login(&authentication("github", "987654"), PrincipalKind::User).await;
         assert!(matches!(result, Err(AccountLinkingError::AuthoritativeLoginRequired { .. })));
     }
 
@@ -367,15 +362,15 @@ mod tests {
     async fn explicit_link_converges_two_identities_on_one_principal() {
         let service = service();
         let corporate = service
-            .resolve_login(&identity("corporate-dsp", "EMP00123"), PrincipalKind::User)
+            .resolve_login(&authentication("corporate-dsp", "EMP00123"), PrincipalKind::User)
             .await
             .expect("authoritative login");
         let github = service
-            .link_identity(&corporate.principal_id, &identity("github", "987654"))
+            .link_identity(&corporate.principal_id, &authentication("github", "987654"))
             .await
             .expect("link GitHub");
         let later_login = service
-            .resolve_login(&identity("github", "987654"), PrincipalKind::User)
+            .resolve_login(&authentication("github", "987654"), PrincipalKind::User)
             .await
             .expect("GitHub login");
 
@@ -392,10 +387,16 @@ mod tests {
             },
             MemoryRepository::default(),
         );
-        let mut github = identity("github", "987654");
-        github.claims.insert("email".to_string(), serde_json::json!("alice@example.com"));
-        let mut wechat = identity("wechat", "openid-123");
-        wechat.claims.insert("email".to_string(), serde_json::json!("alice@example.com"));
+        let mut github = authentication("github", "987654");
+        github
+            .external_identity
+            .claims
+            .insert("email".to_string(), serde_json::json!("alice@example.com"));
+        let mut wechat = authentication("wechat", "openid-123");
+        wechat
+            .external_identity
+            .claims
+            .insert("email".to_string(), serde_json::json!("alice@example.com"));
 
         let first =
             service.resolve_login(&github, PrincipalKind::User).await.expect("first GitHub login");
@@ -408,5 +409,30 @@ mod tests {
 
         assert_eq!(repeated.principal_id, first.principal_id);
         assert_ne!(other_provider.principal_id, first.principal_id);
+    }
+
+    #[tokio::test]
+    async fn linking_preserves_protocol_supplied_authentication_metadata() {
+        let service = AccountLinkingService::new(
+            AccountLinkingProperties {
+                strategy: LinkingStrategy::FirstLogin,
+                ..AccountLinkingProperties::default()
+            },
+            MemoryRepository::default(),
+        );
+        let authentication = AuthenticationResult::new(
+            identity("wallet", "eip155:1:0x0000000000000000000000000000000000000001"),
+            ["wallet", "siwx", "eoa"],
+            Some("urn:authguard:loa:wallet".to_string()),
+            Utc::now(),
+        );
+
+        let context = service
+            .resolve_login(&authentication, PrincipalKind::User)
+            .await
+            .expect("wallet login");
+
+        assert_eq!(context.amr, ["wallet", "siwx", "eoa"]);
+        assert_eq!(context.acr.as_deref(), Some("urn:authguard:loa:wallet"));
     }
 }

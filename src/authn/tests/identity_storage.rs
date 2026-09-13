@@ -1,10 +1,13 @@
 use std::collections::BTreeMap;
 
 use authguard_authn::config::{PostgresProperties, SqliteProperties};
-use authguard_authn::model::{ExternalIdentity, IamPrincipalInfo, PrincipalKind, PrincipalStatus};
+use authguard_authn::model::{
+    ExternalIdentity, IamPrincipalInfo, IamStandaloneCredential, PrincipalKind, PrincipalStatus,
+    StandaloneCredentialKind,
+};
 use authguard_authn::storage::{
     AuthnPostgresRepository, AuthnSqliteRepository, IdentityBindingRepository,
-    IdentityRepositoryError,
+    IdentityRepositoryError, StandaloneCredentialRepository,
 };
 use serde_json::json;
 
@@ -18,6 +21,7 @@ async fn sqlite_persists_canonical_principal_identity_bindings() {
     .await
     .expect("initialize SQLite AuthN repository");
     assert_identity_binding_contract(&repository).await;
+    assert_standalone_credential_contract(&repository).await;
 }
 
 #[tokio::test]
@@ -32,6 +36,78 @@ async fn postgres_persists_canonical_principal_identity_bindings() {
     .await
     .expect("initialize PostgreSQL AuthN repository");
     assert_identity_binding_contract(&repository).await;
+    assert_standalone_credential_contract(&repository).await;
+}
+
+async fn assert_standalone_credential_contract<R>(repository: &R)
+where
+    R: IdentityBindingRepository + StandaloneCredentialRepository,
+{
+    let principal = IamPrincipalInfo {
+        id: "principal-standalone-storage-contract".to_string(),
+        kind: PrincipalKind::User,
+        display_name: "Standalone User".to_string(),
+        status: PrincipalStatus::Active,
+        authorization_state: BTreeMap::new(),
+    };
+    let identity = ExternalIdentity {
+        provider: "standalone".to_string(),
+        issuer: "authguard:standalone".to_string(),
+        subject: "local_stable_subject".to_string(),
+        claims: BTreeMap::new(),
+    };
+    repository
+        .create_principal_and_bind(&principal, &identity)
+        .await
+        .expect("persist standalone identity");
+    let key = identity.key().expect("standalone key");
+    repository
+        .create_credential(&IamStandaloneCredential {
+            id: "pwd-storage-contract".to_string(),
+            identity: key.clone(),
+            kind: StandaloneCredentialKind::Password,
+            credential_key: Some("alice@example.com".to_string()),
+            secret_data: Some("$argon2id$v=19$example".to_string()),
+            credential_data: None,
+        })
+        .await
+        .expect("persist password credential");
+    let found = repository
+        .find_by_key(
+            "authguard:standalone",
+            StandaloneCredentialKind::Password,
+            "alice@example.com",
+        )
+        .await
+        .expect("find password credential")
+        .expect("password credential exists");
+    assert_eq!(found.external_identity.subject, "local_stable_subject");
+    assert_eq!(found.credential.identity, key);
+
+    repository
+        .create_credential(&IamStandaloneCredential {
+            id: "totp-storage-contract".to_string(),
+            identity: key.clone(),
+            kind: StandaloneCredentialKind::Totp,
+            credential_key: None,
+            secret_data: Some("v1:encrypted".to_string()),
+            credential_data: Some(json!({"lastCounter": 40})),
+        })
+        .await
+        .expect("persist TOTP credential");
+    assert!(repository
+        .advance_totp_counter("totp-storage-contract", 41)
+        .await
+        .expect("advance TOTP counter"));
+    assert!(!repository
+        .advance_totp_counter("totp-storage-contract", 41)
+        .await
+        .expect("reject replayed TOTP counter"));
+    let totp = repository
+        .list_by_identity(&key, StandaloneCredentialKind::Totp)
+        .await
+        .expect("list TOTP credentials");
+    assert_eq!(totp[0].credential_data, Some(json!({"lastCounter": 41})));
 }
 
 async fn assert_identity_binding_contract<R>(repository: &R)

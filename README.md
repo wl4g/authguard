@@ -62,14 +62,20 @@ dependencies.
 - Keycloak, Entra, LDAP, SCIM, DSP, and social IdPs are integrations—never runtime dependencies.
 - No AuthGuard CRD/controller, no Lua/Wasm OAuth implementation, and no email-based automatic linking.
 
+The converged OAuth, standalone Password/TOTP/WebAuthn, and CAIP/SIWX wallet
+architecture is documented in [统一认证架构](docs/architecture/authentication_ZH.md).
+
 ## 1. Build and run
 
-Requirements: Rust 1.88+, Go 1.24+, JDK 21, Python 3.12, Helm 3.17+, and a Docker-compatible builder.
+Requirements: Rust 1.88+, Go 1.24+, JDK 21, Python 3.12, Helm 3.17+, and a Docker-compatible builder. The optional `web3` feature currently requires Rust 1.91+.
 
 ```bash
 git clone https://github.com/wl4g/authguard.git
 cd authguard
 make build
+
+# Opt in to CAIP/SIWX wallet authentication and its Web3 dependencies.
+cargo build -p authguard-cmd --features web3
 
 # Both services read the same file.
 ./target/debug/authguard --config etc/authguard.yaml authn --bind 0.0.0.0:8082
@@ -150,7 +156,7 @@ authguard console status
 Browser user through a social/OAuth-like Provider:
 
 ```text
-Open https://app.example.com/auth/v1/providers/github/authorize
+Open https://app.example.com/auth/oauth2/github/authorize
   → Envoy → AuthN authorize/callback/token exchange/UserInfo
   → ExternalIdentity → identity binding → canonical principal_id
   → Envoy jwt_authn → AuthZ ext_authz → Biz UI/API
@@ -164,7 +170,7 @@ EXTERNAL_TOKEN=$(curl -fsS https://idp.example.com/oauth2/token \
   -d grant_type=client_credentials -d audience=customer-growth-job-service \
   | jq -r .access_token)
 
-WORKLOAD_TOKEN=$(curl -fsS https://app.example.com/auth/v1/providers/corporate-oidc/token-exchange \
+WORKLOAD_TOKEN=$(curl -fsS https://app.example.com/auth/oauth2/corporate-oidc/token-exchange \
   -H 'content-type: application/json' \
   -d "{\"subjectToken\":\"${EXTERNAL_TOKEN}\",\"kind\":\"WORKLOAD\"}" \
   | jq -r .accessToken)

@@ -1,26 +1,28 @@
+//! OAuth/OIDC protocol adapter. It converges only after proof verification.
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
-use crate::{
-    AccountLinkingError, AuthnFlowRepository, AuthnProperties, GithubOauth2Provider,
-    GoogleOauth2Provider, IProviderAdapter, IamAuthFlowInfo, IdentityBindingRepository,
-    JitPrincipalDiscovery, OAuthLikeCallback, OAuthLikeProvider, OidcProvider, PrincipalKind,
-    ProviderProperties, QqOauth2Provider, ReqwestProviderTransport, WechatOauth2Provider,
-};
-use anyhow::Context as _;
 use authguard_common::apm::AuthnMetrics;
-use authguard_common::utils::jwt::{load_signing_key, sign, JwtSigningKey};
+use authguard_common::model::{AuthenticationResult, ExternalIdentity, PrincipalKind};
 use axum::extract::{Path as AxumPath, Query, State};
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::http::HeaderMap;
+use axum::response::Redirect;
 use axum::Json;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine as _;
-use rand::RngCore as _;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use sha2::{Digest as _, Sha256};
+
+use crate::challenge::{consume_json, put_json, random_challenge_id, ChallengeStore};
+use crate::handler::{ApiError, LoginResponse};
+use crate::runtime::AuthnRuntime;
+use crate::{
+    AuthnProperties, GithubOauth2Provider, GoogleOauth2Provider, IProviderAdapter,
+    OAuthLikeCallback, OAuthLikeProvider, OidcProvider, ProviderProperties, QqOauth2Provider,
+    ReqwestProviderTransport, WechatOauth2Provider,
+};
+
+const OAUTH_CHALLENGE_PURPOSE: &str = "oauth";
 
 #[derive(Clone)]
 struct ProviderRuntime {
@@ -28,16 +30,21 @@ struct ProviderRuntime {
     client_id: String,
     client_secret: String,
     callback_url: String,
+    protocol: ProviderProtocol,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+enum ProviderProtocol {
+    OAuth2,
+    Oidc,
 }
 
 #[derive(Clone)]
 pub(crate) struct AuthenticationHandler {
     providers: Arc<BTreeMap<String, ProviderRuntime>>,
-    flows: Arc<dyn AuthnFlowRepository>,
-    identities: Arc<dyn IdentityBindingRepository>,
-    linking: crate::AccountLinkingProperties,
-    session: crate::SessionProperties,
-    signing_key: Option<JwtSigningKey>,
+    challenges: Arc<dyn ChallengeStore>,
+    pipeline: Arc<crate::pipeline::AuthenticationPipeline>,
+    challenge_ttl: Duration,
     metrics: AuthnMetrics,
 }
 
@@ -53,16 +60,6 @@ pub(crate) struct CallbackQuery {
     state: String,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct LoginResponse {
-    access_token: String,
-    token_type: &'static str,
-    expires_in: u64,
-    return_uri: String,
-    principal: authguard_common::AuthenticatedPrincipalContext,
-}
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct TokenExchangeRequest {
@@ -70,47 +67,42 @@ pub(crate) struct TokenExchangeRequest {
     kind: PrincipalKind,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OAuthChallenge {
+    provider: String,
+    return_uri: String,
+    nonce: Option<String>,
+    pkce_verifier: Option<String>,
+    link_principal_id: Option<String>,
+}
+
 impl AuthenticationHandler {
-    pub(crate) async fn open(metrics: AuthnMetrics) -> anyhow::Result<Self> {
-        let config = authguard_common::config::AppConfig::get();
-        let storage = config.get_storage();
-        let (flows, identities): (
-            Arc<dyn AuthnFlowRepository>,
-            Arc<dyn IdentityBindingRepository>,
-        ) = match storage.provider.to_ascii_lowercase().as_str() {
-            "sqlite" => {
-                let repository = Arc::new(
-                    authguard_common::storage::AuthnSqliteRepository::connect(&storage.sqlite)
-                        .await?,
-                );
-                (repository.clone(), repository)
-            }
-            "postgres" => {
-                let repository = Arc::new(
-                    authguard_common::storage::AuthnPostgresRepository::connect(&storage.postgres)
-                        .await?,
-                );
-                (repository.clone(), repository)
-            }
-            provider => anyhow::bail!("unsupported IAM storage provider `{provider}`"),
-        };
-        let providers = build_providers(config.get_authn()).await?;
-        let signing_key = load_session_key(config.get_authn(), providers.is_empty())?;
+    pub(crate) async fn open(
+        metrics: AuthnMetrics,
+        runtime: &AuthnRuntime,
+    ) -> anyhow::Result<Option<Self>> {
+        let application = authguard_common::config::AppConfig::get();
+        let config = application.get_authn();
+        let providers = build_providers(config).await?;
+        if providers.is_empty() {
+            return Ok(None);
+        }
+        let challenges = runtime
+            .challenges
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("OAuth providers require the Redis challenge store"))?;
         tracing::info!(
             provider_count = providers.len(),
-            linking_strategy = ?config.authn.account_linking.strategy,
-            storage_provider = %config.storage.provider,
-            "AuthGuard AuthN provider engine configured"
+            "OAuth/OIDC authentication adapters configured"
         );
-        Ok(Self {
+        Ok(Some(Self {
             providers: Arc::new(providers),
-            flows,
-            identities,
-            linking: config.authn.account_linking.clone(),
-            session: config.authn.session.clone(),
-            signing_key,
+            challenges,
+            pipeline: runtime.pipeline.clone(),
+            challenge_ttl: config.challenge_ttl,
             metrics,
-        })
+        }))
     }
 }
 
@@ -119,56 +111,56 @@ pub(crate) async fn authorize(
     Query(query): Query<AuthorizeQuery>,
     State(state): State<AuthenticationHandler>,
 ) -> Result<Redirect, ApiError> {
+    prepare_authorization(&state, &provider, query.return_uri, None).await
+}
+
+pub(crate) async fn link_authorize(
+    AxumPath(provider): AxumPath<String>,
+    Query(query): Query<AuthorizeQuery>,
+    State(state): State<AuthenticationHandler>,
+    headers: HeaderMap,
+) -> Result<Redirect, ApiError> {
+    let principal_id = state.pipeline.authenticate_session(&headers).map_err(ApiError::session)?;
+    prepare_authorization(&state, &provider, query.return_uri, Some(principal_id)).await
+}
+
+async fn prepare_authorization(
+    state: &AuthenticationHandler,
+    provider: &str,
+    return_uri: String,
+    link_principal_id: Option<String>,
+) -> Result<Redirect, ApiError> {
     let started = Instant::now();
-    tracing::info!(
-        event = "authguard.authn.authorize.started",
-        provider,
-        "social authentication authorize request received"
-    );
     let result = async {
-        let runtime =
-            state.providers.get(&provider).ok_or_else(|| ApiError::invalid_provider(&provider))?;
-        let state_value = random_state();
-        let expires_at_epoch_seconds =
-            epoch_seconds().saturating_add(state.session.state_ttl.as_secs());
+        let runtime = state
+            .providers
+            .get(provider)
+            .ok_or_else(|| ApiError::not_found("authentication provider is not configured"))?;
+        let state_value = random_challenge_id();
         let authorization = runtime
             .adapter
             .authorize(&runtime.client_id, &runtime.callback_url, &state_value)
-            .map_err(ApiError::provider)?;
-        state
-            .flows
-            .create(
-                &state_hash(&state_value),
-                &IamAuthFlowInfo {
-                    provider: provider.clone(),
-                    return_uri: query.return_uri,
-                    nonce: authorization.nonce,
-                    pkce_verifier: authorization.pkce_verifier,
-                    expires_at_epoch_seconds,
-                },
-            )
-            .await
-            .map_err(ApiError::storage)?;
+            .map_err(provider_error)?;
+        put_json(
+            state.challenges.as_ref(),
+            OAUTH_CHALLENGE_PURPOSE,
+            &state_value,
+            &OAuthChallenge {
+                provider: provider.to_string(),
+                return_uri,
+                nonce: authorization.nonce,
+                pkce_verifier: authorization.pkce_verifier,
+                link_principal_id,
+            },
+            state.challenge_ttl,
+        )
+        .await
+        .map_err(ApiError::challenge)?;
         Ok(Redirect::temporary(authorization.url.as_str()))
     }
     .await;
     let outcome = result.as_ref().err().map_or("success", ApiError::metric_outcome);
-    state.metrics.record_flow(&provider, "authorize", outcome, started.elapsed().as_secs_f64());
-    match &result {
-        Ok(_) => tracing::info!(
-            event = "authguard.authn.authorize.succeeded",
-            provider,
-            duration_seconds = started.elapsed().as_secs_f64(),
-            "social authentication authorize redirect prepared"
-        ),
-        Err(error) => tracing::warn!(
-            event = "authguard.authn.authorize.failed",
-            provider,
-            error_code = error.code,
-            duration_seconds = started.elapsed().as_secs_f64(),
-            "social authentication authorize request failed"
-        ),
-    }
+    state.metrics.record_flow(provider, "authorize", outcome, started.elapsed().as_secs_f64());
     result
 }
 
@@ -178,23 +170,20 @@ pub(crate) async fn callback(
     State(state): State<AuthenticationHandler>,
 ) -> Result<Json<LoginResponse>, ApiError> {
     let started = Instant::now();
-    tracing::info!(
-        event = "authguard.authn.callback.started",
-        provider,
-        "social IdP callback received"
-    );
     let result = async {
-        let flow = state
-            .flows
-            .consume(&state_hash(&query.state))
-            .await
-            .map_err(ApiError::storage)?
-            .filter(|flow| {
-                flow.provider == provider && flow.expires_at_epoch_seconds > epoch_seconds()
-            })
-            .ok_or_else(|| ApiError::invalid_request("invalid or expired OAuth state"))?;
-        let runtime =
-            state.providers.get(&provider).ok_or_else(|| ApiError::invalid_provider(&provider))?;
+        let flow = consume_json::<OAuthChallenge>(
+            state.challenges.as_ref(),
+            OAUTH_CHALLENGE_PURPOSE,
+            &query.state,
+        )
+        .await
+        .map_err(ApiError::challenge)?
+        .filter(|flow| flow.provider == provider)
+        .ok_or_else(|| ApiError::bad_request("invalid or expired OAuth state"))?;
+        let runtime = state
+            .providers
+            .get(&provider)
+            .ok_or_else(|| ApiError::not_found("authentication provider is not configured"))?;
         let identity = runtime
             .adapter
             .authenticate(OAuthLikeCallback {
@@ -206,43 +195,19 @@ pub(crate) async fn callback(
                 pkce_verifier: flow.pkce_verifier,
             })
             .await
-            .map_err(ApiError::provider)?;
-        let principal = JitPrincipalDiscovery::new(state.linking.clone(), state.identities.clone())
-            .discover(&identity, PrincipalKind::User)
-            .await
-            .map_err(ApiError::linking)?;
-        let access_token = issue_token(
-            state.signing_key.as_ref().ok_or_else(ApiError::signing_unavailable)?,
-            &state.session,
-            &principal,
-        )?;
-        Ok(Json(LoginResponse {
-            access_token,
-            token_type: "Bearer",
-            expires_in: state.session.ttl.as_secs(),
-            return_uri: flow.return_uri,
-            principal,
-        }))
+            .map_err(provider_error)?;
+        let authentication = provider_authentication(identity, runtime.protocol);
+        let session = if let Some(principal_id) = flow.link_principal_id {
+            state.pipeline.link(&principal_id, authentication).await
+        } else {
+            state.pipeline.login(authentication, PrincipalKind::User).await
+        }
+        .map_err(ApiError::pipeline)?;
+        Ok(Json(LoginResponse::new(session, flow.return_uri)))
     }
     .await;
     let outcome = result.as_ref().err().map_or("success", ApiError::metric_outcome);
     state.metrics.record_flow(&provider, "callback", outcome, started.elapsed().as_secs_f64());
-    match &result {
-        Ok(response) => tracing::info!(
-            event = "authguard.authn.callback.succeeded",
-            provider,
-            principal_id = %response.0.principal.principal_id,
-            duration_seconds = started.elapsed().as_secs_f64(),
-            "social IdP callback normalized and linked"
-        ),
-        Err(error) => tracing::warn!(
-            event = "authguard.authn.callback.failed",
-            provider,
-            error_code = error.code,
-            duration_seconds = started.elapsed().as_secs_f64(),
-            "social IdP callback failed closed"
-        ),
-    }
     result
 }
 
@@ -252,44 +217,28 @@ pub(crate) async fn token_exchange(
     Json(request): Json<TokenExchangeRequest>,
 ) -> Result<Json<LoginResponse>, ApiError> {
     let started = Instant::now();
-    tracing::info!(
-        event = "authguard.authn.token_exchange.started",
-        provider,
-        principal_kind = request.kind.as_str(),
-        "external OIDC bearer normalization started"
-    );
     let result = async {
         if request.subject_token.is_empty() {
-            return Err(ApiError::invalid_request("subjectToken is required"));
+            return Err(ApiError::bad_request("subjectToken is required"));
         }
         if request.kind == PrincipalKind::Group {
-            return Err(ApiError::invalid_request(
+            return Err(ApiError::bad_request(
                 "GROUP principals cannot authenticate with bearer tokens",
             ));
         }
-        let runtime =
-            state.providers.get(&provider).ok_or_else(|| ApiError::invalid_provider(&provider))?;
+        let runtime = state
+            .providers
+            .get(&provider)
+            .ok_or_else(|| ApiError::not_found("authentication provider is not configured"))?;
         let identity = runtime
             .adapter
             .authenticate_bearer(&request.subject_token, request.kind)
             .await
-            .map_err(ApiError::provider)?;
-        let principal = JitPrincipalDiscovery::new(state.linking.clone(), state.identities.clone())
-            .discover(&identity, request.kind)
-            .await
-            .map_err(ApiError::linking)?;
-        let access_token = issue_token(
-            state.signing_key.as_ref().ok_or_else(ApiError::signing_unavailable)?,
-            &state.session,
-            &principal,
-        )?;
-        Ok(Json(LoginResponse {
-            access_token,
-            token_type: "Bearer",
-            expires_in: state.session.ttl.as_secs(),
-            return_uri: String::new(),
-            principal,
-        }))
+            .map_err(provider_error)?;
+        let authentication = provider_authentication(identity, runtime.protocol);
+        let session =
+            state.pipeline.login(authentication, request.kind).await.map_err(ApiError::pipeline)?;
+        Ok(Json(LoginResponse::new(session, String::new())))
     }
     .await;
     let outcome = result.as_ref().err().map_or("success", ApiError::metric_outcome);
@@ -299,23 +248,49 @@ pub(crate) async fn token_exchange(
         outcome,
         started.elapsed().as_secs_f64(),
     );
-    match &result {
-        Ok(response) => tracing::info!(
-            event = "authguard.authn.token_exchange.succeeded",
-            provider,
-            principal_id = %response.0.principal.principal_id,
-            duration_seconds = started.elapsed().as_secs_f64(),
-            "external OIDC bearer normalized to canonical Principal"
-        ),
-        Err(error) => tracing::warn!(
-            event = "authguard.authn.token_exchange.failed",
-            provider,
-            error_code = error.code,
-            duration_seconds = started.elapsed().as_secs_f64(),
-            "external OIDC bearer normalization failed closed"
-        ),
-    }
     result
+}
+
+fn provider_authentication(
+    mut identity: ExternalIdentity,
+    protocol: ProviderProtocol,
+) -> AuthenticationResult {
+    // Authentication evidence is transient and must not remain attached to
+    // the durable external-identity description.
+    let method_claim = identity.claims.remove("amr");
+    let assurance_claim = identity.claims.remove("acr");
+    let (fallback, acr) = match protocol {
+        ProviderProtocol::OAuth2 => (vec!["oauth2".to_string()], None),
+        ProviderProtocol::Oidc => {
+            let amr = method_claim
+                .as_ref()
+                .and_then(serde_json::Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .filter(|value| !value.is_empty() && value.len() <= 64)
+                        .take(16)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .filter(|values| !values.is_empty())
+                .unwrap_or_else(|| vec!["oidc".to_string()]);
+            let acr = assurance_claim
+                .as_ref()
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty() && value.len() <= 512)
+                .map(str::to_string);
+            (amr, acr)
+        }
+    };
+    AuthenticationResult::new(identity, fallback, acr, Utc::now())
+}
+
+fn provider_error(error: crate::ProviderError) -> ApiError {
+    tracing::warn!(error_category = error.category(), "provider authentication failed");
+    drop(error);
+    ApiError::unavailable("external identity provider authentication failed")
 }
 
 async fn build_providers(
@@ -337,6 +312,7 @@ async fn build_providers(
                     client_id: oidc.client_id.clone(),
                     client_secret: oidc.client_secret.clone(),
                     callback_url: oidc.callback_url.clone(),
+                    protocol: ProviderProtocol::Oidc,
                 }
             }
             ProviderProperties::OAuth2(oauth) | ProviderProperties::OAuth2Like(oauth) => {
@@ -368,6 +344,7 @@ async fn build_providers(
                     client_id: oauth.client_id.clone(),
                     client_secret: oauth.client_secret.clone(),
                     callback_url: oauth.callback_url.clone(),
+                    protocol: ProviderProtocol::OAuth2,
                 }
             }
             ProviderProperties::Custom(_) => anyhow::bail!(
@@ -403,155 +380,31 @@ fn validate_oidc_provider(
     Ok(())
 }
 
-fn load_session_key(
-    config: &AuthnProperties,
-    providers_empty: bool,
-) -> anyhow::Result<Option<JwtSigningKey>> {
-    let key = if config.session.private_key_file.is_empty() {
-        config.session.private_key.clone()
-    } else {
-        std::fs::read_to_string(&config.session.private_key_file)
-            .context("read AuthN session private key")?
-    };
-    if key.is_empty() && providers_empty {
-        return Ok(None);
-    }
-    if key.is_empty() {
-        anyhow::bail!(
-            "authn.session privateKey or privateKeyFile is required when providers exist"
-        );
-    }
-    Ok(Some(load_signing_key(&key)?))
-}
-
-fn issue_token(
-    key: &JwtSigningKey,
-    session: &crate::SessionProperties,
-    principal: &authguard_common::AuthenticatedPrincipalContext,
-) -> Result<String, ApiError> {
-    let now = epoch_seconds();
-    let mut claims = principal
-        .trusted_claims
-        .iter()
-        .map(|(name, value)| (name.clone(), json!(value)))
-        .collect::<serde_json::Map<_, _>>();
-    claims.extend([
-        ("iss".to_string(), json!(session.issuer)),
-        ("aud".to_string(), json!(session.audience)),
-        ("sub".to_string(), json!(principal.principal_id)),
-        ("principal_id".to_string(), json!(principal.principal_id)),
-        ("principal_kind".to_string(), json!(principal.kind.as_str())),
-        ("authguard_group_ids".to_string(), json!(principal.stable_group_ids)),
-        ("amr".to_string(), json!(principal.amr)),
-        ("iat".to_string(), json!(now)),
-        ("exp".to_string(), json!(now.saturating_add(session.ttl.as_secs()))),
-    ]);
-    if let Some(acr) = &principal.acr {
-        claims.insert("acr".to_string(), json!(acr));
-    }
-    let payload =
-        serde_json::to_vec(&Value::Object(claims)).map_err(|_| ApiError::signing_unavailable())?;
-    sign(key, &payload).map_err(|_| ApiError::signing_unavailable())
-}
-
-fn random_state() -> String {
-    let mut bytes = [0_u8; 32];
-    rand::rng().fill_bytes(&mut bytes);
-    URL_SAFE_NO_PAD.encode(bytes)
-}
-
-fn state_hash(state: &str) -> String {
-    URL_SAFE_NO_PAD.encode(Sha256::digest(state.as_bytes()))
-}
-
-fn epoch_seconds() -> u64 {
-    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs()
-}
-
-pub(crate) struct ApiError {
-    status: StatusCode,
-    code: &'static str,
-    message: &'static str,
-}
-
-impl ApiError {
-    fn metric_outcome(&self) -> &'static str {
-        match self.code {
-            "unknown_provider" | "invalid_request" => "invalid_request",
-            "provider_authentication_failed" => "provider_error",
-            "account_linking_failed" => "linking_rejected",
-            "authn_storage_unavailable" => "storage_error",
-            _ => "other",
-        }
-    }
-
-    fn invalid_provider(_provider: &str) -> Self {
-        Self {
-            status: StatusCode::NOT_FOUND,
-            code: "unknown_provider",
-            message: "authentication provider is not configured",
-        }
-    }
-
-    const fn invalid_request(message: &'static str) -> Self {
-        Self { status: StatusCode::BAD_REQUEST, code: "invalid_request", message }
-    }
-
-    fn provider(error: crate::ProviderError) -> Self {
-        tracing::warn!(error_category = error.category(), "provider authentication failed");
-        drop(error);
-        Self {
-            status: StatusCode::BAD_GATEWAY,
-            code: "provider_authentication_failed",
-            message: "external identity provider authentication failed",
-        }
-    }
-
-    fn linking(error: AccountLinkingError) -> Self {
-        tracing::warn!(error = %error, "account linking failed closed");
-        let status = match &error {
-            AccountLinkingError::AuthoritativeLoginRequired { .. }
-            | AccountLinkingError::LinkNotAllowed { .. }
-            | AccountLinkingError::PrincipalDisabled(_) => StatusCode::FORBIDDEN,
-            AccountLinkingError::IdentityAlreadyBound => StatusCode::CONFLICT,
-            _ => StatusCode::SERVICE_UNAVAILABLE,
-        };
-        drop(error);
-        Self { status, code: "account_linking_failed", message: "account linking failed" }
-    }
-
-    fn storage(error: crate::storage::AuthnFlowRepositoryError) -> Self {
-        tracing::error!(error = %error, "AuthN storage operation failed");
-        drop(error);
-        Self {
-            status: StatusCode::SERVICE_UNAVAILABLE,
-            code: "authn_storage_unavailable",
-            message: "authentication state is temporarily unavailable",
-        }
-    }
-
-    const fn signing_unavailable() -> Self {
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            code: "session_signing_unavailable",
-            message: "canonical session token could not be issued",
-        }
-    }
-}
-
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        (self.status, Json(json!({"code": self.code, "message": self.message}))).into_response()
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use serde_json::json;
+
     use super::*;
 
     #[test]
-    fn oauth_state_is_stored_only_as_a_hash() {
-        assert_ne!(state_hash("secret-state"), "secret-state");
-        assert_eq!(state_hash("secret-state"), state_hash("secret-state"));
+    fn oidc_authentication_preserves_the_actual_evidence() {
+        let authentication = provider_authentication(
+            ExternalIdentity {
+                provider: "corporate".to_string(),
+                issuer: "https://id.example".to_string(),
+                subject: "123".to_string(),
+                claims: BTreeMap::from([
+                    ("amr".to_string(), json!(["pwd", "otp"])),
+                    ("acr".to_string(), json!("urn:example:mfa")),
+                ]),
+            },
+            ProviderProtocol::Oidc,
+        );
+        assert_eq!(authentication.amr, ["pwd", "otp"]);
+        assert_eq!(authentication.acr.as_deref(), Some("urn:example:mfa"));
+        assert!(!authentication.external_identity.claims.contains_key("amr"));
+        assert!(!authentication.external_identity.claims.contains_key("acr"));
     }
 }

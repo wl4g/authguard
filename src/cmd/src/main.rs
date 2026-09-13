@@ -33,7 +33,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Run the OAuth/OAuth-like authentication and account-linking service.
+    /// Run unified OAuth, standalone credential, and optional wallet authentication.
     Authn(AuthnOptions),
     /// Run the Envoy `ext_authz` and authorization control-plane service.
     Authz,

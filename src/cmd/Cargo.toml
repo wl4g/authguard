@@ -5,13 +5,17 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+web3 = ["authguard-authn/web3"]
+
 [[bin]]
 name = "authguard"
 path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
-authguard-authn = { path = "../authn" }
+authguard-authn = { path = "../authn", default-features = false }
 authguard-authz = { path = "../authz" }
 authguard-common.workspace = true
 clap.workspace = true

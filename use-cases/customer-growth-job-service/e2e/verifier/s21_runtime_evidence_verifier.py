@@ -219,7 +219,7 @@ class RuntimeEvidenceVerifier(BaseVerifier):
             "(SELECT count(*) FROM authguard.iam_role) || '|' || "
             "(SELECT count(*) FROM authguard.iam_action) || '|' || "
             "(SELECT count(*) FROM authguard.iam_role_binding) || '|' || "
-            "(SELECT count(*) FROM authguard.iam_authn_flow) || '|' || "
+            "(SELECT count(*) FROM authguard.iam_standalone_credential) || '|' || "
             "(SELECT count(*) FROM authguard.iam_principal_identity WHERE "
             "(provider='github' AND issuer='https://github.com' AND subject='987654') OR "
             "(provider='google' AND issuer='https://accounts.google.com' AND subject='google-editor-001') OR "

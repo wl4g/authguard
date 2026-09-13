@@ -18,7 +18,7 @@ async fn postgres_implements_the_normalized_authorization_repository_contract() 
     };
     let pool = PgPool::connect(&url).await.expect("connect PostgreSQL schema inspector");
     sqlx::raw_sql(
-        "DROP TABLE IF EXISTS iam_authn_flow, iam_principal_identity, iam_role_binding, \
+        "DROP TABLE IF EXISTS iam_standalone_credential, iam_principal_identity, iam_role_binding, \
          iam_role_action, iam_role, iam_action, iam_principal CASCADE",
     )
     .execute(&pool)
@@ -45,7 +45,7 @@ async fn postgres_implements_the_normalized_authorization_repository_contract() 
         tables,
         vec![
             "iam_action",
-            "iam_authn_flow",
+            "iam_standalone_credential",
             "iam_principal",
             "iam_principal_identity",
             "iam_role",

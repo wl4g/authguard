@@ -98,8 +98,9 @@ AuthN/AuthZ schema 初始化统一使用仓库根目录 `migrations/001_init.ddl
 成功后发布当前进程的编译目录；revision 只用于当前进程管理 API 的并发写保护，不承担跨副本
 状态同步。生产管理面应落到单一 AuthZ writer，数据面副本通过滚动发布加载一致目录。
 
-AuthN 维护 `iam_authn_flow` 和
-`iam_principal_identity(principal_id, provider, issuer, subject)`；
+AuthN 维护 `iam_principal_identity(principal_id, provider, issuer, subject)` 和唯一的
+`iam_standalone_credential` 长期 credential 表；所有 OAuth/MFA/WebAuthn/SIWX challenge
+统一存入 Redis 并以 TTL + 原子消费防重放；
 `(provider, issuer, subject)` 全局唯一。绑定只由 Account Linking 用例修改，AuthZ 不查询
 provider identity，也不以 email 自动合并账号。
 

@@ -322,8 +322,8 @@ class AuthnJaegerTraceVerifier:
         authn_spans = graph.select(self.authn_service, "http.server.request")
         paths = {graph.tags(span).get("url.path"): span for span in authn_spans}
         route_by_client = {
-            "envoy.authn.authorize": f"/auth/v1/providers/{self.provider}/authorize",
-            "envoy.authn.callback": f"/auth/v1/providers/{self.provider}/callback",
+            "envoy.authn.authorize": f"/auth/oauth2/{self.provider}/authorize",
+            "envoy.authn.callback": f"/auth/oauth2/{self.provider}/callback",
         }
         client_ids = {span.name: span.span_id for span in trace.spans}
         envoy_spans = graph.select(self.envoy_service)
@@ -371,7 +371,7 @@ class OidcJaegerTraceVerifier:
         graph.require_services({self.verifier_service, self.envoy_service, self.authn_service})
         client = next(span.span_id for span in trace.spans if span.name == "envoy.authn.oidc")
         envoy = graph.downstream(graph.select(self.envoy_service), {client})
-        route = f"/auth/v1/providers/{self.provider}/token-exchange"
+        route = f"/auth/oauth2/{self.provider}/token-exchange"
         authn = [
             span
             for span in graph.select(self.authn_service, "http.server.request")

@@ -10,14 +10,24 @@ use authguard_common::apm::{init_telemetry, AuthnMetrics, TelemetryConfig};
 use authguard_common::config::AppConfig;
 use authguard_common::route::management::{self, ManagementState, ReadinessProbe};
 use axum::middleware;
+use axum::Router;
 
 use crate::handler::AuthenticationHandler;
+use crate::runtime::AuthnRuntime;
+use crate::standalone::StandaloneHandler;
+#[cfg(feature = "web3")]
+use crate::wallet::WalletHandler;
 
-struct AuthnReadiness;
+struct AuthnReadiness {
+    challenges: Option<Arc<dyn crate::challenge::ChallengeStore>>,
+}
 
 #[async_trait]
 impl ReadinessProbe for AuthnReadiness {
     async fn ready(&self) -> anyhow::Result<()> {
+        if let Some(challenges) = &self.challenges {
+            challenges.ping().await?;
+        }
         Ok(())
     }
 }
@@ -36,14 +46,34 @@ pub async fn run() -> anyhow::Result<()> {
     ))
     .context("configure AuthN telemetry")?;
     let metrics = AuthnMetrics::default();
-    let handler = AuthenticationHandler::open(metrics.clone()).await?;
+    #[cfg(not(feature = "web3"))]
+    if config.get_authn().wallet.enabled {
+        anyhow::bail!("authn.wallet.enabled=true requires the AuthN `web3` build feature");
+    }
+    let runtime = AuthnRuntime::open().await?;
+    let oauth = AuthenticationHandler::open(metrics.clone(), &runtime).await?;
+    let standalone = StandaloneHandler::open(&runtime)?;
+    #[cfg(feature = "web3")]
+    let wallet = WalletHandler::open(&runtime)?;
     let management = management::router(
         config.get_mgmt(),
-        ManagementState::new(Arc::new(metrics), Arc::new(AuthnReadiness)),
+        ManagementState::new(
+            Arc::new(metrics),
+            Arc::new(AuthnReadiness { challenges: runtime.challenges.clone() }),
+        ),
     );
-    let app = crate::route::authentication::router(handler)
-        .merge(management)
-        .layer(middleware::from_fn(propagate_http_trace_context));
+    let mut app = Router::new();
+    if let Some(handler) = oauth {
+        app = app.merge(crate::route::authentication::router(handler));
+    }
+    if let Some(handler) = standalone {
+        app = app.merge(crate::route::standalone::router(handler));
+    }
+    #[cfg(feature = "web3")]
+    if let Some(handler) = wallet {
+        app = app.merge(crate::route::wallet::router(handler));
+    }
+    let app = app.merge(management).layer(middleware::from_fn(propagate_http_trace_context));
     let bind = std::env::var("AUTHGUARD_AUTHN_BIND")
         .unwrap_or_else(|_| "0.0.0.0:8082".to_string())
         .parse::<SocketAddr>()

@@ -1,5 +1,6 @@
 //! Protocol-neutral IAM domain model.
 
+pub mod credential;
 pub mod identity;
 pub mod policy;
 pub mod principal;
@@ -13,8 +14,12 @@ pub use crate::utils::{
     UrnError, UrnPattern, ACCESS_CONTEXT_HEADER, ACCESS_CONTEXT_SIGNING_KEY_ENV,
     ACCESS_CONTEXT_VERSION, SCOPE_TOKEN_HEADER,
 };
+pub use credential::{
+    CredentialModelError, IamStandaloneCredential, StandaloneCredentialIdentity,
+    StandaloneCredentialKind,
+};
 pub use identity::{
-    AuthenticatedPrincipalContext, ExternalIdentity, ExternalIdentityKey, IamAuthFlowInfo,
+    AuthenticatedPrincipalContext, AuthenticationResult, ExternalIdentity, ExternalIdentityKey,
     IdentityError, IdentityModelError,
 };
 pub use policy::IamPolicyInfo;

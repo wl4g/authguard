@@ -1,7 +1,13 @@
 FROM registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-rust-builder:1.94-bookworm AS builder
 WORKDIR /workspace
 COPY . .
-RUN cargo build --locked --release -p authguard-cmd --bin authguard
+ARG AUTHGUARD_CARGO_FEATURES=""
+RUN if [ -n "${AUTHGUARD_CARGO_FEATURES}" ]; then \
+      cargo build --locked --release -p authguard-cmd --bin authguard \
+        --features "${AUTHGUARD_CARGO_FEATURES}"; \
+    else \
+      cargo build --locked --release -p authguard-cmd --bin authguard; \
+    fi
 
 FROM registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-runtime:nonroot
 COPY --from=builder /workspace/target/release/authguard /usr/local/bin/authguard

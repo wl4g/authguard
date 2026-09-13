@@ -37,18 +37,34 @@ CREATE TABLE IF NOT EXISTS iam_principal_identity (
 CREATE INDEX IF NOT EXISTS idx_iam_principal_identity_principal
   ON iam_principal_identity (principal_id);
 
-CREATE TABLE IF NOT EXISTS iam_authn_flow (
-  state_hash TEXT PRIMARY KEY CHECK (TRIM(state_hash) <> ''),
-  provider TEXT NOT NULL CHECK (TRIM(provider) <> ''),
-  return_uri TEXT NOT NULL DEFAULT '',
-  nonce TEXT,
-  pkce_verifier TEXT,
-  expires_at_epoch_seconds BIGINT NOT NULL,
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE IF NOT EXISTS iam_standalone_credential (
+  id TEXT PRIMARY KEY CHECK (TRIM(id) <> ''),
+  identity_provider TEXT NOT NULL DEFAULT 'standalone' CHECK (identity_provider = 'standalone'),
+  identity_issuer TEXT NOT NULL CHECK (TRIM(identity_issuer) <> ''),
+  identity_subject TEXT NOT NULL CHECK (TRIM(identity_subject) <> ''),
+  kind TEXT NOT NULL CHECK (kind IN ('password', 'totp', 'webauthn')),
+  credential_key TEXT,
+  secret_data TEXT,
+  credential_data JSON,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  revoked_at TIMESTAMP,
+  FOREIGN KEY (identity_provider, identity_issuer, identity_subject)
+    REFERENCES iam_principal_identity(provider, issuer, subject) ON DELETE CASCADE,
+  CHECK (
+    (kind IN ('password', 'totp') AND secret_data IS NOT NULL) OR
+    (kind = 'webauthn' AND credential_key IS NOT NULL AND credential_data IS NOT NULL)
+  )
 );
 
-CREATE INDEX IF NOT EXISTS idx_iam_authn_flow_expiry
-  ON iam_authn_flow (expires_at_epoch_seconds);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_iam_standalone_credential_key
+  ON iam_standalone_credential (kind, credential_key)
+  WHERE credential_key IS NOT NULL AND revoked_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_iam_standalone_credential_identity
+  ON iam_standalone_credential (
+    identity_provider, identity_issuer, identity_subject, kind
+  );
 
 CREATE TABLE IF NOT EXISTS iam_action (
   identifier TEXT NOT NULL CHECK (TRIM(identifier) <> ''),

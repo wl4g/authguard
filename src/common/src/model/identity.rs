@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use axum::http::HeaderMap;
 use base64::engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD};
 use base64::Engine as _;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -280,6 +281,38 @@ pub struct ExternalIdentity {
     pub claims: BTreeMap<String, Value>,
 }
 
+/// Transient proof result produced by one authentication protocol.
+///
+/// [`ExternalIdentity`] identifies the subject; this value records how and
+/// when that subject proved control. It is never persisted and is the sole
+/// convergence point consumed by account linking and session issuance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthenticationResult {
+    pub external_identity: ExternalIdentity,
+    pub amr: Vec<String>,
+    pub acr: Option<String>,
+    pub authenticated_at: DateTime<Utc>,
+}
+
+impl AuthenticationResult {
+    #[must_use]
+    pub fn new(
+        external_identity: ExternalIdentity,
+        methods: impl IntoIterator<Item = impl Into<String>>,
+        acr: Option<String>,
+        authenticated_at: DateTime<Utc>,
+    ) -> Self {
+        let mut amr = Vec::new();
+        for method in methods.into_iter().map(Into::into) {
+            if !amr.contains(&method) {
+                amr.push(method);
+            }
+        }
+        Self { external_identity, amr, acr, authenticated_at }
+    }
+}
+
 impl ExternalIdentity {
     /// Returns the globally unique binding key.
     ///
@@ -328,12 +361,4 @@ impl ExternalIdentityKey {
 pub enum IdentityModelError {
     #[error("external identity {0} must contain 1 to 512 canonical bytes")]
     InvalidIdentityComponent(&'static str),
-}
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct IamAuthFlowInfo {
-    pub provider: String,
-    pub return_uri: String,
-    pub expires_at_epoch_seconds: u64,
-    pub nonce: Option<String>,
-    pub pkce_verifier: Option<String>,
 }

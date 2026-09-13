@@ -75,7 +75,7 @@ fn sqlite_schema_contains_the_unified_iam_tables() {
         tables,
         BTreeSet::from([
             "iam_action".to_string(),
-            "iam_authn_flow".to_string(),
+            "iam_standalone_credential".to_string(),
             "iam_principal".to_string(),
             "iam_principal_identity".to_string(),
             "iam_role".to_string(),

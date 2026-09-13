@@ -596,7 +596,7 @@ class GatewayAuthorizationVerifier(BaseVerifier):
         ).encode()
         exchange = request.Request(
             f"http://127.0.0.1:{authn_gateway_port}"
-            "/auth/v1/providers/e2e-authguard-keycloak/token-exchange",
+            "/auth/oauth2/e2e-authguard-keycloak/token-exchange",
             data=payload,
             method="POST",
             headers={

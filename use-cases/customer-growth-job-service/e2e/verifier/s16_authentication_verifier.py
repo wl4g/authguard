@@ -103,7 +103,7 @@ class AuthenticationVerifier(BaseVerifier):
             },
         )
         authorize_location = redirect_location(
-            f"http://127.0.0.1:{authn_gateway_port}/auth/v1/providers/{provider}/authorize"
+            f"http://127.0.0.1:{authn_gateway_port}/auth/oauth2/{provider}/authorize"
             "?return_uri=%2Fcustomer-growth%2Fjobs",
             host=AUTHN_HOST,
             headers={

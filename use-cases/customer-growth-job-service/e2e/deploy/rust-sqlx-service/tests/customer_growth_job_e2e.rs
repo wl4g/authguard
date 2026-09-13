@@ -120,30 +120,33 @@ async fn assert_denied_mutation_did_not_change_database(
     match scenario.operation.as_str() {
         "create" => {
             let job = scenario.job.as_ref().expect("create job");
-            let count: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM e2e_authguard_customer_growth_jobs WHERE id = $1")
-                    .bind(job.id)
-                    .fetch_one(pool)
-                    .await
-                    .unwrap();
+            let count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM e2e_authguard_customer_growth_jobs WHERE id = $1",
+            )
+            .bind(job.id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
             assert_eq!(count, 0, "scenario {}", scenario.id);
         }
         "update" => {
-            let status: String =
-                sqlx::query_scalar("SELECT status FROM e2e_authguard_customer_growth_jobs WHERE id = $1")
-                    .bind(scenario.target_job_id)
-                    .fetch_one(pool)
-                    .await
-                    .unwrap();
+            let status: String = sqlx::query_scalar(
+                "SELECT status FROM e2e_authguard_customer_growth_jobs WHERE id = $1",
+            )
+            .bind(scenario.target_job_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
             assert_eq!(status, "READY", "scenario {}", scenario.id);
         }
         "delete" => {
-            let count: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM e2e_authguard_customer_growth_jobs WHERE id = $1")
-                    .bind(scenario.target_job_id)
-                    .fetch_one(pool)
-                    .await
-                    .unwrap();
+            let count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM e2e_authguard_customer_growth_jobs WHERE id = $1",
+            )
+            .bind(scenario.target_job_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
             assert_eq!(count, 1, "scenario {}", scenario.id);
         }
         _ => {}
@@ -264,12 +267,13 @@ async fn execute_scenario(
             if controller.delete_job(access, scenario.target_job_id).await.is_err() {
                 return (false, Vec::new(), String::new());
             }
-            let remaining: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM e2e_authguard_customer_growth_jobs WHERE id = $1")
-                    .bind(scenario.target_job_id)
-                    .fetch_one(pool)
-                    .await
-                    .unwrap();
+            let remaining: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM e2e_authguard_customer_growth_jobs WHERE id = $1",
+            )
+            .bind(scenario.target_job_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
             (remaining == 0, Vec::new(), String::new())
         }
         operation => panic!("unsupported scenario operation: {operation}"),

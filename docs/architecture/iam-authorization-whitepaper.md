@@ -183,7 +183,7 @@ authn:
       issuer: https://sso.example.com/realms/corporate
       clientId: authguard
       clientSecret: ${AUTHGUARD_CORPORATE_OIDC_CLIENT_SECRET}
-      callbackUrl: https://app.example.com/auth/v1/providers/corporate-oidc/callback
+      callbackUrl: https://app.example.com/auth/oauth2/corporate-oidc/callback
       scopes: [openid, profile, email]
       userinfo: true
       # Optional RFC 7662 path for WORKLOAD bearer-token translation. Browser
@@ -434,8 +434,10 @@ Dependency rules:
 
 AuthN and AuthZ normally use one logical IAM database and one schema. A second
 database is not required: `iam_principal` is defined once as the shared
-aggregate root, AuthN owns `iam_principal_identity` and transient
-`iam_authn_flow`, and AuthZ owns policy/action/role/binding tables. The single
+aggregate root, AuthN owns `iam_principal_identity` and the single
+`iam_standalone_credential` table, and AuthZ owns policy/action/role/binding
+tables. OAuth, MFA, WebAuthn, and SIWX challenge state is one-time data in
+Redis, never durable IAM data. The single
 top-level migration is serialized during startup. This ownership boundary keeps
 a future physical split possible without duplicating today's schema.
 

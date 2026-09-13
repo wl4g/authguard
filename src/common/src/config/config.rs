@@ -192,13 +192,91 @@ pub struct PostgresProperties {
 
 /// Authentication protocol details only; account governance is centralized
 /// under `account_linking`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AuthnProperties {
     pub providers: BTreeMap<String, ProviderProperties>,
+    #[serde(rename = "challengeTtl", with = "humantime_serde")]
+    pub challenge_ttl: Duration,
+    pub standalone: StandaloneAuthnProperties,
+    pub wallet: WalletAuthnProperties,
     #[serde(rename = "accountLinking")]
     pub account_linking: AccountLinkingProperties,
     pub session: SessionProperties,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StandaloneAuthnProperties {
+    pub enabled: bool,
+    pub issuer: String,
+    #[serde(rename = "credentialEncryptionKey")]
+    pub credential_encryption_key: String,
+    pub password: PasswordAuthnProperties,
+    pub totp: TotpAuthnProperties,
+    pub webauthn: WebauthnProperties,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PasswordAuthnProperties {
+    #[serde(rename = "minLength")]
+    pub min_length: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TotpAuthnProperties {
+    pub enabled: bool,
+    pub issuer: String,
+    pub digits: u8,
+    #[serde(rename = "stepSeconds")]
+    pub step_seconds: u64,
+    pub skew: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WebauthnProperties {
+    pub enabled: bool,
+    #[serde(rename = "rpId")]
+    pub rp_id: String,
+    #[serde(rename = "rpOrigin")]
+    pub rp_origin: String,
+    #[serde(rename = "rpName")]
+    pub rp_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WalletAuthnProperties {
+    pub enabled: bool,
+    pub domain: String,
+    pub uri: String,
+    pub statement: String,
+    #[serde(rename = "rpcTimeout", with = "humantime_serde")]
+    pub rpc_timeout: Duration,
+    pub chains: WalletChainsProperties,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WalletChainsProperties {
+    pub eip155: BTreeMap<String, EvmWalletChainProperties>,
+    pub solana: BTreeSet<String>,
+    pub bip122: BTreeMap<String, BitcoinWalletChainProperties>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EvmWalletChainProperties {
+    pub rpc: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BitcoinWalletChainProperties {
+    pub network: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -277,8 +355,6 @@ pub struct SessionProperties {
     pub audience: String,
     #[serde(with = "humantime_serde")]
     pub ttl: Duration,
-    #[serde(rename = "stateTtl", with = "humantime_serde")]
-    pub state_ttl: Duration,
     #[serde(rename = "privateKey")]
     pub private_key: String,
     #[serde(rename = "privateKeyFile")]
@@ -737,13 +813,80 @@ impl Default for OidcProviderProperties {
     }
 }
 
+impl Default for AuthnProperties {
+    fn default() -> Self {
+        Self {
+            providers: BTreeMap::new(),
+            challenge_ttl: Duration::from_secs(300),
+            standalone: StandaloneAuthnProperties::default(),
+            wallet: WalletAuthnProperties::default(),
+            account_linking: AccountLinkingProperties::default(),
+            session: SessionProperties::default(),
+        }
+    }
+}
+
+impl Default for StandaloneAuthnProperties {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            issuer: "authguard:standalone".to_string(),
+            credential_encryption_key: String::new(),
+            password: PasswordAuthnProperties::default(),
+            totp: TotpAuthnProperties::default(),
+            webauthn: WebauthnProperties::default(),
+        }
+    }
+}
+
+impl Default for PasswordAuthnProperties {
+    fn default() -> Self {
+        Self { min_length: 12 }
+    }
+}
+
+impl Default for TotpAuthnProperties {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            issuer: "AuthGuard".to_string(),
+            digits: 6,
+            step_seconds: 30,
+            skew: 1,
+        }
+    }
+}
+
+impl Default for WebauthnProperties {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            rp_id: String::new(),
+            rp_origin: String::new(),
+            rp_name: "AuthGuard".to_string(),
+        }
+    }
+}
+
+impl Default for WalletAuthnProperties {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            domain: String::new(),
+            uri: String::new(),
+            statement: "Sign in to AuthGuard".to_string(),
+            rpc_timeout: Duration::from_secs(5),
+            chains: WalletChainsProperties::default(),
+        }
+    }
+}
+
 impl Default for SessionProperties {
     fn default() -> Self {
         Self {
             issuer: "authguard-authn".to_string(),
             audience: "authguard".to_string(),
             ttl: Duration::from_secs(300),
-            state_ttl: Duration::from_secs(300),
             private_key: String::new(),
             private_key_file: String::new(),
         }
@@ -1312,6 +1455,120 @@ fn validate_cache(cache: &CacheProperties) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn validate_authn(authn: &AuthnProperties, cache: &CacheProperties) -> anyhow::Result<()> {
+    if authn.challenge_ttl.is_zero() || authn.challenge_ttl > Duration::from_secs(15 * 60) {
+        bail!("authn.challengeTtl must be between 1 second and 15 minutes");
+    }
+    let needs_challenge_store = !authn.providers.is_empty()
+        || authn.wallet.enabled
+        || authn.standalone.enabled
+            && (authn.standalone.totp.enabled || authn.standalone.webauthn.enabled);
+    if needs_challenge_store {
+        if !matches!(cache.provider.to_ascii_lowercase().as_str(), "redis" | "redis_cluster") {
+            bail!("interactive AuthN flows require cache.provider=Redis for one-time challenges");
+        }
+        validate_redis_cache(&cache.redis)?;
+    }
+
+    let standalone = &authn.standalone;
+    if !standalone.enabled && (standalone.totp.enabled || standalone.webauthn.enabled) {
+        bail!("standalone TOTP/WebAuthn cannot be enabled when authn.standalone.enabled=false");
+    }
+    if standalone.enabled {
+        if standalone.issuer.trim().is_empty() {
+            bail!("authn.standalone.issuer is required");
+        }
+        if !(8..=128).contains(&standalone.password.min_length) {
+            bail!("authn.standalone.password.minLength must be between 8 and 128");
+        }
+        if standalone.totp.enabled {
+            if standalone.credential_encryption_key.trim().is_empty() {
+                bail!("authn.standalone.credentialEncryptionKey is required for TOTP");
+            }
+            if standalone.totp.issuer.trim().is_empty()
+                || !(6..=8).contains(&standalone.totp.digits)
+                || standalone.totp.step_seconds == 0
+                || standalone.totp.skew > 1
+            {
+                bail!("authn.standalone.totp requires issuer, 6-8 digits, a positive step, and skew <= 1");
+            }
+        }
+        if standalone.webauthn.enabled {
+            let webauthn = &standalone.webauthn;
+            let origin = reqwest::Url::parse(&webauthn.rp_origin)
+                .context("authn.standalone.webauthn.rpOrigin must be an absolute URL")?;
+            if webauthn.rp_id.trim().is_empty()
+                || webauthn.rp_name.trim().is_empty()
+                || origin.host_str().is_none()
+            {
+                bail!("authn.standalone.webauthn requires rpId, rpOrigin, and rpName");
+            }
+        }
+    }
+
+    if authn.wallet.enabled {
+        let wallet = &authn.wallet;
+        let uri =
+            reqwest::Url::parse(&wallet.uri).context("authn.wallet.uri must be an absolute URL")?;
+        if wallet.domain.trim().is_empty()
+            || uri.host_str().is_none()
+            || wallet.rpc_timeout.is_zero()
+        {
+            bail!("authn.wallet requires domain, absolute uri, and positive rpcTimeout");
+        }
+        if uri.host_str() != Some(wallet.domain.split(':').next().unwrap_or_default()) {
+            bail!("authn.wallet.domain must match authn.wallet.uri host");
+        }
+        if wallet.chains.eip155.is_empty()
+            && wallet.chains.solana.is_empty()
+            && wallet.chains.bip122.is_empty()
+        {
+            bail!("authn.wallet.chains must configure at least one trusted chain");
+        }
+        for (chain_id, chain) in &wallet.chains.eip155 {
+            let canonical = chain_id == "0" || !chain_id.starts_with('0');
+            if !canonical
+                || chain_id.parse::<u64>().is_err()
+                || !chain.rpc.starts_with("http://") && !chain.rpc.starts_with("https://")
+            {
+                bail!("each authn.wallet.chains.eip155 entry requires a decimal chain id and server RPC URL");
+            }
+        }
+        for reference in &wallet.chains.solana {
+            validate_caip_reference(reference, "solana")?;
+        }
+        for (reference, chain) in &wallet.chains.bip122 {
+            validate_caip_reference(reference, "bip122")?;
+            if !matches!(
+                chain.network.as_str(),
+                "bitcoin"
+                    | "bitcoin-mainnet"
+                    | "testnet"
+                    | "bitcoin-testnet"
+                    | "signet"
+                    | "bitcoin-signet"
+                    | "regtest"
+                    | "bitcoin-regtest"
+            ) {
+                bail!("Bitcoin wallet network must be a supported server-side Bitcoin network");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_caip_reference(reference: &str, namespace: &str) -> anyhow::Result<()> {
+    if reference.is_empty()
+        || reference.len() > 32
+        || !reference
+            .bytes()
+            .all(|value| value.is_ascii_alphanumeric() || value == b'-' || value == b'_')
+    {
+        bail!("authn.wallet.chains.{namespace} contains an invalid CAIP chain reference");
+    }
+    Ok(())
+}
+
 fn validate_redis_cache(redis: &RedisClusterProperties) -> anyhow::Result<()> {
     if redis.nodes.is_empty() {
         bail!("cache.redis.nodes is required");
@@ -1579,6 +1836,7 @@ impl AppConfigProperties {
         let config: Self = serde_yaml::from_value(value)
             .with_context(|| format!("decode AuthN configuration {}", path.display()))?;
         validate_storage(&config.storage)?;
+        validate_authn(&config.authn, &config.cache)?;
         Ok(config)
     }
 
@@ -1727,7 +1985,7 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         let cleanup = EnvCleanup(vec![
             "AUTHGUARD__AUTHN__SESSION__AUDIENCE",
-            "AUTHGUARD__AUTHN__SESSION__STATE_TTL",
+            "AUTHGUARD__AUTHN__CHALLENGE_TTL",
             "AUTHGUARD__STORAGE__POSTGRES__MAX_CONNECTIONS",
             "AUTHGUARD__MGMT__OTEL__ENABLED",
         ]);
@@ -1739,9 +1997,9 @@ mod tests {
             &file,
             r"
 authn:
+  challengeTtl: 1m
   session:
     audience: yaml-audience
-    stateTtl: 1m
 storage:
   provider: SQLite
   postgres:
@@ -1755,7 +2013,7 @@ mgmt:
         )
         .unwrap();
         std::env::set_var("AUTHGUARD__AUTHN__SESSION__AUDIENCE", "env-audience");
-        std::env::set_var("AUTHGUARD__AUTHN__SESSION__STATE_TTL", "3m");
+        std::env::set_var("AUTHGUARD__AUTHN__CHALLENGE_TTL", "3m");
         std::env::set_var("AUTHGUARD__STORAGE__POSTGRES__MAX_CONNECTIONS", "17");
         std::env::set_var("AUTHGUARD__MGMT__OTEL__ENABLED", "true");
 
@@ -1764,7 +2022,7 @@ mgmt:
         drop(cleanup);
 
         assert_eq!(config.authn.session.audience, "env-audience");
-        assert_eq!(config.authn.session.state_ttl, Duration::from_secs(180));
+        assert_eq!(config.authn.challenge_ttl, Duration::from_secs(180));
         assert_eq!(config.storage.postgres.max_connections, 17);
         assert!(config.mgmt.otel.enabled);
     }
@@ -1816,7 +2074,7 @@ providers:
     issuer: https://sso.example.com/realms/corporate
     clientId: authguard
     clientSecret: test-only-secret
-    callbackUrl: https://app.example.com/auth/v1/providers/corporate-oidc/callback
+    callbackUrl: https://app.example.com/auth/oauth2/corporate-oidc/callback
     scopes: [openid, profile, email]
     userinfo: true
     tokenIntrospection:
@@ -1884,6 +2142,28 @@ providers:
         assert_eq!(config.storage.provider, "SQLite");
         assert_eq!(config.cache.provider, "Memory");
         assert_eq!(config.cache.memory.max_capacity, 65_535);
+    }
+
+    #[test]
+    fn password_only_standalone_does_not_require_redis_but_mfa_does() {
+        let mut authn = AuthnProperties::default();
+        authn.standalone.enabled = true;
+        let cache = CacheProperties::default();
+
+        validate_authn(&authn, &cache).expect("password-only standalone AuthN");
+
+        authn.standalone.totp.enabled = true;
+        assert!(validate_authn(&authn, &cache)
+            .expect_err("TOTP must require Redis")
+            .to_string()
+            .contains("cache.provider=Redis"));
+    }
+
+    #[test]
+    fn caip_chain_references_use_the_caip_2_bound() {
+        validate_caip_reference("mainnet", "solana").expect("valid reference");
+        assert!(validate_caip_reference(&"a".repeat(33), "solana").is_err());
+        assert!(validate_caip_reference("contains:colon", "bip122").is_err());
     }
 
     #[test]

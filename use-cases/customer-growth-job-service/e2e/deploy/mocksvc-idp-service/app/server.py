@@ -224,7 +224,7 @@ def _authorize(provider: str, client_parameter: str):
         or not redirect_uri.startswith(
             "http://e2e-authguard-authn.customer-growth.local"
         )
-        or f"/auth/v1/providers/{provider}/callback" not in redirect_uri
+        or f"/auth/oauth2/{provider}/callback" not in redirect_uri
         or not state
         or request.args.get("scope") != EXPECTED_SCOPES[provider]
     ):

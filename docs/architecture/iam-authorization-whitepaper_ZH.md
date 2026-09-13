@@ -216,7 +216,7 @@ authn:
       issuer: https://sso.example.com/realms/corporate
       clientId: authguard
       clientSecret: ${AUTHGUARD_CORPORATE_OIDC_CLIENT_SECRET}
-      callbackUrl: https://app.example.com/auth/v1/providers/corporate-oidc/callback
+      callbackUrl: https://app.example.com/auth/oauth2/corporate-oidc/callback
       scopes: [openid, profile, email]
       userinfo: true
       # 可选的 RFC 7662 机器令牌转换；浏览器 Authorization Code 登录仍会
@@ -485,8 +485,10 @@ migrations/                     唯一权威 IAM schema
 
 AuthN 与 AuthZ 默认使用同一个逻辑 IAM 数据库和同一个 schema，不要求拆成两个 DB。
 `iam_principal` 只定义一次，作为共享 aggregate root；AuthN 拥有
-`iam_principal_identity` 和临时 `iam_authn_flow`，AuthZ 拥有 policy/action/role/binding
-表。唯一顶层 migration 在启动时串行执行。该表所有权边界既消除了重复 DDL，也保留了
+`iam_principal_identity` 和唯一的 `iam_standalone_credential` 表，AuthZ 拥有
+policy/action/role/binding 表。OAuth、MFA、WebAuthn、SIWX challenge 均是 Redis 中带 TTL
+且原子单次消费的瞬态数据，不属于持久 IAM 模型。唯一顶层 migration 在启动时串行执行。
+该表所有权边界既消除了重复 DDL，也保留了
 未来确有需要时物理拆库的可能。
 
 配置初始化遵循 Spring Boot-like 优先级：`内置默认值 < authguard.yaml < 环境变量`。

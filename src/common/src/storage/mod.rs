@@ -12,8 +12,8 @@ mod principal_postgres;
 mod principal_sqlite;
 
 pub use authn::{
-    AuthnFlowRepository, AuthnFlowRepositoryError, AuthnPostgresRepository, AuthnSqliteRepository,
-    IamAuthFlowInfo, IdentityBindingRepository, IdentityRepositoryError,
+    AuthnPostgresRepository, AuthnSqliteRepository, CredentialRepositoryError,
+    IdentityBindingRepository, IdentityRepositoryError, StandaloneCredentialRepository,
 };
 pub use authz::{
     AuthzPostgresRepository, AuthzSqliteRepository, PolicyRepository, PrincipalIdentityConflict,

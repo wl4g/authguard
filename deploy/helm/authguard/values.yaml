@@ -198,7 +198,35 @@ authguard:
         timeout: 5s
         sample_rate: 1.0
     authn:
+      challengeTtl: 5m
       providers: {}
+      standalone:
+        enabled: false
+        issuer: authguard:standalone
+        credentialEncryptionKey: ""
+        password:
+          minLength: 12
+        totp:
+          enabled: false
+          issuer: AuthGuard
+          digits: 6
+          stepSeconds: 30
+          skew: 1
+        webauthn:
+          enabled: false
+          rpId: ""
+          rpOrigin: ""
+          rpName: AuthGuard
+      wallet:
+        enabled: false
+        domain: ""
+        uri: ""
+        statement: Sign in to AuthGuard
+        rpcTimeout: 5s
+        chains:
+          eip155: {}
+          solana: []
+          bip122: {}
       accountLinking:
         # explicit: authoritative login + authenticated explicit linking.
         # first-login: any unbound identity creates a Principal (2C signup).
@@ -206,6 +234,12 @@ authguard:
         strategy: explicit
         authoritativeProviders: []
         allowLink: {}
+      session:
+        issuer: authguard-authn
+        audience: authguard
+        ttl: 5m
+        privateKey: ""
+        privateKeyFile: ""
     authz:
       # Envoy verifies AuthN's canonical token before forwarding it to AuthZ.
       # Unknown principal_id values always fail closed. Authentication-only 2C
