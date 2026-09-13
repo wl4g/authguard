@@ -9,6 +9,7 @@ import time
 
 from common.config import CONFIG_DIR, DEPLOY_DIR
 from common.model import RunContext, VerificationResult
+from verifier.base_verifier import BaseVerifier
 
 
 PROJECT_SOURCES = {
@@ -59,7 +60,7 @@ PROJECT_EXECUTION_TESTS = {
 }
 
 
-def verify(_context: RunContext) -> VerificationResult:
+def _verify(_context: RunContext) -> VerificationResult:
     started = time.monotonic()
     errors: list[str] = []
     sql = (CONFIG_DIR / "init.sql").read_text(encoding="utf-8")
@@ -69,8 +70,8 @@ def verify(_context: RunContext) -> VerificationResult:
     mock_idp = (DEPLOY_DIR / "mocksvc-idp-service/app/server.py").read_text(
         encoding="utf-8"
     )
-    gateway_verifier = (
-        DEPLOY_DIR.parent / "common/kubernetes.py"
+    authorization_verifier = (
+        DEPLOY_DIR.parent / "verifier/s17_gateway_authorization_verifier.py"
     ).read_text(encoding="utf-8")
 
     with sqlite3.connect(":memory:") as connection:
@@ -173,9 +174,25 @@ def verify(_context: RunContext) -> VerificationResult:
         "create denied by AuthZ",
         "forbidden create Envoy ext_authz.denied",
         "workload without create action is rejected by AuthZ",
+        "all five PostgreSQL schemas exactly match",
+        "row matrix verified",
     )
-    if missing := [value for value in gateway_contracts if value not in gateway_verifier]:
+    if missing := [
+        value for value in gateway_contracts if value not in authorization_verifier
+    ]:
         errors.append(f"real gateway resource-authorization assertions are incomplete: {missing}")
+    row_oracle_principals = (
+        "principal-direct-reader",
+        "principal-token-editor",
+        "principal-no-data-reader",
+        "principal-growth-job-runner",
+    )
+    if missing := [
+        principal
+        for principal in row_oracle_principals
+        if principal not in authorization_verifier
+    ]:
+        errors.append(f"phase 17 row-access oracle is incomplete: {missing}")
 
     urn_prefix = "urn:iam:prod:customer-growth:"
     for scenario in scenarios:
@@ -249,3 +266,15 @@ def verify(_context: RunContext) -> VerificationResult:
         duration_seconds=time.monotonic() - started,
         details=details,
     )
+
+
+class FixtureConsistencyVerifier(BaseVerifier):
+    scenario_id = "02"
+    title = "Shared SQL and authorization fixture consistency"
+
+    def run(self) -> VerificationResult:
+        return self.step("validate SQL seeds and all authorization scenario contracts", lambda: _verify(self.context))
+
+
+def verify(context: RunContext) -> VerificationResult:
+    return FixtureConsistencyVerifier(context).run()

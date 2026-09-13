@@ -2,7 +2,16 @@
 
 from common.model import RunContext, VerificationResult
 from common.project import verify_project
+from verifier.base_verifier import BaseVerifier
+
+
+class SpringBootJpaVerifier(BaseVerifier):
+    scenario_id = "14"
+    title = "Spring Boot + JPA + H2"
+
+    def run(self) -> VerificationResult:
+        return verify_project(self.context, self.scenario_id, "springboot-jpa-service")
 
 
 def verify(context: RunContext) -> VerificationResult:
-    return verify_project(context, "14", "springboot-jpa-service")
+    return SpringBootJpaVerifier(context).run()

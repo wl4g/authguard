@@ -2,7 +2,16 @@
 
 from common.model import RunContext, VerificationResult
 from common.project import verify_project
+from verifier.base_verifier import BaseVerifier
+
+
+class PythonSqlalchemyVerifier(BaseVerifier):
+    scenario_id = "12"
+    title = "Python + SQLAlchemy + SQLite"
+
+    def run(self) -> VerificationResult:
+        return verify_project(self.context, self.scenario_id, "python-sqlalchemy-service")
 
 
 def verify(context: RunContext) -> VerificationResult:
-    return verify_project(context, "12", "python-sqlalchemy-service")
+    return PythonSqlalchemyVerifier(context).run()

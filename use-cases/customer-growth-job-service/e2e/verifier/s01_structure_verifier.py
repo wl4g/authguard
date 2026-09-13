@@ -6,6 +6,7 @@ import time
 
 from common.config import CONFIG_DIR, DEPLOY_DIR, PROJECT_ROOT, PROJECTS, USE_CASE_DIR
 from common.model import RunContext, VerificationResult
+from verifier.base_verifier import BaseVerifier
 
 
 REQUIRED_PATHS = {
@@ -158,11 +159,22 @@ REAL_E2E_VERIFIERS = (
     "s21_runtime_evidence_verifier.py",
 )
 
+KUBERNETES_FORBIDDEN_METHODS = (
+    "verify_principal_preauthorization",
+    "verify_authentication",
+    "verify_gateway_authorization",
+    "verify_runtime_evidence",
+    "_http",
+    "_api_http",
+    "_expect_status",
+    "_expect_job_ids",
+)
+
 E2E_RESOURCE_PREFIX = "e2e-authguard-"
 E2E_SQL_PREFIX = "e2e_authguard_"
 
 
-def verify(_context: RunContext) -> VerificationResult:
+def _verify(_context: RunContext) -> VerificationResult:
     started = time.monotonic()
     errors: list[str] = []
     actual_projects = {
@@ -179,6 +191,8 @@ def verify(_context: RunContext) -> VerificationResult:
         if not (CONFIG_DIR / file_name).is_file():
             errors.append(f"missing shared config/{file_name}")
     verifier_dir = USE_CASE_DIR / "e2e" / "verifier"
+    if not (verifier_dir / "base_verifier.py").is_file():
+        errors.append("missing shared verifier/base_verifier.py")
     for verifier in REAL_E2E_VERIFIERS:
         if not (verifier_dir / verifier).is_file():
             errors.append(f"missing ordered real-E2E verifier/{verifier}")
@@ -205,6 +219,32 @@ def verify(_context: RunContext) -> VerificationResult:
         for endpoint in ("/api/services", "/api/traces?", "/api/traces/")
     ):
         errors.append("Jaeger API verification must not leak into Kubernetes orchestration")
+    leaked_methods = [
+        method
+        for method in KUBERNETES_FORBIDDEN_METHODS
+        if f"def {method}(" in kubernetes_source
+    ]
+    if leaked_methods:
+        errors.append(
+            f"Kubernetes infrastructure contains verifier responsibilities: {leaked_methods}"
+        )
+    runner_source = (USE_CASE_DIR / "e2e/runner.py").read_text(encoding="utf-8")
+    cleanup_contract = (
+        '"--cleanup-after-run"',
+        "finally:",
+        "cleanup_deployment(context)",
+        "KubernetesE2E(context).cleanup()",
+    )
+    if missing := [marker for marker in cleanup_contract if marker not in runner_source]:
+        errors.append(f"runner cleanup lifecycle is incomplete: {missing}")
+    if "def cleanup(" not in kubernetes_source:
+        errors.append("Kubernetes infrastructure must expose one cleanup lifecycle")
+    for verifier in REAL_E2E_VERIFIERS:
+        if verifier == "s20_observability_contract.py":
+            continue
+        source = (verifier_dir / verifier).read_text(encoding="utf-8")
+        if "class " not in source or "(BaseVerifier)" not in source:
+            errors.append(f"{verifier}: scenario must be a BaseVerifier subclass")
 
     deployment_sources = "\n".join(
         path.read_text(encoding="utf-8")
@@ -288,6 +328,7 @@ def verify(_context: RunContext) -> VerificationResult:
         "Real k3s phases are ordered 00 deployment -> 15 pre-authorization -> "
         "16 AuthN -> 17 Envoy/AuthZ/Biz -> 21 runtime evidence; phase 20 is their "
         "shared fail-closed observability contract",
+        "Runner supports opt-in cleanup of all Helm releases and the isolated namespace",
     ]
     details.extend(errors)
     return VerificationResult(
@@ -297,3 +338,15 @@ def verify(_context: RunContext) -> VerificationResult:
         duration_seconds=time.monotonic() - started,
         details=details,
     )
+
+
+class StructureVerifier(BaseVerifier):
+    scenario_id = "01"
+    title = "Use-case structure and project boundaries"
+
+    def run(self) -> VerificationResult:
+        return self.step("inspect source, deployment, and verifier boundaries", lambda: _verify(self.context))
+
+
+def verify(context: RunContext) -> VerificationResult:
+    return StructureVerifier(context).run()

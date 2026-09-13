@@ -8,6 +8,7 @@ from pathlib import Path
 
 from common.config import ADAPTERS_DIR
 from common.model import RunContext, VerificationResult
+from verifier.base_verifier import BaseVerifier
 
 
 EXPECTED_CASES = 46
@@ -52,7 +53,7 @@ def _scenario_sets() -> dict[str, set[str]]:
     }
 
 
-def verify(_context: RunContext) -> VerificationResult:
+def _verify(_context: RunContext) -> VerificationResult:
     started = time.monotonic()
     scenarios = _scenario_sets()
     canonical = scenarios["java"]
@@ -78,3 +79,15 @@ def verify(_context: RunContext) -> VerificationResult:
         duration_seconds=time.monotonic() - started,
         details=details,
     )
+
+
+class AdapterContractVerifier(BaseVerifier):
+    scenario_id = "03"
+    title = "Cross-language adapter contract parity"
+
+    def run(self) -> VerificationResult:
+        return self.step("compare all Go/Rust/Python/Java adapter cases", lambda: _verify(self.context))
+
+
+def verify(context: RunContext) -> VerificationResult:
+    return AdapterContractVerifier(context).run()

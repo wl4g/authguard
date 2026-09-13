@@ -90,12 +90,16 @@ Run repeated clean rebuilds or one verifier directly:
 python3 use-cases/customer-growth-job-service/e2e/runner.py --rounds 3
 python3 use-cases/customer-growth-job-service/e2e/runner.py --scenario 12
 python3 use-cases/customer-growth-job-service/e2e/runner.py --list
+python3 use-cases/customer-growth-job-service/e2e/runner.py --scenario 00,15,16,17,21 --cleanup-after-run
 ```
 
 By default, every round removes project-local generated artifacts and performs
 a fresh project build before testing. `--skip-clean` is available for local
 diagnosis. Reports are written to `e2e/reports/`; previous reports are archived
 before the next invocation.
+Kubernetes resources are retained by default for troubleshooting. Add
+`--cleanup-after-run` to uninstall all three E2E Helm releases and delete the
+isolated namespace after success, failure, or interruption.
 
 Run the real Kubernetes path on local k3s:
 

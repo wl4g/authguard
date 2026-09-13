@@ -19,6 +19,7 @@ from common import (
     write_round_report,
     write_summary,
 )
+from common.kubernetes import KubernetesE2E
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,6 +54,14 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=900,
         help="Per-command timeout in seconds.",
+    )
+    parser.add_argument(
+        "--cleanup-after-run",
+        action="store_true",
+        help=(
+            "Uninstall all E2E Helm releases and delete the isolated namespace "
+            "after the run, including after failure or interruption."
+        ),
     )
     return parser.parse_args()
 
@@ -90,6 +99,19 @@ def run_verifier(scenario_id: str, context: RunContext) -> VerificationResult:
         )
 
 
+def cleanup_deployment(context: RunContext) -> bool:
+    started = time.monotonic()
+    print("\n  [cleanup] Remove E2E Helm releases and namespace", flush=True)
+    try:
+        KubernetesE2E(context).cleanup()
+    except Exception:
+        print(f"  [cleanup] FAIL ({time.monotonic() - started:.2f}s)", flush=True)
+        traceback.print_exc()
+        return False
+    print(f"  [cleanup] PASS ({time.monotonic() - started:.2f}s)", flush=True)
+    return True
+
+
 def main() -> int:
     args = parse_args()
     if args.list:
@@ -112,35 +134,53 @@ def main() -> int:
     if archive:
         print(f"Archived previous reports: {archive}")
 
-    all_rounds: list[list[VerificationResult]] = []
-    for round_number in range(1, args.rounds + 1):
-        print(f"\nRound {round_number}/{args.rounds}")
-        context = RunContext(
-            round_number=round_number,
-            clean=not args.skip_clean,
-            timeout_seconds=args.timeout,
-            build_images=not args.skip_image_build,
-        )
-        results: list[VerificationResult] = []
-        for scenario_id in scenario_ids:
-            title = SCENARIOS[scenario_id][0]
-            print(f"  [{scenario_id}] {title} ... ", end="", flush=True)
-            result = run_verifier(scenario_id, context)
-            results.append(result)
-            write_round_report(round_number, result)
-            status = "PASS" if result.passed else "FAIL"
-            print(f"{status} ({result.duration_seconds:.2f}s)")
-        if matrix := verify_scenario_matrix(results):
-            results.append(matrix)
-            write_round_report(round_number, matrix)
-            status = "PASS" if matrix.passed else "FAIL"
-            print(f"  [18] {matrix.title} ... {status}")
-        all_rounds.append(results)
+    context = RunContext(
+        round_number=args.rounds,
+        clean=not args.skip_clean,
+        timeout_seconds=args.timeout,
+        build_images=not args.skip_image_build,
+    )
+    exit_code = 1
+    try:
+        all_rounds: list[list[VerificationResult]] = []
+        for round_number in range(1, args.rounds + 1):
+            print(f"\nRound {round_number}/{args.rounds}")
+            context = RunContext(
+                round_number=round_number,
+                clean=not args.skip_clean,
+                timeout_seconds=args.timeout,
+                build_images=not args.skip_image_build,
+            )
+            results: list[VerificationResult] = []
+            for scenario_id in scenario_ids:
+                title = SCENARIOS[scenario_id][0]
+                print(f"  [{scenario_id}] {title}", flush=True)
+                result = run_verifier(scenario_id, context)
+                results.append(result)
+                write_round_report(round_number, result)
+                status = "PASS" if result.passed else "FAIL"
+                print(
+                    f"  [{scenario_id}] {status} ({result.duration_seconds:.2f}s)",
+                    flush=True,
+                )
+            if matrix := verify_scenario_matrix(results):
+                results.append(matrix)
+                write_round_report(round_number, matrix)
+                status = "PASS" if matrix.passed else "FAIL"
+                print(f"  [18] {matrix.title} ... {status}")
+            all_rounds.append(results)
 
-    summary = write_summary(all_rounds)
-    passed = all(result.passed for results in all_rounds for result in results)
-    print(f"\nSummary: {summary}")
-    return 0 if passed else 1
+        summary = write_summary(all_rounds)
+        passed = all(result.passed for results in all_rounds for result in results)
+        print(f"\nSummary: {summary}")
+        exit_code = 0 if passed else 1
+    except KeyboardInterrupt:
+        print("\nE2E interrupted by user.", file=sys.stderr, flush=True)
+        exit_code = 130
+    finally:
+        if args.cleanup_after_run and not cleanup_deployment(context) and exit_code == 0:
+            exit_code = 1
+    return exit_code
 
 
 if __name__ == "__main__":
