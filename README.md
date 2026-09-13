@@ -1,185 +1,178 @@
-# AuthGuard
+# AuthGuard — one edge, one identity, one authorization decision
 
-AuthGuard is a standalone, unified, high-performance authentication and resource-authorization product with first-class Envoy Gateway integration.
+AuthGuard is a standalone, high-performance AuthN/AuthZ product for enterprise and internet applications. Envoy Gateway owns the edge and acts as the PEP; AuthGuard normalizes real-world OIDC/OAuth-like identities, links them to one stable Principal, and authorizes that Principal against resource-level policy.
 
-Its default runtime consists of exactly three components:
+```mermaid
+flowchart LR
+    subgraph Requesters[External requesters — same trust boundary]
+        Browser[Browser / human user]
+        Workload[Workload / external business system]
+    end
+    Admin[Enterprise administrator]
+    EnterpriseIAM[Enterprise DSP / IAM platform]
 
-```text
-Envoy Gateway
-authguard-authn
-authguard-authz
+    subgraph Edge[Edge / PEP(Policy Enforcement Point)]
+        Envoy[Envoy Gateway<br/>TLS · routing · jwt_authn · ext_authz]
+    end
+
+    subgraph Guard[AuthGuard — one image, two runtime services]
+        AuthN[authguard-authn<br/>OIDC / OAuth-like token exchange<br/>identity normalization · account linking<br/>sign canonical principal_id JWT]
+        AuthZ[authguard-authz<br/>policy lookup by principal_id<br/>ALLOW / DENY · scope · JWT re-sign]
+        IAM[(Shared IAM database<br/>Principal · Identity Binding<br/>Role · Action · RoleBinding)]
+        Cache[(Redis<br/>opaque authorization scopes)]
+        AuthN <--> IAM
+        AuthZ <--> IAM
+        AuthZ <--> Cache
+    end
+
+    IdP[External IdPs<br/>Keycloak · Entra · GitHub<br/>Google · WeChat · Corporate DSP]
+    Directory[Enterprise directories<br/>Keycloak Admin API · LDAP · Custom HTTP]
+    Biz[Biz microservices<br/>verify AuthGuard re-signed JWT<br/>apply SQL/resource scope]
+
+    Browser <-->|1a. authorization redirect| IdP
+    Workload <-->|1b. workload grant / proprietary login| IdP
+    Browser -->|2. authorize + callback through edge| Envoy
+    Workload -->|2. token exchange through edge| Envoy
+    Envoy -->|3. authentication routes| AuthN
+    AuthN <-->|4. code / token / ID Token / UserInfo| IdP
+    AuthN -->|5. canonical JWT response| Envoy
+
+    Browser -->|6. Biz request + canonical JWT| Envoy
+    Workload -->|6. Biz request + canonical JWT| Envoy
+    Envoy -->|7. ext_authz with principal_id| AuthZ
+    AuthZ -->|8. ALLOW / DENY + resource scope<br/>short-lived authguardOrigin JWT| Envoy
+    Envoy -->|9. authorized request| Biz
+
+    Admin -->|A. pre-authorize / CRUD| AuthZ
+    AuthZ -->|B. pull candidate search| Directory
+    EnterpriseIAM -->|C. SCIM push lifecycle changes<br/>/scim/v2/Users · /scim/v2/Groups| AuthZ
 ```
 
-Envoy owns the edge and acts as the PEP. AuthN authenticates and normalizes external identities, including account linking. AuthZ authorizes one stable canonical Principal. External IdPs remain external.
+The model has four boundaries: external Providers prove an identity; AuthN
+normalizes it and resolves an identity binding; AuthZ sees only the internal
+stable `principal_id`; Biz services accept only requests that passed Envoy and
+apply the returned Resource URN scope. Browser and Workload are peer external
+requesters; only their authentication grants differ. Keycloak/LDAP pull discovery
+and SCIM push provisioning are complementary optional integrations, never runtime
+dependencies.
 
-Keycloak is supported as an optional enterprise IdP and Principal-discovery integration, but is never required or deployed by the AuthGuard chart. AuthGuard introduces no Kubernetes CRD/Controller and does not implement OAuth login in Lua or Wasm.
+- One `authguard` binary and image: `authn`, `authz`, and `console` subcommands.
+- One shared `authguard.yaml`; Provider configuration describes protocol only, while account-linking policy owns account governance.
+- GitHub is OAuth2, not OIDC; ID Token and UserInfo are different artifacts. Provider-specific IDs and tokens never enter AuthZ.
+- Keycloak, Entra, LDAP, SCIM, DSP, and social IdPs are integrations—never runtime dependencies.
+- No AuthGuard CRD/controller, no Lua/Wasm OAuth implementation, and no email-based automatic linking.
 
-## Modules
+## 1. Build and run
 
-```text
-src/authn/       authguard-authn
-  provider/      OAuth/OAuth-like adapter and minimal Provider SPI
-  principal/jit.rs  policy-gated identity binding/JIT Principal resolution
-  route/         authentication entry points
-  handler/       authentication flow orchestration
-  server.rs      process initialization and listener lifecycle
-
-src/common/      authguard-common
-  config/        one AppConfig model/singleton; YAML plus nested env overrides
-  model/         principal.rs, identity.rs, role.rs, policy.rs
-  storage/       entity-neutral DB bases plus one aggregate repo per service/DB
-  principal/     common discovery contract and HTTP directory connector
-  route/         shared management endpoints
-  apm/cache/utils
-                 shared observability, cache, access-context and matcher utilities
-
-src/authz/        authguard-authz
-  handler/       authorization management and Envoy ext_authz orchestration
-  route/         authorization management and Envoy ext_authz entry points
-  principal/     optional control-plane Keycloak/LDAP/SCIM discovery
-  server.rs      AuthZ process initialization and listeners
-
-src/adapters/    workload access-context SDKs
-use-cases/       cross-language business-service E2E examples
-deploy/          Envoy Gateway + AuthN + AuthZ Helm deployment
-migrations/      the single authoritative IAM schema for both services
-```
-
-The Rust package names are `authguard-authn`, `authguard-authz`, and
-`authguard-common`. Both services and the Rust workload SDK depend inward on
-`common`; AuthN and AuthZ never depend on each other.
-
-Configuration precedence is `defaults < authguard.yaml < environment`.
-Any nested property can be overridden with a double-underscore path, such as
-`AUTHGUARD__AUTHN__SESSION__AUDIENCE` or
-`AUTHGUARD__STORAGE__POSTGRES__MAX_CONNECTIONS`.
-
-## Identity model
-
-An external identity is not a Principal:
-
-```text
-ExternalIdentity(provider, issuer, subject, claims)
-  -> Account Linking / iam_principal_identity
-  -> Principal(internal stable principal_id, kind, status)
-```
-
-One Principal can bind multiple external identities. `(provider, issuer, subject)` is globally unique in the identity-binding table, while every AuthZ RoleBinding references only `principal_id`.
-
-AuthN emits:
-
-```text
-AuthenticatedPrincipalContext {
-  principalId
-  kind
-  stableGroupIds
-  trustedClaims
-  acr
-  amr
-}
-```
-
-AuthZ rejects unknown or disabled canonical Principals and never JIT-creates one from `iss/sub`. GitHub IDs, WeChat openid/unionid, DSP tokens, OAuth codes, and Provider access tokens never enter AuthZ.
-
-## Configuration
-
-Both services read the same [`etc/authguard.yaml`](etc/authguard.yaml). Each process deserializes only the section it owns; there is no second AuthN configuration file.
-
-Provider YAML describes protocol mechanics only. Account governance is centralized:
-
-```yaml
-authn:
-  providers:
-    github:
-      type: oauth2
-      issuer: https://github.com
-      authorization:
-        endpoint: https://github.com/login/oauth/authorize
-        scopes: [read:user, user:email]
-      token:
-        endpoint: https://github.com/login/oauth/access_token
-        method: POST
-      identity:
-        endpoint: https://api.github.com/user
-        subject: $.id
-        username: $.login
-        email: $.email
-
-    corporate-dsp:
-      type: custom
-      adapter: corporate-dsp
-      issuer: https://dsp.example.com
-
-  accountLinking:
-    strategy: explicit
-    authoritativeProviders: [corporate-dsp]
-    allowLink:
-      corporate-dsp: [github, wechat]
-```
-
-The default strategy is `explicit`; equal email addresses never cause automatic linking. Internet deployments may explicitly choose `first-login`.
-
-AuthZ reads its canonical identity claims from the same file:
-
-```yaml
-authz:
-  identity:
-    token_header: authorization
-    principal_id_claim: principal_id
-    principal_kind_claim: principal_kind
-    groups_claim: authguard_group_ids
-```
-
-## Request path
-
-The normal hot path is:
-
-```text
-client -> Envoy Gateway jwt_authn -> authguard-authz ext_authz -> business service
-```
-
-Standard OIDC should prefer Envoy Gateway native OIDC/JWT support. AuthN maps the verified external identity to a canonical Principal at login/session establishment. GitHub, WeChat, and proprietary DSP callback/token/identity differences remain in AuthN behind Envoy.
-
-An allowed AuthZ response carries exactly one authorization-scope form:
-
-- `x-authguard-context`: a short-lived HMAC-SHA256-signed direct context; or
-- `x-authguard-scope-token`: a short-lived opaque token resolved through `authguard.access.v1.AccessContextService/ResolveScope`.
-
-The optional `authz.resign_token` replaces the upstream authorization header with an AuthZ-signed RS256 JWT whose `sub` and `principal_id` are the canonical Principal ID. Provider subject values are not reintroduced.
-
-## Run
-
-Run both services against the same configuration:
+Requirements: Rust 1.88+, Go 1.24+, JDK 21, Python 3.12, Helm 3.17+, and a Docker-compatible builder.
 
 ```bash
-AUTHGUARD_CONFIG_FILE=etc/authguard.yaml \
-cargo run -p authguard-authn --bin authguard-authn
+git clone https://github.com/wl4g/authguard.git
+cd authguard
+make build
 
-AUTHGUARD_CONFIG_FILE=etc/authguard.yaml \
-cargo run -p authguard-authz --bin authguard-authz
+# Both services read the same file.
+./target/debug/authguard --config etc/authguard.yaml authn --bind 0.0.0.0:8082
+./target/debug/authguard --config etc/authguard.yaml authz
+
+# Interactive control-plane console, or append a batch operation.
+AUTHGUARD_CONSOLE_TOKEN='<control-plane-secret>' \
+  ./target/debug/authguard console --endpoint http://127.0.0.1:9091
 ```
 
-The AuthZ defaults use SQLite and an in-memory scope-token cache for local development. Use PostgreSQL and Redis for multi-replica deployments.
+`make test` runs Rust, adapter, use-case, and Helm checks. `make release` builds the release binary inside the image builder, publishes `ghcr.io/wl4g/authguard` plus the Aliyun mirror, publishes the chart to `oci://ghcr.io/wl4g/charts/authguard`, and pull-verifies it.
 
-Install the default Envoy Gateway + AuthN + AuthZ topology:
+## 2. Deploy with Helm
+
+Create the referenced Secret through your secret manager, then install the immutable OCI chart:
 
 ```bash
-helm upgrade --install authguard deploy/helm/authguard \
-  --namespace authguard \
-  --create-namespace
+helm upgrade --install authguard oci://ghcr.io/wl4g/charts/authguard \
+  --version 0.1.0 \
+  --namespace authguard --create-namespace \
+  --set authguard.authn.image.repository=ghcr.io/wl4g/authguard \
+  --set authguard.authz.image.repository=ghcr.io/wl4g/authguard \
+  --set secrets.kubernetes.existingSecret=authguard-runtime
 ```
 
-The chart mounts one `authguard.yaml` ConfigMap into both AuthN and AuthZ. Existing Envoy Gateway installations can set `envoy_gateway.enabled=false` while retaining AuthGuard integration.
+Choose the smallest topology that matches the product:
 
-## Verify
+| Scenario | AuthN | AuthZ | Account-linking policy |
+|---|---:|---:|---|
+| 2B collaboration and administrator pre-authorization | on | on | `explicit`; corporate IdP is authoritative |
+| 2C with resource/tenant authorization | on | on | `first-login`; every new external identity may create a Principal |
+| 2C authentication-only application | on | off | application owns its own coarse access rules |
 
-Before Rust builds, confirm `target/` is below 10 GiB; clean it first if necessary.
+Authentication-only 2C deployment:
 
 ```bash
-cargo fmt --all -- --check
-cargo test --workspace --all-targets
+helm upgrade --install authguard oci://ghcr.io/wl4g/charts/authguard \
+  --version 0.1.0 --namespace authguard --create-namespace \
+  --set authguard.authz.enabled=false \
+  --set envoy_gateway.ext_authz.enabled=false
 ```
 
-The repository also contains Helm rendering checks and portable/k3s cross-language E2E scenarios under [`use-cases/customer-growth-job-service`](use-cases/customer-growth-job-service/README.md).
+When AuthZ is disabled, do not attach Envoy `ext_authz`; standard OIDC and OAuth-like login still go through AuthN, and Envoy accepts only the resulting canonical AuthN JWT. When AuthZ is enabled, an unknown or disabled `principal_id` always fails closed.
 
-See the [architecture overview](docs/architecture/overview.md) and [full whitepaper](docs/architecture/iam-authorization-whitepaper.md).
+Both Deployments mount the same `authguard.authguard-config`. Supply a complete production file with `--set-file authguard.authguard-config=authguard.yaml`; nested values can also be overridden by `AUTHGUARD__...` environment variables.
+
+Enterprise federation uses renewable credentials, not pasted access tokens:
+
+- Keycloak discovery stores a confidential service-account `client_id`/`client_secret`; AuthGuard performs `client_credentials` and refreshes the access token before Admin REST calls.
+- LDAP uses a least-privilege bind DN/password because LDAP bind does not issue JWTs.
+- SCIM is push provisioning. The enterprise provisioner obtains its own short-lived workload credential and calls the protected RFC 7644 `/scim/v2/Users` and `/scim/v2/Groups` resources; no SCIM access token is stored in `authguard.yaml`.
+- Secrets belong in Kubernetes Secret, Vault, AWS Secrets Manager, or GCP Secret Manager references. Keycloak remains optional and is never installed by this chart.
+
+See [`deploy/helm/authguard/values.yaml`](deploy/helm/authguard/values.yaml) for connector examples and [`etc/authguard.yaml`](etc/authguard.yaml) for the complete shared schema.
+
+## 3. Pre-authorize with the console
+
+The console talks only to AuthZ `/api/v1`; it preserves validation, reference checks, cache invalidation, logs, metrics, and optimistic policy revision control.
+
+```bash
+export AUTHGUARD_CONSOLE_ENDPOINT=http://authguard.authguard.svc:9091
+export AUTHGUARD_CONSOLE_TOKEN='<control-plane-secret>'
+
+# Federated administrator flow: search, materialize, then bind a role.
+authguard console discover --file principal-search.json
+authguard console materialize --file principal-materialization.json
+authguard console create action --file action.json
+authguard console create role --file role.json
+authguard console create role-binding --file role-binding.json
+
+authguard console list principals
+authguard console policy get
+authguard console status
+```
+
+## 4. Access a protected Biz service
+
+Browser user through a social/OAuth-like Provider:
+
+```text
+Open https://app.example.com/auth/v1/providers/github/authorize
+  → Envoy → AuthN authorize/callback/token exchange/UserInfo
+  → ExternalIdentity → identity binding → canonical principal_id
+  → Envoy jwt_authn → AuthZ ext_authz → Biz UI/API
+```
+
+Workload through enterprise OAuth2 client credentials:
+
+```bash
+EXTERNAL_TOKEN=$(curl -fsS https://idp.example.com/oauth2/token \
+  -u "${CLIENT_ID}:${CLIENT_SECRET}" \
+  -d grant_type=client_credentials -d audience=customer-growth-job-service \
+  | jq -r .access_token)
+
+WORKLOAD_TOKEN=$(curl -fsS https://app.example.com/auth/v1/providers/corporate-oidc/token-exchange \
+  -H 'content-type: application/json' \
+  -d "{\"subjectToken\":\"${EXTERNAL_TOKEN}\",\"kind\":\"WORKLOAD\"}" \
+  | jq -r .accessToken)
+
+curl -fsS https://jobs.example.com/api/v1/customer-growth/jobs \
+  -H "Authorization: Bearer ${WORKLOAD_TOKEN}"
+```
+
+The hot path is `Envoy jwt_authn → AuthGuard ext_authz → Biz Service`. Business services see canonical identity and signed/opaque authorization scope only. The reproducible Helm-to-database/log/metric/Jaeger validation lives in [`use-cases/customer-growth-job-service/e2e`](use-cases/customer-growth-job-service/e2e).
+
+Architecture details: [`docs/architecture/iam-authorization-whitepaper.md`](docs/architecture/iam-authorization-whitepaper.md).

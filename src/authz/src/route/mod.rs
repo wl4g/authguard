@@ -1,6 +1,7 @@
 pub mod authorization;
 pub mod policy;
 pub mod principal;
+pub mod scim;
 
 use std::sync::Arc;
 
@@ -14,7 +15,8 @@ use axum::{Json, Router};
 
 use self::policy::PolicyRoutes;
 use self::principal::PrincipalRoutes;
-use crate::handler::{PolicyHandler, PrincipalHandler};
+use self::scim::ScimRoutes;
+use crate::handler::{PolicyHandler, PrincipalHandler, PrincipalHandlerError};
 
 /// Authenticated composition of `AuthGuard`'s control-plane APIs.
 pub struct ApiRoutes {
@@ -112,12 +114,50 @@ impl ApiRoutes {
     pub fn router(self) -> Router {
         PolicyRoutes::new(self.policy)
             .router()
-            .merge(PrincipalRoutes::new(self.principals).router())
+            .merge(PrincipalRoutes::new(self.principals.clone()).router())
+            .merge(ScimRoutes::new(self.principals).router())
             .route_layer(middleware::from_fn_with_state(
                 self.authenticator,
                 ApiAuthenticator::authenticate,
             ))
     }
+}
+
+fn principal_error(error: &PrincipalHandlerError) -> Response {
+    let (status, code) = match error {
+        PrincipalHandlerError::NotFound(_) => (StatusCode::NOT_FOUND, "principal_not_found"),
+        PrincipalHandlerError::Disabled(_) => (StatusCode::CONFLICT, "principal_disabled"),
+        PrincipalHandlerError::KindMismatch(_) => (StatusCode::CONFLICT, "principal_kind_mismatch"),
+        PrincipalHandlerError::Referenced(_) => {
+            (StatusCode::CONFLICT, "principal_still_referenced")
+        }
+        PrincipalHandlerError::IdentityConflict => {
+            (StatusCode::CONFLICT, "principal_identity_conflict")
+        }
+        PrincipalHandlerError::ProviderUnavailable => {
+            (StatusCode::SERVICE_UNAVAILABLE, "principal_discovery_unavailable")
+        }
+        PrincipalHandlerError::Discovery(_) => {
+            (StatusCode::BAD_GATEWAY, "principal_discovery_failed")
+        }
+        PrincipalHandlerError::Storage(_) => {
+            (StatusCode::SERVICE_UNAVAILABLE, "principal_storage_unavailable")
+        }
+    };
+    if matches!(error, PrincipalHandlerError::Storage(_)) {
+        tracing::error!(
+            authguard.principal.error_code = code,
+            %error,
+            "principal operation failed because storage is unavailable"
+        );
+    } else {
+        tracing::warn!(
+            authguard.principal.error_code = code,
+            %error,
+            "principal operation rejected"
+        );
+    }
+    (status, Json(ApiError::new(code, error.to_string()))).into_response()
 }
 
 impl HttpMetrics {

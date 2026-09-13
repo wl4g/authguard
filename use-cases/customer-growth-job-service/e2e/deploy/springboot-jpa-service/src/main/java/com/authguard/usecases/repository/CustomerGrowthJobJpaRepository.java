@@ -24,7 +24,7 @@ public class CustomerGrowthJobJpaRepository {
   public Optional<CustomerGrowthJobEntity> findByIdVisible(SqlScope scope, Long id) {
     Query query =
         entityManager.createNativeQuery(
-            "SELECT * FROM customer_growth_jobs WHERE id = ? AND (" + scope.where() + ")",
+            "SELECT * FROM e2e_authguard_customer_growth_jobs WHERE id = ? AND (" + scope.where() + ")",
             CustomerGrowthJobEntity.class);
     query.setParameter(1, id);
     bind(query, scope.args(), 2);
@@ -38,7 +38,7 @@ public class CustomerGrowthJobJpaRepository {
   public CustomerGrowthJobEntity updateVisible(SqlScope scope, CustomerGrowthJobEntity job) {
     Query query =
         entityManager.createNativeQuery(
-            "UPDATE customer_growth_jobs SET display_name = ?, status = ?, owner_user_id = ? "
+            "UPDATE e2e_authguard_customer_growth_jobs SET display_name = ?, status = ?, owner_user_id = ? "
                 + "WHERE id = ? AND ("
                 + scope.where()
                 + ")");
@@ -56,7 +56,7 @@ public class CustomerGrowthJobJpaRepository {
   public void deleteByIdVisible(SqlScope scope, Long id) {
     Query query =
         entityManager.createNativeQuery(
-            "DELETE FROM customer_growth_jobs WHERE id = ? AND (" + scope.where() + ")");
+            "DELETE FROM e2e_authguard_customer_growth_jobs WHERE id = ? AND (" + scope.where() + ")");
     query.setParameter(1, id);
     bind(query, scope.args(), 2);
     requireAffected(query.executeUpdate(), id);
@@ -96,7 +96,7 @@ public class CustomerGrowthJobJpaRepository {
         entityManager.createNativeQuery(
             "SELECT id, region, tenant_id, workspace_id, project_id, job_id "
                 + ", display_name, status, owner_user_id "
-                + "FROM customer_growth_jobs WHERE "
+                + "FROM e2e_authguard_customer_growth_jobs WHERE "
                 + String.join(" AND ", clauses)
                 + " ORDER BY region, tenant_id, workspace_id, project_id, job_id",
             CustomerGrowthJobEntity.class);

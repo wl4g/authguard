@@ -12,9 +12,9 @@ use crate::model::{IamPrincipalInfo, PrincipalKind, PrincipalStatus};
 use crate::principal::{
     validate_search_query, IPrincipalSearchDiscovery, PrincipalDiscoveryError,
     PrincipalMaterializationRequest, PrincipalProjection, PrincipalSearchPage,
-    PrincipalSearchQuery, ScimPrincipalDiscovery, ScimProjectionEvent, ScimProvisioningRequest,
+    PrincipalSearchQuery, ScimPrincipalDiscovery,
 };
-use crate::storage::{PrincipalReferenced, PrincipalRepository};
+use crate::storage::{PrincipalIdentityConflict, PrincipalReferenced, PrincipalRepository};
 use authguard_common::AuthenticatedPrincipalContext;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +33,8 @@ pub enum PrincipalHandlerError {
     KindMismatch(String),
     #[error("principal `{0}` is still referenced by a role binding")]
     Referenced(String),
+    #[error("external identity is already bound to another Principal")]
+    IdentityConflict,
     #[error("principal provider is not configured")]
     ProviderUnavailable,
     #[error("principal discovery failed: {0}")]
@@ -48,9 +50,9 @@ pub enum PrincipalHandlerError {
 /// disable and delete operations take effect without cache-revocation races.
 #[derive(Clone)]
 pub struct PrincipalHandler {
-    repository: Arc<dyn PrincipalRepository>,
+    pub(super) repository: Arc<dyn PrincipalRepository>,
     federated: Vec<Arc<dyn IPrincipalSearchDiscovery>>,
-    scim: Option<ScimPrincipalDiscovery>,
+    pub(super) scim: Option<ScimPrincipalDiscovery>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -236,50 +238,6 @@ impl PrincipalHandler {
         Ok(principal)
     }
 
-    /// Applies one normalized SCIM provisioning event to the local projection.
-    ///
-    /// SCIM DELETE is represented as a disabled tombstone so existing role
-    /// bindings and audit references remain intact.
-    ///
-    /// # Errors
-    ///
-    /// Returns validation or storage errors.
-    pub async fn apply_scim_projection(
-        &self,
-        event: ScimProjectionEvent,
-    ) -> Result<Option<IamPrincipalInfo>, PrincipalHandlerError> {
-        match event {
-            ScimProjectionEvent::Upsert { principal_id, projection } => {
-                self.upsert_external(&principal_id, projection, "SCIM").await.map(Some)
-            }
-            ScimProjectionEvent::Delete { principal_id } => {
-                let Some(principal) = self.get(&principal_id).await? else {
-                    tracing::debug!(
-                        authguard.principal.discovery = "SCIM",
-                        authguard.principal.operation = "disable",
-                        "SCIM deletion referenced an unknown canonical IamPrincipalInfo"
-                    );
-                    return Ok(None);
-                };
-                self.update_status(&principal.id, PrincipalStatus::Disabled).await.map(Some)
-            }
-        }
-    }
-
-    /// Normalizes and applies one SCIM provisioning change.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when SCIM is disabled or normalization/persistence fails.
-    pub async fn provision_scim(
-        &self,
-        request: ScimProvisioningRequest,
-    ) -> Result<Option<IamPrincipalInfo>, PrincipalHandlerError> {
-        let discovery = self.scim.as_ref().ok_or(PrincipalHandlerError::ProviderUnavailable)?;
-        let event = discovery.provision(request).await?;
-        self.apply_scim_projection(event).await
-    }
-
     /// Loads one locally projected principal.
     ///
     /// # Errors
@@ -398,11 +356,11 @@ impl PrincipalHandler {
         principals.extend(unique.into_values());
     }
 
-    async fn upsert_external(
+    pub(super) async fn upsert_external(
         &self,
         principal_id: &str,
         external: PrincipalProjection,
-        discovery: &'static str,
+        source: &'static str,
     ) -> Result<IamPrincipalInfo, PrincipalHandlerError> {
         let principal = IamPrincipalInfo {
             id: principal_id.to_string(),
@@ -415,10 +373,20 @@ impl PrincipalHandler {
             },
             authorization_state: BTreeMap::new(),
         };
-        let projected =
-            self.repository.upsert(&principal).await.map_err(PrincipalHandlerError::Storage)?;
+        let identity = crate::model::IamPrincipalIdentityInfo {
+            principal_id: principal_id.to_string(),
+            provider: external.reference.provider_id,
+            issuer: external.reference.issuer,
+            subject: external.reference.external_id,
+            claims: serde_json::Value::Object(external.attributes.into_iter().collect()),
+        };
+        let projected = self
+            .repository
+            .upsert_with_identity(&principal, &identity)
+            .await
+            .map_err(Self::map_storage_error)?;
         tracing::info!(
-            authguard.principal.discovery = discovery,
+            authguard.principal.source = source,
             authguard.principal_id = %projected.id,
             authguard.principal_kind = projected.kind.as_str(),
             authguard.principal_status = projected.status.as_str(),
@@ -428,6 +396,9 @@ impl PrincipalHandler {
     }
 
     fn map_storage_error(error: anyhow::Error) -> PrincipalHandlerError {
+        if error.downcast_ref::<PrincipalIdentityConflict>().is_some() {
+            return PrincipalHandlerError::IdentityConflict;
+        }
         if let Some(conflict) = error.downcast_ref::<PrincipalReferenced>() {
             return PrincipalHandlerError::Referenced(conflict.id.clone());
         }

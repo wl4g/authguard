@@ -1,5 +1,5 @@
 apiVersion: v2
-name: customer-growth-job-service-e2e
+name: e2e-authguard-customer-growth-job-service
 description: Self-contained LDAP, Keycloak, Jaeger, PostgreSQL, and five customer growth workloads for Authguard k3s E2E
 type: application
 version: 0.1.0

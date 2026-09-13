@@ -3,6 +3,8 @@ use std::{future::Future, sync::Arc, time::Duration};
 use anyhow::{anyhow, Context as _};
 use axum::http::StatusCode;
 use axum::{middleware, Router};
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine as _;
 use tonic::transport::Server;
 use tower::limit::ConcurrencyLimitLayer;
 use tower_http::catch_panic::CatchPanicLayer;
@@ -11,6 +13,7 @@ use tower_http::timeout::TimeoutLayer;
 
 use crate::cache::{self, IAuthorizationCache};
 use crate::config::{AppConfig, AppConfigProperties};
+use crate::handler::authorization::ResignSigner;
 use crate::handler::{DefaultAuthorizationHandler, PolicyHandler, PrincipalHandler};
 use crate::model::AccessContextSigner;
 use crate::principal::PrincipalDiscoveryComponent;
@@ -20,7 +23,7 @@ use authguard_common::apm::metrics::AuthzMetrics;
 use authguard_common::apm::propagate_http_trace_context;
 use authguard_common::apm::{init_telemetry, TelemetryConfig};
 use authguard_common::route::management::{self, ManagementState, ReadinessProbe};
-use authguard_common::utils::jwt::{self as resign, JwtSigningKey};
+use authguard_common::utils::jwt as resign;
 
 #[derive(Default)]
 pub struct AuthguardServer;
@@ -375,7 +378,7 @@ impl RuntimeComponents {
             authguard.policy.role_binding_count = authorization_catalog.role_bindings.len(),
             "authorization policy runtime is ready"
         );
-        let resign_key = Self::open_resign_signing_key(&config.authz.resign_token)?;
+        let resign = Self::open_resign_signer(&config.authz.resign)?;
         let authorization = DefaultAuthorizationHandler::new(
             policy.clone(),
             principals.clone(),
@@ -385,7 +388,7 @@ impl RuntimeComponents {
             config.authz.scope_delivery.clone(),
             AccessContextSigner::from_env()
                 .context("configure direct access-context signing key")?,
-            resign_key,
+            resign,
         );
         Ok(Self { policy, principals, authorization, cache, metrics })
     }
@@ -395,19 +398,19 @@ impl RuntimeComponents {
     /// Disabled configuration yields `None` and the original identity token is
     /// simply stripped. The private key never leaves this process; business
     /// workloads only hold the paired public key.
-    fn open_resign_signing_key(
-        config: &crate::config::ResignTokenProperties,
-    ) -> anyhow::Result<Option<JwtSigningKey>> {
+    fn open_resign_signer(
+        config: &crate::config::ResignProperties,
+    ) -> anyhow::Result<Option<ResignSigner>> {
         if !config.enabled {
             return Ok(None);
         }
-        let private_key_pem = crate::principal::PrincipalDiscoveryComponent::credential(
-            &config.private_key,
-            &config.private_key_file,
-            "resign JWT RSA private key",
-        )?;
+        let private_key_pem = STANDARD
+            .decode(config.private_key_b64.trim())
+            .context("decode authz.resign.private_key_b64")?;
+        let private_key_pem = String::from_utf8(private_key_pem)
+            .context("authz.resign.private_key_b64 is not UTF-8 PKCS#8 PEM")?;
         resign::load_signing_key(&private_key_pem)
             .context("configure resign JWT RSA signing key")
-            .map(Some)
+            .map(|key| Some(ResignSigner::new(key, config.max_ttl)))
     }
 }

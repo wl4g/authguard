@@ -2,9 +2,9 @@ keycloak:
   image: registry.cn-shenzhen.aliyuncs.com/wl4g/keycloak:26.7.0
   pullPolicy: IfNotPresent
   realm: ""
-  bootstrapAdminUsername: e2e-admin
-  bootstrapAdminPassword: e2e-admin-password
-  # Static e2e_ keys passed as --set-file by the runner; empty values fail
+  bootstrapAdminUsername: e2e-authguard-admin
+  bootstrapAdminPassword: e2e-authguard-admin-password
+  # Static E2E AuthGuard keys passed as --set-file by the runner; empty values fail
   # chart rendering, so a missing --set-file cannot silently deploy a dynamic
   # realm key.
   realmSigningPrivateKey: ""
@@ -13,7 +13,7 @@ keycloak:
   resignJwtPrivateKey: ""
   resignJwtPublicKey: ""
   # Business SA secret for the workload client_credentials verifier.
-  workloadClientSecret: e2e-workload-client-secret
+  workloadClientSecret: e2e-authguard-workload-client-secret
   resources:
     requests: { cpu: 100m, memory: 384Mi }
     limits: { cpu: 1000m, memory: 1Gi }
@@ -38,11 +38,11 @@ jaeger:
 postgresql:
   image: registry.cn-shenzhen.aliyuncs.com/wl4g/bitnami_postgresql:18.3
   pullPolicy: IfNotPresent
-  database: e2e_customer_growth
-  adminUsername: e2e_customer_growth_admin
-  adminPassword: e2e-customer-growth-admin-password
-  superuserPassword: e2e-customer-growth-postgres-password
-  authguardUsername: e2e_authguard
+  database: e2e_authguard_customer_growth
+  adminUsername: e2e_authguard_customer_growth_admin
+  adminPassword: e2e-authguard-customer-growth-admin-password
+  superuserPassword: e2e-authguard-customer-growth-postgres-password
+  authguardUsername: e2e_authguard_service
   authguardPassword: e2e-authguard-postgres-password
   authguardSchema: authguard
   initSQL: ""
@@ -51,14 +51,13 @@ postgresql:
     limits: { cpu: 1000m, memory: 1Gi }
 
 gateway:
-  name: e2e-customer-growth-gateway
+  name: e2e-authguard-customer-growth-gateway
 
-# Realistic GitHub/Google/WeChat OAuth2-like server plus a custom enterprise
-# identity directory. It exists only inside the disposable E2E namespace.
+# Realistic GitHub/Google/WeChat/QQ OAuth-like contracts. Standard OIDC uses
+# the real Keycloak deployment in the same disposable E2E namespace.
 mockIdp:
-  image: registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-customer-growth-mock-idp:e2e-local
+  image: registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-mock-idp:e2e-local
   pullPolicy: Never
-  directoryToken: e2e-mock-idp-directory-token
   resources:
     requests: { cpu: 10m, memory: 32Mi }
     limits: { cpu: 250m, memory: 128Mi }
@@ -66,59 +65,59 @@ mockIdp:
 authguard:
   grpcTarget: ""
   grpcTLS: false
-  apiToken: e2e-api-token
+  apiToken: e2e-authguard-api-token
   accessContext:
     secretName: ""
     key: hmac-key
-    signingKey: e2e-access-context-hmac-key-32-bytes-minimum
+    signingKey: e2e-authguard-access-context-hmac-key
 
 workloads:
   go-sqlx:
-    host: e2e-go-sqlx.customer-growth.local
-    schema: e2e_customer_growth_go_sqlx
-    databaseUsername: e2e_customer_growth_go_sqlx
-    databasePassword: e2e-customer-growth-go-sqlx-password
-    image: registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-customer-growth-go-sqlx:e2e-local
+    host: e2e-authguard-go-sqlx.customer-growth.local
+    schema: e2e_authguard_customer_growth_go_sqlx
+    databaseUsername: e2e_authguard_customer_growth_go_sqlx
+    databasePassword: e2e-authguard-customer-growth-go-sqlx-password
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-go-sqlx:e2e-local
     pullPolicy: Never
     resources:
       requests: { cpu: 25m, memory: 48Mi }
       limits: { cpu: 500m, memory: 256Mi }
   rust-sqlx:
-    host: e2e-rust-sqlx.customer-growth.local
-    schema: e2e_customer_growth_rust_sqlx
-    databaseUsername: e2e_customer_growth_rust_sqlx
-    databasePassword: e2e-customer-growth-rust-sqlx-password
-    image: registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-customer-growth-rust-sqlx:e2e-local
+    host: e2e-authguard-rust-sqlx.customer-growth.local
+    schema: e2e_authguard_customer_growth_rust_sqlx
+    databaseUsername: e2e_authguard_customer_growth_rust_sqlx
+    databasePassword: e2e-authguard-customer-growth-rust-sqlx-password
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-rust-sqlx:e2e-local
     pullPolicy: Never
     resources:
       requests: { cpu: 25m, memory: 48Mi }
       limits: { cpu: 500m, memory: 256Mi }
   python-sqlalchemy:
-    host: e2e-python-sqlalchemy.customer-growth.local
-    schema: e2e_customer_growth_python_sqlalchemy
-    databaseUsername: e2e_customer_growth_python_sqlalchemy
-    databasePassword: e2e-customer-growth-python-sqlalchemy-password
-    image: registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-customer-growth-python-sqlalchemy:e2e-local
+    host: e2e-authguard-python-sqlalchemy.customer-growth.local
+    schema: e2e_authguard_customer_growth_python_sqlalchemy
+    databaseUsername: e2e_authguard_customer_growth_python_sqlalchemy
+    databasePassword: e2e-authguard-customer-growth-python-sqlalchemy-password
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-python-sqlalchemy:e2e-local
     pullPolicy: Never
     resources:
       requests: { cpu: 25m, memory: 96Mi }
       limits: { cpu: 500m, memory: 384Mi }
   spring-jdbc:
-    host: e2e-spring-jdbc.customer-growth.local
-    schema: e2e_customer_growth_spring_jdbc
-    databaseUsername: e2e_customer_growth_spring_jdbc
-    databasePassword: e2e-customer-growth-spring-jdbc-password
-    image: registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-customer-growth-spring-jdbc:e2e-local
+    host: e2e-authguard-spring-jdbc.customer-growth.local
+    schema: e2e_authguard_customer_growth_spring_jdbc
+    databaseUsername: e2e_authguard_customer_growth_spring_jdbc
+    databasePassword: e2e-authguard-customer-growth-spring-jdbc-password
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-spring-jdbc:e2e-local
     pullPolicy: Never
     resources:
       requests: { cpu: 50m, memory: 256Mi }
       limits: { cpu: 1000m, memory: 768Mi }
   spring-jpa:
-    host: e2e-spring-jpa.customer-growth.local
-    schema: e2e_customer_growth_spring_jpa
-    databaseUsername: e2e_customer_growth_spring_jpa
-    databasePassword: e2e-customer-growth-spring-jpa-password
-    image: registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-customer-growth-spring-jpa:e2e-local
+    host: e2e-authguard-spring-jpa.customer-growth.local
+    schema: e2e_authguard_customer_growth_spring_jpa
+    databaseUsername: e2e_authguard_customer_growth_spring_jpa
+    databasePassword: e2e-authguard-customer-growth-spring-jpa-password
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-spring-jpa:e2e-local
     pullPolicy: Never
     resources:
       requests: { cpu: 50m, memory: 256Mi }

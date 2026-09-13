@@ -2,7 +2,7 @@
 {{- if and $serviceMonitor.enabled (not .Values.authguard.authz.mgmt.enabled) -}}
 {{- fail "authguard.observability.serviceMonitor requires authguard.mgmt.enabled" -}}
 {{- end -}}
-{{- if $serviceMonitor.enabled }}
+{{- if and .Values.authguard.authz.enabled $serviceMonitor.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:

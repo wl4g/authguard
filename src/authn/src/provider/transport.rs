@@ -21,6 +21,7 @@ pub struct TokenExchangeRequest {
 pub struct IdentityLookupRequest {
     pub endpoint: String,
     pub access_token: String,
+    pub access_token_query: Option<String>,
 }
 
 /// Narrow HTTP seam used by configuration-backed OAuth-like adapters.
@@ -79,14 +80,14 @@ impl ProviderTransport for ReqwestProviderTransport {
         &self,
         request: IdentityLookupRequest,
     ) -> Result<Value, ProviderError> {
-        let response = self
-            .client
-            .get(request.endpoint)
-            .bearer_auth(request.access_token)
-            .header("accept", "application/json")
-            .send()
-            .await
-            .map_err(|error| ProviderError::Transport(error.to_string()))?;
+        let mut builder = self.client.get(request.endpoint).header("accept", "application/json");
+        if let Some(parameter) = request.access_token_query {
+            builder = builder.query(&[(parameter, request.access_token)]);
+        } else {
+            builder = builder.bearer_auth(request.access_token);
+        }
+        let response =
+            builder.send().await.map_err(|error| ProviderError::Transport(error.to_string()))?;
         if !response.status().is_success() {
             return Err(ProviderError::ProviderRejected(response.status().as_u16()));
         }

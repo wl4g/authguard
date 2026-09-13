@@ -13,11 +13,13 @@ impl AuthnFlowRepository for AuthnPostgresRepository {
         let expires = i64::try_from(flow.expires_at_epoch_seconds)
             .map_err(|_| AuthnFlowRepositoryError("flow expiry is out of range".into()))?;
         sqlx::query(
-            "INSERT INTO iam_authn_flow(state_hash, provider, return_uri, expires_at_epoch_seconds) VALUES ($1, $2, $3, $4)",
+            "INSERT INTO iam_authn_flow(state_hash, provider, return_uri, nonce, pkce_verifier, expires_at_epoch_seconds) VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(state_hash)
         .bind(&flow.provider)
         .bind(&flow.return_uri)
+        .bind(&flow.nonce)
+        .bind(&flow.pkce_verifier)
         .bind(expires)
         .execute(&self.pool)
         .await
@@ -30,7 +32,7 @@ impl AuthnFlowRepository for AuthnPostgresRepository {
         state_hash: &str,
     ) -> Result<Option<IamAuthFlowInfo>, AuthnFlowRepositoryError> {
         sqlx::query(
-            "DELETE FROM iam_authn_flow WHERE state_hash = $1 RETURNING provider, return_uri, expires_at_epoch_seconds",
+            "DELETE FROM iam_authn_flow WHERE state_hash = $1 RETURNING provider, return_uri, nonce, pkce_verifier, expires_at_epoch_seconds",
         )
         .bind(state_hash)
         .fetch_optional(&self.pool)
@@ -40,6 +42,8 @@ impl AuthnFlowRepository for AuthnPostgresRepository {
             decode_flow(
                 row.get("provider"),
                 row.get("return_uri"),
+                row.get("nonce"),
+                row.get("pkce_verifier"),
                 row.get("expires_at_epoch_seconds"),
             )
         })
@@ -50,11 +54,15 @@ impl AuthnFlowRepository for AuthnPostgresRepository {
 fn decode_flow(
     provider: String,
     return_uri: String,
+    nonce: Option<String>,
+    pkce_verifier: Option<String>,
     expires: i64,
 ) -> Result<IamAuthFlowInfo, AuthnFlowRepositoryError> {
     Ok(IamAuthFlowInfo {
         provider,
         return_uri,
+        nonce,
+        pkce_verifier,
         expires_at_epoch_seconds: u64::try_from(expires)
             .map_err(|_| AuthnFlowRepositoryError("flow expiry is out of range".into()))?,
     })

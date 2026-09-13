@@ -1,18 +1,18 @@
 {{- $name := include "customer-growth-e2e.mockIdpName" . -}}
 
-# Realistic GitHub, Google, and WeChat OAuth2-like test server plus the custom
-# enterprise identity-directory endpoint used by Principal federation tests.
+# Realistic GitHub, Google, WeChat, and QQ OAuth-like API contracts. Standard
+# OIDC is intentionally exercised only by the real Keycloak deployment.
 apiVersion: v1
 kind: Service
 metadata:
   name: {{ $name }}
   labels:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
-    app.kubernetes.io/component: e2e-mock-idp
+    app.kubernetes.io/component: e2e-authguard-mock-idp
 spec:
   selector:
     app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/component: e2e-mock-idp
+    app.kubernetes.io/component: e2e-authguard-mock-idp
   ports:
     - { name: http, port: 8080, targetPort: http }
 ---
@@ -22,18 +22,18 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
-    app.kubernetes.io/component: e2e-mock-idp
+    app.kubernetes.io/component: e2e-authguard-mock-idp
 spec:
   replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/instance: {{ .Release.Name }}
-      app.kubernetes.io/component: e2e-mock-idp
+      app.kubernetes.io/component: e2e-authguard-mock-idp
   template:
     metadata:
       labels:
         app.kubernetes.io/instance: {{ .Release.Name }}
-        app.kubernetes.io/component: e2e-mock-idp
+        app.kubernetes.io/component: e2e-authguard-mock-idp
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -43,12 +43,18 @@ spec:
         fsGroup: 65532
         seccompProfile: { type: RuntimeDefault }
       containers:
-        - name: e2e-mock-idp
+        - name: e2e-authguard-mock-idp
           image: {{ .Values.mockIdp.image | quote }}
           imagePullPolicy: {{ .Values.mockIdp.pullPolicy }}
           env:
-            - name: MOCK_IDP_DIRECTORY_TOKEN
-              value: {{ .Values.mockIdp.directoryToken | quote }}
+            - name: MOCK_IDP_GITHUB_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: {{ include "customer-growth-e2e.principalDiscoverySecretName" . }}, key: AUTHGUARD_GITHUB_CLIENT_SECRET } }
+            - name: MOCK_IDP_GOOGLE_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: {{ include "customer-growth-e2e.principalDiscoverySecretName" . }}, key: AUTHGUARD_GOOGLE_CLIENT_SECRET } }
+            - name: MOCK_IDP_WECHAT_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: {{ include "customer-growth-e2e.principalDiscoverySecretName" . }}, key: AUTHGUARD_WECHAT_CLIENT_SECRET } }
+            - name: MOCK_IDP_QQ_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: {{ include "customer-growth-e2e.principalDiscoverySecretName" . }}, key: AUTHGUARD_QQ_CLIENT_SECRET } }
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

@@ -947,7 +947,7 @@ async fn readiness_requires_durable_storage() {
 }
 
 #[tokio::test]
-async fn scim_provisioning_projects_and_tombstones_principal() {
+async fn scim_user_and_group_resources_support_rfc_operations() {
     let runtime = runtime(ScopeDeliveryProperties::default()).await;
     let app = AuthguardServer::management_router(
         runtime.policy,
@@ -960,30 +960,78 @@ async fn scim_provisioning_projects_and_tombstones_principal() {
         .clone()
         .oneshot(api_request(
             Method::POST,
-            "/api/v1/principal-discovery/scim/events",
+            "/scim/v2/Users",
             &json!({
-                "operation":"upsert_user",
-                "principal_id":"principal-scim-alice",
-                "resource": {"id":"scim-user-1","userName":"scim.alice","active":true}
+                "schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],
+                "externalId":"scim-user-1",
+                "userName":"scim.alice",
+                "active":true
             }),
         ))
         .await
         .expect("SCIM upsert");
-    assert_eq!(create.status(), StatusCode::OK);
+    assert_eq!(create.status(), StatusCode::CREATED);
+    assert_eq!(create.headers()["content-type"], "application/scim+json");
     let created = response_json(create).await;
     let id = created["id"].as_str().expect("principal id").to_string();
 
-    let delete = app
+    let patched = app
+        .clone()
         .oneshot(api_request(
-            Method::POST,
-            "/api/v1/principal-discovery/scim/events",
+            Method::PATCH,
+            &format!("/scim/v2/Users/{id}"),
             &json!({
-                "operation":"delete",
-                "principal_id":"principal-scim-alice"
+                "schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                "Operations":[{"op":"replace","path":"active","value":false}]
             }),
         ))
         .await
-        .expect("SCIM tombstone");
-    assert_eq!(delete.status(), StatusCode::OK);
-    assert_eq!(response_json(delete).await["id"], id);
+        .expect("SCIM PATCH");
+    assert_eq!(patched.status(), StatusCode::OK);
+    assert_eq!(response_json(patched).await["active"], false);
+
+    let group = app
+        .clone()
+        .oneshot(api_request(
+            Method::POST,
+            "/scim/v2/Groups",
+            &json!({
+                "schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],
+                "externalId":"growth-reviewers",
+                "displayName":"Growth Reviewers",
+                "members":[]
+            }),
+        ))
+        .await
+        .expect("SCIM Group create");
+    assert_eq!(group.status(), StatusCode::CREATED);
+    let group = response_json(group).await;
+    let group_id = group["id"].as_str().expect("SCIM Group id").to_string();
+
+    let listed = app
+        .clone()
+        .oneshot(api_request(
+            Method::GET,
+            "/scim/v2/Groups?filter=externalId%20eq%20%22growth-reviewers%22",
+            &json!({}),
+        ))
+        .await
+        .expect("SCIM Group list");
+    assert_eq!(listed.status(), StatusCode::OK);
+    let listed = response_json(listed).await;
+    assert_eq!(listed["totalResults"], 1);
+    assert_eq!(listed["Resources"][0]["id"], group_id);
+
+    let deleted = app
+        .clone()
+        .oneshot(api_request(Method::DELETE, &format!("/scim/v2/Groups/{group_id}"), &json!({})))
+        .await
+        .expect("SCIM Group delete");
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+
+    let tombstone = app
+        .oneshot(api_request(Method::GET, &format!("/scim/v2/Groups/{group_id}"), &json!({})))
+        .await
+        .expect("SCIM deleted Group lookup");
+    assert_eq!(tombstone.status(), StatusCode::NOT_FOUND);
 }

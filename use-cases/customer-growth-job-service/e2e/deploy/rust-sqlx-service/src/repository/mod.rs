@@ -26,7 +26,7 @@ impl CustomerGrowthJobRepository {
         job: CustomerGrowthJobEntity,
     ) -> anyhow::Result<CustomerGrowthJobEntity> {
         sqlx::query(&bind_sql(
-            "INSERT INTO customer_growth_jobs(id, region, tenant_id, workspace_id, project_id, job_id, display_name, status, owner_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO e2e_authguard_customer_growth_jobs(id, region, tenant_id, workspace_id, project_id, job_id, display_name, status, owner_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ))
         .bind(job.id)
         .bind(&job.region)
@@ -53,7 +53,7 @@ impl CustomerGrowthJobRepository {
         id: i64,
     ) -> anyhow::Result<Option<CustomerGrowthJobEntity>> {
         let sql = bind_sql(&format!(
-            "SELECT * FROM customer_growth_jobs WHERE id = ? AND ({})",
+            "SELECT * FROM e2e_authguard_customer_growth_jobs WHERE id = ? AND ({})",
             scope.where_clause
         ));
         let mut query = sqlx::query(&sql).bind(id);
@@ -74,7 +74,7 @@ impl CustomerGrowthJobRepository {
         job: CustomerGrowthJobEntity,
     ) -> anyhow::Result<CustomerGrowthJobEntity> {
         let sql = bind_sql(&format!(
-            "UPDATE customer_growth_jobs SET display_name = ?, status = ?, owner_user_id = ? WHERE id = ? AND ({})",
+            "UPDATE e2e_authguard_customer_growth_jobs SET display_name = ?, status = ?, owner_user_id = ? WHERE id = ? AND ({})",
             scope.where_clause
         ));
         let mut query = sqlx::query(&sql)
@@ -98,7 +98,7 @@ impl CustomerGrowthJobRepository {
     /// Returns an error when SQL execution fails or the job is invisible.
     pub async fn delete_by_id_visible(&self, scope: &SqlScope, id: i64) -> anyhow::Result<()> {
         let sql = bind_sql(&format!(
-            "DELETE FROM customer_growth_jobs WHERE id = ? AND ({})",
+            "DELETE FROM e2e_authguard_customer_growth_jobs WHERE id = ? AND ({})",
             scope.where_clause
         ));
         let mut query = sqlx::query(&sql).bind(id);
@@ -154,7 +154,7 @@ impl CustomerGrowthJobRepository {
         add_equals(&mut clauses, &mut params, "status", criteria.status.as_deref());
         add_equals(&mut clauses, &mut params, "owner_user_id", criteria.owner_user_id.as_deref());
         let sql = bind_sql(&format!(
-            "SELECT * FROM customer_growth_jobs WHERE {} ORDER BY region, tenant_id, workspace_id, project_id, job_id",
+            "SELECT * FROM e2e_authguard_customer_growth_jobs WHERE {} ORDER BY region, tenant_id, workspace_id, project_id, job_id",
             clauses.join(" AND ")
         ));
         let mut query = sqlx::query(&sql);

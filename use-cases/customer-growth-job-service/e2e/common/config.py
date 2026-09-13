@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 E2E_DIR = Path(__file__).resolve().parents[1]
@@ -37,6 +38,23 @@ JAVA_ADAPTER_INSTALL = (
 )
 
 PYTHON_SERVICE = DEPLOY_DIR / "python-sqlalchemy-service"
+
+
+def _maven_environment() -> dict[str, str]:
+    proxy = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
+    if not proxy:
+        return {}
+    parsed = urlparse(proxy)
+    if not parsed.hostname or not parsed.port:
+        raise ValueError("HTTPS_PROXY/HTTP_PROXY must include a host and port")
+    proxy_options = " ".join(
+        f"-D{protocol}.proxyHost={parsed.hostname} -D{protocol}.proxyPort={parsed.port}"
+        for protocol in ("http", "https")
+    )
+    return {"MAVEN_OPTS": f"{os.getenv('MAVEN_OPTS', '')} {proxy_options}".strip()}
+
+
+MAVEN_ENVIRONMENT = _maven_environment()
 
 PROJECTS = {
     "golang-sqlx-service": ProjectSpec(
@@ -96,7 +114,7 @@ PROJECTS = {
         setup_commands=(JAVA_ADAPTER_INSTALL,),
         clean_commands=(("mvn", "-q", "clean"),),
         test_command=("mvn", "-q", "test"),
-        environment={},
+        environment=MAVEN_ENVIRONMENT,
     ),
     "springboot-jpa-service": ProjectSpec(
         name="springboot-jpa-service",
@@ -105,7 +123,7 @@ PROJECTS = {
         setup_commands=(JAVA_ADAPTER_INSTALL,),
         clean_commands=(("mvn", "-q", "clean"),),
         test_command=("mvn", "-q", "test"),
-        environment={},
+        environment=MAVEN_ENVIRONMENT,
     ),
 }
 
@@ -122,49 +140,49 @@ DEFAULT_SCENARIOS = {
         "Cross-language adapter contract parity",
         "verifier.s03_adapter_contract_verifier",
     ),
-    "11": (
+    "10": (
         PROJECTS["golang-sqlx-service"].title,
-        "verifier.s11_golang_sqlx_verifier",
+        "verifier.s10_golang_sqlx_verifier",
+    ),
+    "11": (
+        PROJECTS["rust-sqlx-service"].title,
+        "verifier.s11_rust_sqlx_verifier",
     ),
     "12": (
-        PROJECTS["rust-sqlx-service"].title,
-        "verifier.s12_rust_sqlx_verifier",
+        PROJECTS["python-sqlalchemy-service"].title,
+        "verifier.s12_python_sqlalchemy_verifier",
     ),
     "13": (
-        PROJECTS["python-sqlalchemy-service"].title,
-        "verifier.s13_python_sqlalchemy_verifier",
+        PROJECTS["springboot-jdbc-service"].title,
+        "verifier.s13_springboot_jdbc_verifier",
     ),
     "14": (
-        PROJECTS["springboot-jdbc-service"].title,
-        "verifier.s14_springboot_jdbc_verifier",
-    ),
-    "15": (
         PROJECTS["springboot-jpa-service"].title,
-        "verifier.s15_springboot_jpa_verifier",
+        "verifier.s14_springboot_jpa_verifier",
     ),
 }
 
 OPTIONAL_SCENARIOS = {
+    "00": (
+        "Infrastructure: Helm deployment and middleware initialization",
+        "verifier.s00_k3s_infrastructure_verifier",
+    ),
+    "15": (
+        "Core 1/3: Keycloak/LDAP federation and administrator pre-authorization",
+        "verifier.s15_principal_preauthorization_verifier",
+    ),
+    "16": (
+        "Core 2/3: AuthN callback, normalization, linking, and tracing",
+        "verifier.s16_authentication_verifier",
+    ),
+    "17": (
+        "Core 3/3: OIDC user/workload, Envoy, AuthZ, and Biz CRUD",
+        "verifier.s17_gateway_authorization_verifier",
+    ),
     "21": (
-        "k3s phase 1/5: Helm deployment and middleware initialization",
-        "verifier.s21_k3s_gateway_verifier",
-    ),
-    "22": (
-        "k3s phase 2/5: Keycloak/LDAP federation and administrator pre-authorization",
-        "verifier.s22_principal_preauthorization_verifier",
-    ),
-    "23": (
-        "k3s phase 3/5: AuthN callback, normalization, linking, and tracing",
-        "verifier.s23_authentication_verifier",
-    ),
-    "24": (
-        "k3s phase 4/5: OIDC user/workload, Envoy, AuthZ, and Biz CRUD",
-        "verifier.s24_gateway_authorization_verifier",
-    ),
-    "25": (
-        "k3s phase 5/5: PostgreSQL, logs, metrics, Jaeger, and runtime health",
-        "verifier.s25_runtime_evidence_verifier",
+        "Observability: PostgreSQL, logs, metrics, Jaeger, and runtime health",
+        "verifier.s21_runtime_evidence_verifier",
     ),
 }
 
-SCENARIOS = {**DEFAULT_SCENARIOS, **OPTIONAL_SCENARIOS}
+SCENARIOS = dict(sorted({**DEFAULT_SCENARIOS, **OPTIONAL_SCENARIOS}.items()))

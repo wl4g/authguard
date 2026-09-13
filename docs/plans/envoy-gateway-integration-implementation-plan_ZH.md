@@ -49,7 +49,8 @@ src/authn/src/principal/jit.rs identity binding、JIT 与 canonical Principal �
 src/common/src/model/identity.rs ExternalIdentity 与 canonical authentication context
 src/common/src            AuthN/AuthZ/SDK 共享的稳定模型、配置、协议、存储连接与 telemetry
 src/authz/src/route       Envoy gRPC 与 management HTTP 协议适配
-src/authz/src/handler/authorization.rs  授权目录编译、CRUD、ACL 求值与管理面授权用例
+src/authz/src/handler/policy.rs         授权目录编译、CRUD、ACL 求值与管理面授权用例
+src/authz/src/handler/authorization.rs  Envoy ext_authz 请求鉴权与访问上下文下发
 src/authz/src/handler/principal.rs  Principal 投影/discovery 用例
 src/common/src/route/management.rs   health、readiness、metrics 与运行时诊断入口
 src/common/src/principal/mod.rs  discovery 公共 trait、查询模型与 error
@@ -83,7 +84,8 @@ AuthN 与 AuthZ 共用的唯一主配置为 `etc/authguard.yaml`，容器使用
 - `mgmt`：management 监听、health、Prometheus 与 OTLP tracing。
 - `authz.identity`：受信 token/header claim 映射。
 - `authz.scope_delivery`：direct context 与 opaque token 的 TTL/阈值。
-- `authz.principal_discovery`：可选 Keycloak/LDAP/custom 联邦 discovery 和 SCIM 子集 ingestion；
+- `authz.principal_discovery`：可选 Keycloak/LDAP/custom pull discovery；
+- `authz.principal_discovery.scim`：与 pull discovery 互补的 SCIM push ingestion；
   只用于 AuthZ 管理面物化，不参与登录或数据面身份解析。
 - `storage`：SQLite 或 PostgreSQL；本地默认 SQLite，生产多副本使用 PostgreSQL。
 - `cache`：Memory 或 Redis Cluster；本地默认 Memory，Helm 默认 Redis Cluster。
@@ -142,7 +144,8 @@ OIDC/JWT。当前真实 API 为：
 | `GET|PATCH|DELETE /api/v1/principals/{principal_id}` | 读取、更新状态或安全删除投影 |
 | `POST /api/v1/principal-discovery/search` | 对已配置 source 执行联邦搜索 |
 | `POST /api/v1/principal-discovery/materialize` | 服务端重新 resolve 并物化候选 Principal |
-| `POST /api/v1/principal-discovery/scim/events` | ingestion 一条 RFC 7643 User/Group 子集变化 |
+| `/scim/v2/Users` | RFC 7644 User resource push provisioning |
+| `/scim/v2/Groups` | RFC 7644 Group resource push provisioning |
 | `POST /api/v1/authorize` | 运维/调试用显式 URN 决策 |
 | `GET /api/v1/status` | 查询 policy revision 与资源计数 |
 
@@ -187,12 +190,12 @@ Action 由 matcher 所属的 `iam_action` 提供，不在 matcher 中重复保�
 
 所需上下文缺失时条件不匹配。当前不声称支持 time window 或 resource-tag condition。
 
-`IPrincipalDiscovery<Input>` 统一 AuthZ 管理面的可选目录发现路径：
+`IPrincipalDiscovery<Input>` 统一 AuthZ 管理面的可选 pull 目录发现路径：
 
 - `KeycloakPrincipalDiscovery`：Keycloak Admin API 有界并发搜索（`FED_KEYCLOAK`）；
 - `LdapPrincipalDiscovery`：直接 RFC 4511 LDAP 搜索（`FED_LDAP`）；
 - `CustomPrincipalDiscovery`：配置化 URL/请求/响应映射 + bearer JWT 的企业自研系统搜索（provider code 为 `FED_CUSTOM`）；
-- `ScimPrincipalDiscovery`：RFC 7643 User/Group 子集 upsert/delete normalization。
+- SCIM push API：RFC 7643 User/Group 子集 upsert/delete normalization，与上述 pull discovery 互补。
 
 联邦搜索和 SCIM ingestion 只在控制面运行；物化请求必须携带 AuthN 已解析的 canonical
 `principal_id`。extAuth 热路径只按 `principal_id` 读取本地 Principal repository 与已编译

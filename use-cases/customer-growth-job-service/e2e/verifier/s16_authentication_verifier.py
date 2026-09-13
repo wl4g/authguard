@@ -1,4 +1,4 @@
-"""Phase 21: deploy the complete real E2E topology with Helm."""
+"""Phase 16: verify AuthN OAuth-like normalization and account linking."""
 
 from __future__ import annotations
 
@@ -14,14 +14,13 @@ def verify(context: RunContext) -> VerificationResult:
     environment = KubernetesE2E(context)
     passed = False
     try:
-        environment.verify_prerequisites()
-        environment.redeploy()
+        environment.verify_authentication()
         passed = True
     except Exception:
         environment.details.append(traceback.format_exc())
     return VerificationResult(
-        scenario_id="21",
-        title="k3s phase 1/5: Helm deployment and middleware initialization",
+        scenario_id="16",
+        title="Core 2/3: AuthN callback, normalization, linking, and tracing",
         passed=passed,
         duration_seconds=time.monotonic() - started,
         details=environment.details,

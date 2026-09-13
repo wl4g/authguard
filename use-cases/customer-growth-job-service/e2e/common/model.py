@@ -35,3 +35,4 @@ class VerificationResult:
     duration_seconds: float
     details: list[str] = field(default_factory=list)
     commands: list[CommandResult] = field(default_factory=list)
+    case_executions: tuple[str, ...] = ()

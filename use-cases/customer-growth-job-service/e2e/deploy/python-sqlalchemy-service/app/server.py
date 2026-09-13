@@ -18,6 +18,7 @@ from app.dto.customer_growth_job_dto import (
 )
 from app.repository.customer_growth_job_repository import CustomerGrowthJobRepository
 from app.service.customer_growth_job_service import CustomerGrowthJobService
+from app.telemetry import instrument
 from authguard_adapter.access import (
     AccessContextUnavailable,
     HeaderAccessContextResolver,
@@ -29,6 +30,7 @@ from authguard_adapter.util import configure_logger
 
 def create_app() -> Flask:
     app = Flask(__name__)
+    instrument(app)
     adapter_logger = logging.getLogger("authguard.e2e.adapter")
     adapter_logger.handlers = [logging.StreamHandler(sys.stdout)]
     adapter_logger.setLevel(logging.DEBUG)

@@ -1,4 +1,4 @@
-"""Phase 22: federate Principals and apply administrator pre-authorization."""
+"""Phase 17: verify user/workload access through Envoy, AuthZ, and Biz."""
 
 from __future__ import annotations
 
@@ -14,13 +14,13 @@ def verify(context: RunContext) -> VerificationResult:
     environment = KubernetesE2E(context)
     passed = False
     try:
-        environment.verify_principal_preauthorization()
+        environment.verify_gateway_authorization()
         passed = True
     except Exception:
         environment.details.append(traceback.format_exc())
     return VerificationResult(
-        scenario_id="22",
-        title="k3s phase 2/5: Keycloak/LDAP federation and administrator pre-authorization",
+        scenario_id="17",
+        title="Core 3/3: OIDC user/workload, Envoy, AuthZ, and Biz CRUD",
         passed=passed,
         duration_seconds=time.monotonic() - started,
         details=environment.details,

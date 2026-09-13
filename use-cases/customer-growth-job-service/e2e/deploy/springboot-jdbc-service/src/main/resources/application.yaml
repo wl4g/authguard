@@ -3,7 +3,7 @@ server:
   shutdown: graceful
 spring:
   application:
-    name: e2e-customer-growth-spring-jdbc
+    name: e2e-authguard-spring-jdbc
   datasource:
     url: ${DATABASE_URL}
     username: ${DATABASE_USERNAME}
@@ -13,6 +13,13 @@ spring:
       minimum-idle: 1
       connection-timeout: 5000
 management:
+  tracing:
+    enabled: ${OTEL_TRACING_ENABLED:false}
+    sampling:
+      probability: 1.0
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
   endpoints:
     web:
       exposure:

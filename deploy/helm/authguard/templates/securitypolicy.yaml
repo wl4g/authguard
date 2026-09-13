@@ -1,10 +1,9 @@
 {{- $ext := .Values.envoy_gateway.ext_authz -}}
-{{- $jwt := $ext.jwt -}}
-{{- $oidc := $ext.oidc -}}
-{{- if $ext.enabled }}
-{{- if eq $jwt.enabled $oidc.enabled }}
-{{- fail "envoy_gateway.ext_authz requires exactly one of jwt.enabled or oidc.enabled" }}
+{{- $canonical := .Values.authguard.authn.canonical_jwt -}}
+{{- if and $ext.enabled (not .Values.authguard.authz.enabled) }}
+{{- fail "envoy_gateway.ext_authz.enabled requires authguard.authz.enabled" }}
 {{- end }}
+{{- if and $ext.enabled .Values.authguard.authz.enabled }}
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
 metadata:
@@ -17,41 +16,24 @@ spec:
       kind: Gateway
       name: {{ $ext.gateway.name }}
       sectionName: protected
-  extAuth:
-    failOpen: false
-    timeout: 2s
-    headersToExtAuth:
-      {{- if $jwt.enabled }}
-      - authorization
-      {{- else }}
-      - x-authguard-id-token
-      {{- end }}
-      # Correlation and W3C trace context only; identity/resource headers are
-      # deliberately not accepted from the untrusted downstream request.
-      - x-request-id
-      - traceparent
-      - tracestate
-    grpc:
-      backendRefs:
-        - name: {{ include "authguard.fullname" . }}
-          port: {{ .Values.authguard.authz.service.grpcPort }}
-  {{- if $jwt.enabled }}
+  # Envoy verifies only AuthN's canonical session JWT, then asks AuthZ for the
+  # resource decision. External IdP protocols never execute at the edge.
   jwt:
     optional: false
     providers:
-      - name: platform-idp
-        issuer: {{ required "envoy_gateway.ext_authz.issuer is required when jwt.enabled" $ext.issuer | quote }}
+      - name: authguard-authn
+        issuer: {{ required "authguard.authn.canonical_jwt.issuer is required" $canonical.issuer | quote }}
         audiences:
-          {{- toYaml $jwt.audiences | nindent 10 }}
+          {{- toYaml $canonical.audiences | nindent 10 }}
         extractFrom:
           headers:
             - name: authorization
               valuePrefix: "Bearer "
-        {{- if $jwt.remoteJWKS.uri }}
+        {{- if $canonical.remote_jwks.uri }}
         remoteJWKS:
-          uri: {{ $jwt.remoteJWKS.uri | quote }}
+          uri: {{ $canonical.remote_jwks.uri | quote }}
           cacheDuration: 5m
-          {{- with $jwt.remoteJWKS.backendRefs }}
+          {{- with $canonical.remote_jwks.backend_refs }}
           backendRefs:
             {{- toYaml . | nindent 12 }}
           {{- end }}
@@ -61,47 +43,18 @@ spec:
           valueRef:
             group: ""
             kind: ConfigMap
-            name: {{ include "authguard.jwtJwksConfigMapName" . }}
+            name: {{ include "authguard.canonicalJwksConfigMapName" . }}
         {{- end }}
-      {{- range $provider := $jwt.additionalProviders }}
-      - name: {{ required "envoy_gateway.ext_authz.jwt.additionalProviders[].name is required" $provider.name | quote }}
-        issuer: {{ required "envoy_gateway.ext_authz.jwt.additionalProviders[].issuer is required" $provider.issuer | quote }}
-        audiences:
-          {{- toYaml $provider.audiences | nindent 10 }}
-        extractFrom:
-          headers:
-            - name: authorization
-              valuePrefix: "Bearer "
-        localJWKS:
-          type: ValueRef
-          valueRef:
-            group: ""
-            kind: ConfigMap
-            name: {{ required "envoy_gateway.ext_authz.jwt.additionalProviders[].localJWKSConfigMap is required" $provider.localJWKSConfigMap | quote }}
-      {{- end }}
-  {{- end }}
-  {{- if $oidc.enabled }}
-  oidc:
-    provider:
-      issuer: {{ required "envoy_gateway.ext_authz.issuer is required when oidc.enabled" $ext.issuer | quote }}
-    clientID: {{ required "envoy_gateway.ext_authz.oidc.clientID is required" $oidc.clientID | quote }}
-    clientSecret:
-      name: {{ required "envoy_gateway.ext_authz.oidc.clientSecretRef.name is required" $oidc.clientSecretRef.name }}
-      {{- with $oidc.clientSecretRef.key }}
-      key: {{ . | quote }}
-      {{- end }}
-    scopes: [openid, profile, email, groups]
-    {{- with $oidc.redirectURL }}
-    redirectURL: {{ . | quote }}
-    {{- end }}
-    logoutPath: /logout
-    passThroughAuthHeader: true
-    forwardIDToken:
-      header: x-authguard-id-token
-    denyRedirect:
-      headers:
-        - name: x-requested-with
-          type: Exact
-          value: XMLHttpRequest
-  {{- end }}
+  extAuth:
+    failOpen: false
+    timeout: 2s
+    headersToExtAuth:
+      - authorization
+      - x-request-id
+      - traceparent
+      - tracestate
+    grpc:
+      backendRefs:
+        - name: {{ include "authguard.fullname" . }}
+          port: {{ .Values.authguard.authz.service.grpcPort }}
 {{- end }}

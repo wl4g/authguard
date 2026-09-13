@@ -11,6 +11,7 @@ target
 **/.vscode
 deploy/helm/authguard/charts
 use-cases/**/node_modules
-use-cases/customer-growth-job-service/e2e/config
+use-cases/customer-growth-job-service/e2e/config/*
+!use-cases/customer-growth-job-service/e2e/config/maven-settings.xml
 use-cases/customer-growth-job-service/e2e/helm
 use-cases/customer-growth-job-service/e2e/reports

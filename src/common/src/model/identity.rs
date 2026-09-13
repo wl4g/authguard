@@ -241,6 +241,7 @@ fn is_boundary_claim(name: &str) -> bool {
             | "authguard_group_ids"
             | "acr"
             | "amr"
+            | "authguardOrigin"
     )
 }
 
@@ -333,4 +334,6 @@ pub struct IamAuthFlowInfo {
     pub provider: String,
     pub return_uri: String,
     pub expires_at_epoch_seconds: u64,
+    pub nonce: Option<String>,
+    pub pkce_verifier: Option<String>,
 }

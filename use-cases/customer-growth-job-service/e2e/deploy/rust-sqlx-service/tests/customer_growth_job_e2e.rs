@@ -109,6 +109,7 @@ async fn authorization_scenarios_from_shared_fixture() {
             assert_eq!(actual_status, scenario.expected_status, "scenario {}", scenario.id);
         }
         access::clear_current();
+        println!("AUTHGUARD_E2E_CASE id={}", scenario.id);
     }
 }
 
@@ -120,7 +121,7 @@ async fn assert_denied_mutation_did_not_change_database(
         "create" => {
             let job = scenario.job.as_ref().expect("create job");
             let count: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM customer_growth_jobs WHERE id = $1")
+                sqlx::query_scalar("SELECT COUNT(*) FROM e2e_authguard_customer_growth_jobs WHERE id = $1")
                     .bind(job.id)
                     .fetch_one(pool)
                     .await
@@ -129,7 +130,7 @@ async fn assert_denied_mutation_did_not_change_database(
         }
         "update" => {
             let status: String =
-                sqlx::query_scalar("SELECT status FROM customer_growth_jobs WHERE id = $1")
+                sqlx::query_scalar("SELECT status FROM e2e_authguard_customer_growth_jobs WHERE id = $1")
                     .bind(scenario.target_job_id)
                     .fetch_one(pool)
                     .await
@@ -138,7 +139,7 @@ async fn assert_denied_mutation_did_not_change_database(
         }
         "delete" => {
             let count: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM customer_growth_jobs WHERE id = $1")
+                sqlx::query_scalar("SELECT COUNT(*) FROM e2e_authguard_customer_growth_jobs WHERE id = $1")
                     .bind(scenario.target_job_id)
                     .fetch_one(pool)
                     .await
@@ -264,7 +265,7 @@ async fn execute_scenario(
                 return (false, Vec::new(), String::new());
             }
             let remaining: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM customer_growth_jobs WHERE id = $1")
+                sqlx::query_scalar("SELECT COUNT(*) FROM e2e_authguard_customer_growth_jobs WHERE id = $1")
                     .bind(scenario.target_job_id)
                     .fetch_one(pool)
                     .await

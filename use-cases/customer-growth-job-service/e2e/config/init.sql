@@ -1,6 +1,6 @@
-DROP TABLE IF EXISTS customer_growth_jobs;
+DROP TABLE IF EXISTS e2e_authguard_customer_growth_jobs;
 
-CREATE TABLE customer_growth_jobs (
+CREATE TABLE e2e_authguard_customer_growth_jobs (
     id BIGINT PRIMARY KEY,
     region VARCHAR(32) NOT NULL,
     tenant_id VARCHAR(128) NOT NULL,
@@ -13,7 +13,7 @@ CREATE TABLE customer_growth_jobs (
     UNIQUE (region, tenant_id, workspace_id, project_id, job_id)
 );
 
-INSERT INTO customer_growth_jobs (
+INSERT INTO e2e_authguard_customer_growth_jobs (
     id, region, tenant_id, workspace_id, project_id, job_id,
     display_name, status, owner_user_id
 ) VALUES

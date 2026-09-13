@@ -5,4 +5,4 @@ from common.project import verify_project
 
 
 def verify(context: RunContext) -> VerificationResult:
-    return verify_project(context, "12", "rust-sqlx-service")
+    return verify_project(context, "11", "rust-sqlx-service")

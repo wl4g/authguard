@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use super::{AuthorizationConditionSpec, EvaluationContext};
 use crate::ResourceUrn;
 
+// Implementation of PIP(Policy Information Point)
+
 /// HTTP tuple to canonical resource mapping owned by an action.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HttpRouteMatcher {

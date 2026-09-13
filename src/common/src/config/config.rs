@@ -204,12 +204,42 @@ pub struct AuthnProperties {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ProviderProperties {
+    #[serde(rename = "oidc")]
+    Oidc(OidcProviderProperties),
     #[serde(rename = "oauth2")]
     OAuth2(OAuthProviderProperties),
     #[serde(rename = "oauth2-like")]
     OAuth2Like(OAuthProviderProperties),
     #[serde(rename = "custom")]
     Custom(CustomProviderProperties),
+}
+
+/// Standard `OpenID` Connect Authorization Code flow discovered from `issuer`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OidcProviderProperties {
+    pub issuer: String,
+    #[serde(rename = "clientId")]
+    pub client_id: String,
+    #[serde(rename = "clientSecret")]
+    pub client_secret: String,
+    #[serde(rename = "callbackUrl")]
+    pub callback_url: String,
+    pub scopes: Vec<String>,
+    pub userinfo: bool,
+    #[serde(rename = "tokenIntrospection")]
+    pub token_introspection: Option<TokenIntrospectionProperties>,
+    pub identity: IdentityMappingProperties,
+}
+
+/// RFC 7662 validation used when an external bearer token is translated into
+/// an `AuthGuard` canonical token. It is optional for browser-only OIDC login.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TokenIntrospectionProperties {
+    pub endpoint: String,
+    #[serde(rename = "acceptedAudiences")]
+    pub accepted_audiences: Vec<String>,
 }
 
 /// Configuration-backed OAuth/OAuth-like adapter. Paths are deliberately
@@ -332,7 +362,7 @@ pub struct AuthzProperties {
     pub identity: IdentityProperties,
     pub scope_delivery: ScopeDeliveryProperties,
     pub principal_discovery: PrincipalDiscoveryProperties,
-    pub resign_token: ResignTokenProperties,
+    pub resign: ResignProperties,
     pub api_token: String,
 }
 
@@ -347,13 +377,12 @@ pub struct AuthzProperties {
 /// holds the RSA private key; workloads only hold the paired public key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct ResignTokenProperties {
+pub struct ResignProperties {
     pub enabled: bool,
     #[serde(with = "humantime_serde")]
-    pub ttl: Duration,
-    /// PKCS#8 PEM RSA private key, or `private_key_file` referencing a Secret.
-    pub private_key: String,
-    pub private_key_file: String,
+    pub max_ttl: Duration,
+    /// Base64-encoded PKCS#8 PEM RSA private key injected by the secret provider.
+    pub private_key_b64: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -537,54 +566,6 @@ pub struct AppConfig;
 
 static APP_CONFIG: OnceLock<RwLock<Arc<AppConfigProperties>>> = OnceLock::new();
 
-impl AppConfigProperties {
-    #[must_use]
-    pub fn get_server(&self) -> &ServerProperties {
-        &self.server
-    }
-    #[must_use]
-    pub fn get_mgmt(&self) -> &ManagementProperties {
-        &self.mgmt
-    }
-    #[must_use]
-    pub fn get_logging(&self) -> &LoggingProperties {
-        &self.logging
-    }
-    #[must_use]
-    pub fn get_cache(&self) -> &CacheProperties {
-        &self.cache
-    }
-    #[must_use]
-    pub fn get_storage(&self) -> &StorageProperties {
-        &self.storage
-    }
-    #[must_use]
-    pub fn get_authn(&self) -> &AuthnProperties {
-        &self.authn
-    }
-    #[must_use]
-    pub fn get_authz(&self) -> &AuthzProperties {
-        &self.authz
-    }
-}
-
-impl AppConfigProperties {
-    #[must_use]
-    pub fn authorization_addr(&self) -> SocketAddr {
-        SocketAddr::new(self.server.host, self.server.port)
-    }
-
-    #[must_use]
-    pub fn access_context_addr(&self) -> SocketAddr {
-        SocketAddr::new(self.server.host, self.server.scope_port)
-    }
-
-    #[must_use]
-    pub fn mgmt_addr(&self) -> SocketAddr {
-        SocketAddr::new(self.mgmt.host, self.mgmt.port)
-    }
-}
-
 impl Default for ServerProperties {
     fn default() -> Self {
         Self {
@@ -736,12 +717,22 @@ impl Default for PostgresProperties {
     }
 }
 
-impl ProviderProperties {
-    #[must_use]
-    pub const fn oauth(&self) -> Option<&OAuthProviderProperties> {
-        match self {
-            Self::OAuth2(config) | Self::OAuth2Like(config) => Some(config),
-            Self::Custom(_) => None,
+impl Default for OidcProviderProperties {
+    fn default() -> Self {
+        Self {
+            issuer: String::new(),
+            client_id: String::new(),
+            client_secret: String::new(),
+            callback_url: String::new(),
+            scopes: vec!["openid".to_string(), "profile".to_string(), "email".to_string()],
+            userinfo: true,
+            token_introspection: None,
+            identity: IdentityMappingProperties {
+                subject: "$.sub".to_string(),
+                username: Some("$.preferred_username".to_string()),
+                email: Some("$.email".to_string()),
+                ..IdentityMappingProperties::default()
+            },
         }
     }
 }
@@ -783,14 +774,9 @@ impl Default for AccountLinkingProperties {
     }
 }
 
-impl Default for ResignTokenProperties {
+impl Default for ResignProperties {
     fn default() -> Self {
-        Self {
-            enabled: false,
-            ttl: Duration::from_secs(60),
-            private_key: String::new(),
-            private_key_file: String::new(),
-        }
+        Self { enabled: false, max_ttl: Duration::from_secs(60), private_key_b64: String::new() }
     }
 }
 
@@ -908,6 +894,68 @@ impl Default for IdentityProperties {
     }
 }
 
+impl ProviderProperties {
+    #[must_use]
+    pub const fn oauth(&self) -> Option<&OAuthProviderProperties> {
+        match self {
+            Self::OAuth2(config) | Self::OAuth2Like(config) => Some(config),
+            Self::Oidc(_) | Self::Custom(_) => None,
+        }
+    }
+}
+
+impl AppConfigProperties {
+    #[must_use]
+    pub fn get_server(&self) -> &ServerProperties {
+        &self.server
+    }
+
+    #[must_use]
+    pub fn get_mgmt(&self) -> &ManagementProperties {
+        &self.mgmt
+    }
+
+    #[must_use]
+    pub fn get_logging(&self) -> &LoggingProperties {
+        &self.logging
+    }
+
+    #[must_use]
+    pub fn get_cache(&self) -> &CacheProperties {
+        &self.cache
+    }
+
+    #[must_use]
+    pub fn get_storage(&self) -> &StorageProperties {
+        &self.storage
+    }
+
+    #[must_use]
+    pub fn get_authn(&self) -> &AuthnProperties {
+        &self.authn
+    }
+
+    #[must_use]
+    pub fn get_authz(&self) -> &AuthzProperties {
+        &self.authz
+    }
+
+    #[must_use]
+    pub fn authorization_addr(&self) -> SocketAddr {
+        SocketAddr::new(self.server.host, self.server.port)
+    }
+
+    #[must_use]
+    pub fn access_context_addr(&self) -> SocketAddr {
+        SocketAddr::new(self.server.host, self.server.scope_port)
+    }
+
+    #[must_use]
+    pub fn mgmt_addr(&self) -> SocketAddr {
+        SocketAddr::new(self.mgmt.host, self.mgmt.port)
+    }
+}
+
 impl AppConfig {
     #[must_use]
     pub fn get() -> Arc<AppConfigProperties> {
@@ -967,7 +1015,7 @@ impl AppConfigProperties {
         validate_scope_delivery(&self.authz.scope_delivery)?;
         validate_identity(&self.authz.identity)?;
         validate_principal_discovery(&self.authz.principal_discovery)?;
-        validate_resign_token(&self.authz.resign_token)?;
+        validate_resign(&self.authz.resign)?;
         validate_storage(&self.storage)?;
         validate_cache(&self.cache)?;
         Ok(())
@@ -1194,17 +1242,15 @@ fn validate_client_credentials(
     Ok(())
 }
 
-fn validate_resign_token(token: &ResignTokenProperties) -> anyhow::Result<()> {
-    if !token.enabled {
+fn validate_resign(resign: &ResignProperties) -> anyhow::Result<()> {
+    if !resign.enabled {
         return Ok(());
     }
-    if token.ttl.is_zero() {
-        bail!("authz.resign_token.ttl must be positive when enabled");
+    if resign.max_ttl.is_zero() {
+        bail!("authz.resign.max_ttl must be positive when enabled");
     }
-    if token.private_key.is_empty() == token.private_key_file.is_empty() {
-        bail!(
-            "authz.resign_token requires exactly one of private_key or private_key_file when enabled"
-        );
+    if resign.private_key_b64.trim().is_empty() {
+        bail!("authz.resign.private_key_b64 is required when enabled");
     }
     Ok(())
 }
@@ -1765,6 +1811,21 @@ mgmt: {}
         let config: AuthnProperties = serde_yaml::from_str(
             r"
 providers:
+  corporate-oidc:
+    type: oidc
+    issuer: https://sso.example.com/realms/corporate
+    clientId: authguard
+    clientSecret: test-only-secret
+    callbackUrl: https://app.example.com/auth/v1/providers/corporate-oidc/callback
+    scopes: [openid, profile, email]
+    userinfo: true
+    tokenIntrospection:
+      endpoint: https://sso.example.com/realms/corporate/protocol/openid-connect/token/introspect
+      acceptedAudiences: [customer-growth-job-service]
+    identity:
+      subject: $.sub
+      username: $.preferred_username
+      email: $.email
   github:
     type: oauth2
     issuer: https://github.com
@@ -1788,6 +1849,13 @@ accountLinking:
         )
         .expect("provider configuration");
 
+        let ProviderProperties::Oidc(oidc) = &config.providers["corporate-oidc"] else {
+            panic!("corporate-oidc must decode as OIDC");
+        };
+        assert_eq!(
+            oidc.token_introspection.as_ref().expect("introspection").accepted_audiences,
+            ["customer-growth-job-service"]
+        );
         assert!(matches!(config.providers["github"], ProviderProperties::OAuth2(_)));
         assert_eq!(config.account_linking.strategy, LinkingStrategy::Explicit);
         assert!(config.account_linking.allow_link["corporate-dsp"].contains("github"));
@@ -1970,22 +2038,16 @@ providers:
     }
 
     #[test]
-    fn validates_resign_token_configuration() {
+    fn validates_resign_configuration() {
         let mut config = AppConfigProperties::default();
         config.validate().expect("resign JWT is disabled by default");
 
-        config.authz.resign_token.enabled = true;
-        config.authz.resign_token.private_key = "not a real key".to_string();
-        config.authz.resign_token.ttl = Duration::ZERO;
+        config.authz.resign.enabled = true;
+        config.authz.resign.private_key_b64 = "bm90IGEga2V5".to_string();
+        config.authz.resign.max_ttl = Duration::ZERO;
         assert!(config.validate().is_err(), "positive ttl is required");
 
-        config.authz.resign_token.ttl = Duration::from_secs(60);
+        config.authz.resign.max_ttl = Duration::from_secs(60);
         config.validate().expect("inline private key is valid");
-
-        config.authz.resign_token.private_key_file = "/run/secrets/resign-jwt-key".to_string();
-        assert!(config.validate().is_err(), "exactly one key source is required");
-
-        config.authz.resign_token.private_key.clear();
-        config.validate().expect("file-backed private key is valid");
     }
 }

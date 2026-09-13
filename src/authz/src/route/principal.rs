@@ -11,11 +11,9 @@ use serde::Deserialize;
 
 use crate::handler::{PrincipalHandler, PrincipalHandlerError};
 use crate::model::PrincipalStatus;
-use crate::principal::{
-    PrincipalMaterializationRequest, PrincipalSearchQuery, ScimProvisioningRequest,
-};
+use crate::principal::{PrincipalMaterializationRequest, PrincipalSearchQuery};
 
-use super::ApiError;
+use super::principal_error;
 
 #[derive(Clone)]
 struct PrincipalRouteState {
@@ -55,7 +53,6 @@ impl PrincipalRoutes {
             )
             .route("/api/v1/principal-discovery/search", post(Self::search))
             .route("/api/v1/principal-discovery/materialize", post(Self::materialize))
-            .route("/api/v1/principal-discovery/scim/events", post(Self::provision_scim))
             .with_state(self.state)
     }
 
@@ -65,7 +62,7 @@ impl PrincipalRoutes {
     ) -> Response {
         match state.handler.list_page(&query.query, query.after_id.as_deref(), query.limit).await {
             Ok(page) => Json(page).into_response(),
-            Err(error) => Self::principal_error(&error),
+            Err(error) => principal_error(&error),
         }
     }
 
@@ -75,8 +72,8 @@ impl PrincipalRoutes {
     ) -> Response {
         match state.handler.get(&principal_id).await {
             Ok(Some(principal)) => Json(principal).into_response(),
-            Ok(None) => Self::principal_error(&PrincipalHandlerError::NotFound(principal_id)),
-            Err(error) => Self::principal_error(&error),
+            Ok(None) => principal_error(&PrincipalHandlerError::NotFound(principal_id)),
+            Err(error) => principal_error(&error),
         }
     }
 
@@ -86,7 +83,7 @@ impl PrincipalRoutes {
         Json(update): Json<PrincipalStatusUpdate>,
     ) -> Response {
         state.handler.update_status(&principal_id, update.status).await.map_or_else(
-            |error| Self::principal_error(&error),
+            |error| principal_error(&error),
             |principal| Json(principal).into_response(),
         )
     }
@@ -96,7 +93,7 @@ impl PrincipalRoutes {
         Path(principal_id): Path<String>,
     ) -> Response {
         state.handler.delete(&principal_id).await.map_or_else(
-            |error| Self::principal_error(&error),
+            |error| principal_error(&error),
             |()| StatusCode::NO_CONTENT.into_response(),
         )
     }
@@ -109,7 +106,7 @@ impl PrincipalRoutes {
             .handler
             .search(query)
             .await
-            .map_or_else(|error| Self::principal_error(&error), |page| Json(page).into_response())
+            .map_or_else(|error| principal_error(&error), |page| Json(page).into_response())
     }
 
     async fn materialize(
@@ -117,57 +114,11 @@ impl PrincipalRoutes {
         Json(request): Json<PrincipalMaterializationRequest>,
     ) -> Response {
         state.handler.materialize(&request).await.map_or_else(
-            |error| Self::principal_error(&error),
+            |error| principal_error(&error),
             |principal| (StatusCode::CREATED, Json(principal)).into_response(),
-        )
-    }
-
-    async fn provision_scim(
-        State(state): State<PrincipalRouteState>,
-        Json(request): Json<ScimProvisioningRequest>,
-    ) -> Response {
-        state.handler.provision_scim(request).await.map_or_else(
-            |error| Self::principal_error(&error),
-            |principal| Json(principal).into_response(),
         )
     }
     const fn default_limit() -> u32 {
         20
-    }
-
-    fn principal_error(error: &PrincipalHandlerError) -> Response {
-        let (status, code) = match error {
-            PrincipalHandlerError::NotFound(_) => (StatusCode::NOT_FOUND, "principal_not_found"),
-            PrincipalHandlerError::Disabled(_) => (StatusCode::CONFLICT, "principal_disabled"),
-            PrincipalHandlerError::KindMismatch(_) => {
-                (StatusCode::CONFLICT, "principal_kind_mismatch")
-            }
-            PrincipalHandlerError::Referenced(_) => {
-                (StatusCode::CONFLICT, "principal_still_referenced")
-            }
-            PrincipalHandlerError::ProviderUnavailable => {
-                (StatusCode::SERVICE_UNAVAILABLE, "principal_discovery_unavailable")
-            }
-            PrincipalHandlerError::Discovery(_) => {
-                (StatusCode::BAD_GATEWAY, "principal_discovery_failed")
-            }
-            PrincipalHandlerError::Storage(_) => {
-                (StatusCode::SERVICE_UNAVAILABLE, "principal_storage_unavailable")
-            }
-        };
-        if matches!(error, PrincipalHandlerError::Storage(_)) {
-            tracing::error!(
-                authguard.principal.error_code = code,
-                %error,
-                "principal operation failed because storage is unavailable"
-            );
-        } else {
-            tracing::warn!(
-                authguard.principal.error_code = code,
-                %error,
-                "principal operation rejected"
-            );
-        }
-        (status, Json(ApiError::new(code, error.to_string()))).into_response()
     }
 }

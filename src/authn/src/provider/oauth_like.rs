@@ -65,6 +65,23 @@ impl<T> OAuthLikeProvider<T> {
         state: &str,
         client_id_parameter: &str,
     ) -> Result<Url, ProviderError> {
+        self.authorization_url_with_parameters(
+            client_id,
+            redirect_uri,
+            state,
+            client_id_parameter,
+            " ",
+        )
+    }
+
+    pub(super) fn authorization_url_with_parameters(
+        &self,
+        client_id: &str,
+        redirect_uri: &str,
+        state: &str,
+        client_id_parameter: &str,
+        scope_separator: &str,
+    ) -> Result<Url, ProviderError> {
         let mut url = Url::parse(&self.config.authorization.endpoint)
             .map_err(|_| ProviderError::InvalidConfiguration("invalid authorization endpoint"))?;
         {
@@ -74,7 +91,7 @@ impl<T> OAuthLikeProvider<T> {
             query.append_pair("redirect_uri", redirect_uri);
             query.append_pair("state", state);
             if !self.config.authorization.scopes.is_empty() {
-                query.append_pair("scope", &self.config.authorization.scopes.join(" "));
+                query.append_pair("scope", &self.config.authorization.scopes.join(scope_separator));
             }
             for (name, value) in &self.config.authorization.query {
                 query.append_pair(name, value);
@@ -147,6 +164,25 @@ impl<T> OAuthLikeProvider<T> {
     where
         T: ProviderTransport,
     {
+        self.authenticate_with_parameters(
+            callback,
+            client_id_parameter,
+            client_secret_parameter,
+            None,
+        )
+        .await
+    }
+
+    pub(super) async fn authenticate_with_parameters(
+        &self,
+        callback: OAuthLikeCallback,
+        client_id_parameter: &str,
+        client_secret_parameter: &str,
+        identity_access_token_query: Option<&str>,
+    ) -> Result<ExternalIdentity, ProviderError>
+    where
+        T: ProviderTransport,
+    {
         let started = std::time::Instant::now();
         let span = tracing::info_span!(
             "authn.provider.authenticate",
@@ -178,6 +214,7 @@ impl<T> OAuthLikeProvider<T> {
                             .lookup_identity(IdentityLookupRequest {
                                 endpoint: endpoint.clone(),
                                 access_token,
+                                access_token_query: identity_access_token_query.map(str::to_owned),
                             })
                             .await?,
                     )

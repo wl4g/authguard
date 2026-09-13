@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 
@@ -33,6 +34,30 @@ PROJECT_SOURCES = {
     ),
 }
 
+BUSINESS_TABLE = "e2e_authguard_customer_growth_jobs"
+PROJECT_REPOSITORIES = {
+    "golang-sqlx-service": "pkg/repository/customer_growth_job_repository.go",
+    "rust-sqlx-service": "src/repository/mod.rs",
+    "python-sqlalchemy-service": "app/repository/customer_growth_job_repository.py",
+    "springboot-jdbc-service": (
+        "src/main/java/com/authguard/usecases/repository/CustomerGrowthJobJdbcRepository.java"
+    ),
+    "springboot-jpa-service": (
+        "src/main/java/com/authguard/usecases/repository/CustomerGrowthJobJpaRepository.java"
+    ),
+}
+PROJECT_EXECUTION_TESTS = {
+    "golang-sqlx-service": "tests/customer_growth_job_e2e_test.go",
+    "rust-sqlx-service": "tests/customer_growth_job_e2e.rs",
+    "python-sqlalchemy-service": "tests/test_customer_growth_job_e2e.py",
+    "springboot-jdbc-service": (
+        "src/test/java/com/authguard/usecases/controller/CustomerGrowthJobControllerE2ETest.java"
+    ),
+    "springboot-jpa-service": (
+        "src/test/java/com/authguard/usecases/controller/CustomerGrowthJobControllerE2ETest.java"
+    ),
+}
+
 
 def verify(_context: RunContext) -> VerificationResult:
     started = time.monotonic()
@@ -41,11 +66,20 @@ def verify(_context: RunContext) -> VerificationResult:
     fixture = json.loads(
         (CONFIG_DIR / "authguard-e2e-scenarios.json").read_text(encoding="utf-8")
     )
+    mock_idp = (DEPLOY_DIR / "mocksvc-idp-service/app/server.py").read_text(
+        encoding="utf-8"
+    )
+    gateway_verifier = (
+        DEPLOY_DIR.parent / "common/kubernetes.py"
+    ).read_text(encoding="utf-8")
 
     with sqlite3.connect(":memory:") as connection:
         connection.executescript(sql)
         database_ids = {
-            row[0] for row in connection.execute("SELECT id FROM customer_growth_jobs")
+            row[0]
+            for row in connection.execute(
+                "SELECT id FROM e2e_authguard_customer_growth_jobs"
+            )
         }
         row_count = len(database_ids)
 
@@ -53,6 +87,8 @@ def verify(_context: RunContext) -> VerificationResult:
     scenario_ids = [scenario.get("id") for scenario in scenarios]
     if fixture.get("version") != 4:
         errors.append("AuthGuard E2E fixture version must be 4")
+    if f"CREATE TABLE {BUSINESS_TABLE}" not in sql:
+        errors.append(f"shared fixture must create isolated business table {BUSINESS_TABLE}")
     authn = fixture.get("authn", {})
     provider_flows = authn.get("provider_flows", [])
     linking = authn.get("account_linking", {})
@@ -60,14 +96,63 @@ def verify(_context: RunContext) -> VerificationResult:
     keycloak = federation.get("keycloak", {})
     ldap = federation.get("ldap", {})
     provider_ids = {flow.get("provider_id") for flow in provider_flows}
-    if provider_ids != {"github", "google", "wechat"}:
-        errors.append("AuthN fixture must cover GitHub, Google, and WeChat provider flows")
+    if provider_ids != {"github", "google", "wechat", "qq"}:
+        errors.append("AuthN fixture must cover GitHub, Google, WeChat, and QQ provider flows")
+    protocols = {flow.get("provider_id"): flow.get("protocol") for flow in provider_flows}
+    if protocols != {
+        "github": "oauth2",
+        "google": "oauth2",
+        "wechat": "oauth2-like",
+        "qq": "oauth2-like",
+    }:
+        errors.append("mock IdP flows must stay OAuth/OAuth-like; OIDC belongs to Keycloak")
+    mock_endpoints = {
+        "/github/login/oauth/authorize": "get",
+        "/github/login/oauth/access_token": "post",
+        "/github/user": "get",
+        "/google/o/oauth2/v2/auth": "get",
+        "/google/token": "post",
+        "/google/oauth2/v3/userinfo": "get",
+        "/wechat/connect/qrconnect": "get",
+        "/wechat/sns/oauth2/access_token": "get",
+        "/qq/oauth2.0/authorize": "get",
+        "/qq/oauth2.0/token": "get",
+        "/qq/oauth2.0/me": "get",
+    }
+    actual_mock_endpoints = {
+        endpoint: method
+        for method, endpoint in re.findall(
+            r'@app\.(get|post)\("([^"{]+)"\)', mock_idp
+        )
+    }
+    expected_mock_endpoints = {**mock_endpoints, "/healthz": "get"}
+    if actual_mock_endpoints != expected_mock_endpoints:
+        errors.append(
+            "mock IdP routes must contain only the four OAuth-like provider contracts "
+            f"plus healthz: actual={sorted(actual_mock_endpoints)}"
+        )
+    wire_contracts = (
+        'return _authorize("github", "client_id")',
+        '"application/json" in request.headers.get("Accept", "")',
+        'return _authorize("google", "client_id")',
+        'return _authorize("wechat", "appid")',
+        'request.args.get("secret", "")',
+        'return _authorize("qq", "client_id")',
+        'request.args.get("fmt") == "json"',
+        'request.args.get("access_token", "")',
+        "docs.github.com/",
+        "developers.google.com/",
+        "developers.weixin.qq.com/",
+        "wiki.connect.qq.com/",
+    )
+    if missing := [value for value in wire_contracts if value not in mock_idp]:
+        errors.append(f"mock IdP wire/docs contracts are incomplete: {missing}")
     if linking.get("strategy") != "first-login" or linking.get("email_auto_link") is not False:
         errors.append("AuthN 2C fixture must use first-login without email auto-link")
     keycloak_users = keycloak.get("users", [])
     keycloak_groups = keycloak.get("groups", [])
-    if len(keycloak_users) != 2 or len(keycloak_groups) != 2 or not keycloak.get("workload"):
-        errors.append("Keycloak federation must cover two users, two groups, and one workload")
+    if len(keycloak_users) != 3 or len(keycloak_groups) != 2 or not keycloak.get("workload"):
+        errors.append("Keycloak federation must cover three users, two groups, and one workload")
     federated_ids = [
         identity.get("principal_id")
         for identity in [*keycloak_users, *keycloak_groups, keycloak.get("workload", {})]
@@ -82,6 +167,15 @@ def verify(_context: RunContext) -> VerificationResult:
         errors.append("at least 30 authorization scenarios are required")
     if len(scenario_ids) != len(set(scenario_ids)):
         errors.append("authorization scenario ids must be unique")
+    gateway_contracts = (
+        "LIST action with empty data scope",
+        "empty data scope hides every seeded row",
+        "create denied by AuthZ",
+        "forbidden create Envoy ext_authz.denied",
+        "workload without create action is rejected by AuthZ",
+    )
+    if missing := [value for value in gateway_contracts if value not in gateway_verifier]:
+        errors.append(f"real gateway resource-authorization assertions are incomplete: {missing}")
 
     urn_prefix = "urn:iam:prod:customer-growth:"
     for scenario in scenarios:
@@ -117,14 +211,34 @@ def verify(_context: RunContext) -> VerificationResult:
                 errors.append(f"{project_name}: does not consume {fixture_name}")
         if "customer-growth" not in mapping_text:
             errors.append(f"{project_name}: resource mapping does not use customer-growth")
+        repository_path = DEPLOY_DIR / project_name / PROJECT_REPOSITORIES[project_name]
+        repository_text = repository_path.read_text(encoding="utf-8")
+        if BUSINESS_TABLE not in repository_text:
+            errors.append(f"{project_name}: repository does not use {BUSINESS_TABLE}")
+        execution_test = (
+            DEPLOY_DIR / project_name / PROJECT_EXECUTION_TESTS[project_name]
+        ).read_text(encoding="utf-8")
+        if "AUTHGUARD_E2E_CASE id=" not in execution_test:
+            errors.append(f"{project_name}: does not emit auditable scenario execution markers")
+
+    matrix_sources = "\n".join(
+        (DEPLOY_DIR.parent / relative).read_text(encoding="utf-8")
+        for relative in ("common/project.py", "runner.py")
+    )
+    for marker in ("verify_scenario_matrix", "expected_total", "case_executions"):
+        if marker not in matrix_sources:
+            errors.append(f"cross-service scenario matrix is missing {marker}")
 
     details = [
         f"Shared database rows: {row_count}",
+        f"Isolated business table: {BUSINESS_TABLE}",
         f"Shared authorization scenarios: {len(scenarios)}",
+        f"Cross-service execution contract: {len(scenarios)} × 5 = {len(scenarios) * 5}",
         f"Conditional gateway scenarios: {len(condition_scenarios)}",
         "CRUD, action isolation, *, **, explicit deny, IP, transport, MFA, and claims",
-        "AuthN covers realistic GitHub, Google, and WeChat OAuth2-like wire contracts",
+        "AuthN covers realistic GitHub, Google, WeChat, and QQ OAuth-like wire contracts",
         "Enterprise federation covers Keycloak USER/GROUP/WORKLOAD and direct LDAP identity",
+        "All five deployed Biz services assert functional 403 and zero-row data scopes for user/workload callers",
         "Every language reads the same SQL and JSON fixtures",
     ]
     details.extend(errors)

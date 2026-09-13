@@ -1,6 +1,6 @@
 # Authguard Documentation
 
-Authguard is a generic, standalone, high-performance IAM authorization project built for deep Envoy Gateway integration. Standards-aligned URNs model both S3-style bucket/object/path permissions and GitHub-style organization/repository/team collaboration. Envoy Gateway owns ingress, OIDC/JWT authentication, routing, and traffic policy; the standalone Rust service provides an external-authorization data plane and an IAM control plane.
+Authguard is a generic, standalone, high-performance AuthN/AuthZ product built for deep Envoy Gateway integration. Envoy owns ingress, canonical JWT enforcement, routing, and traffic policy; AuthN owns external OIDC/OAuth-like protocols and account linking, while AuthZ owns stable-Principal resource authorization.
 
 It is especially useful in B2B/B2B2C systems where multiple users or workloads collaborate with different roles and resource scopes. B2C systems can use the same model, although simple owner-only filtering rarely needs a complete IAM plane. Business adapters consume trusted access context and safely compile allow/deny Resource URNs into database query scopes.
 

@@ -1,12 +1,13 @@
 pub mod authorization;
-pub mod envoy_authz;
+pub mod policy;
 mod principal;
+mod scim;
 
-pub use authorization::{
+pub use authorization::{DefaultAuthorizationHandler, IAuthorizationHandler};
+pub use policy::{
     AuthorizationStatus, AuthorizeRequest, AuthorizeResponse, PolicyError, PolicyHandler,
     PolicyHandlerError, PolicyRuntime, ResourceCollection, ResourceItem,
 };
-pub use envoy_authz::{DefaultAuthorizationHandler, IAuthorizationHandler};
 pub use principal::{
     PrincipalHandler, PrincipalHandlerError, PrincipalPage, ResolvedRequestPrincipal,
 };

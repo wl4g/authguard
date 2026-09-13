@@ -1,996 +1,1120 @@
-//! `AuthGuard` control-plane authorization catalog handlers.
-use std::collections::HashSet;
-use std::str::FromStr;
-use std::sync::{Arc, RwLock};
+//! Envoy `ext_authz` request authorization and access-context delivery.
+
+use std::collections::HashMap;
+use std::net::IpAddr;
+use std::sync::Arc;
 use std::time::Instant;
 
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
+use axum::http::{HeaderMap, HeaderName, HeaderValue};
+use base64::engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD};
+use base64::Engine as _;
+use envoy_types::ext_authz::v3::pb::{
+    Authorization, CheckRequest, CheckResponse, HeaderAppendAction, HttpStatusCode,
+};
+use envoy_types::ext_authz::v3::{
+    CheckResponseExt as _, DeniedHttpResponseBuilder, OkHttpResponseBuilder,
+};
+use opentelemetry::global;
+use opentelemetry::propagation::{Extractor, TextMapPropagator};
+use opentelemetry::Context;
+use opentelemetry_http::HeaderExtractor;
+use rand::RngCore as _;
+use serde_json::json;
+use tonic::metadata::MetadataMap;
+use tonic::{Request, Response, Status};
+use tracing::Instrument as _;
+use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
+use super::{PolicyHandler, PrincipalHandler, PrincipalHandlerError};
+use crate::cache::IAuthorizationCache;
+use crate::config::{IdentityProperties, ScopeDeliveryProperties};
+use crate::model::access_context_v1::access_context_service_server::AccessContextService;
 use crate::model::{
-    AuthorizationDecision, AuthorizationRequest, EvaluationContext, IamActionInfo, IamPolicyInfo,
-    IamRoleBindingInfo, IamRoleInfo, PrincipalStatus, ResourceUrn, UrnPattern,
+    epoch_seconds, AccessContext, AccessContextInput, AccessContextSigner, ACCESS_CONTEXT_HEADER,
+    SCOPE_TOKEN_HEADER,
 };
-use crate::storage::{PolicyRepository, PrincipalRepository};
+use crate::model::{
+    AuthorizationDecision, AuthorizationRequest, AuthorizationScope, EvaluationContext,
+};
 use authguard_common::apm::metrics::AuthzMetrics;
-use authguard_common::utils::{
-    resolve_route, CompiledHttpRoute, HttpMappingError, ResolvedHttpRoute,
-};
+use authguard_common::utils::jwt as resign;
+use authguard_common::utils::{HttpMappingError, ResolvedHttpRoute};
+use authguard_common::{AuthenticatedPrincipalContext, IdentityError};
 
-use crate::handler::envoy_authz::{AuthorizationEvaluator, CompiledRoleBinding};
+const CHECK_ROUTE: &str = "envoy.service.auth.v3.Authorization/Check";
+const RESOLVE_SCOPE_ROUTE: &str = "authguard.access.v1.AccessContextService/ResolveScope";
+const SCOPE_TOKEN_PREFIX: &str = "ags_";
+const SCOPE_TOKEN_BYTES: usize = 32;
+const MAX_REQUEST_ID_BYTES: usize = 128;
+const LEGACY_ACCESS_HEADERS: [&str; 3] =
+    ["x-authguard-subject-id", "x-authguard-action", "x-authguard-resource-urn"];
+const UNTRUSTED_IDENTITY_HEADERS: [&str; 5] = [
+    "x-authguard-id-token",
+    "x-authguard-issuer",
+    "x-authguard-external-id",
+    "x-authguard-groups",
+    "x-authguard-claim-tenant-id",
+];
 
-#[derive(Debug, Error)]
-pub enum PolicyError {
-    #[error("duplicate action identifier `{0}`")]
-    DuplicateAction(String),
-    #[error("duplicate role id `{0}`")]
-    DuplicateRole(String),
-    #[error("duplicate role binding id `{0}`")]
-    DuplicateRoleBinding(String),
-    #[error("duplicate HTTP route matcher id `{0}`")]
-    DuplicateRouteMatcher(String),
-    #[error("role `{role_id}` references unknown action `{action_id}`")]
-    UnknownAction { role_id: String, action_id: String },
-    #[error("role binding `{binding_id}` references unknown role `{role_id}`")]
-    UnknownRole { binding_id: String, role_id: String },
-    #[error("role binding `{0}` has an empty principal id")]
-    InvalidPrincipal(String),
-    #[error("role binding `{binding_id}` has invalid Resource URN: {message}")]
-    InvalidBindingUrn { binding_id: String, message: String },
-    #[error("role binding `{binding_id}` has invalid conditions: {message}")]
-    InvalidBindingCondition { binding_id: String, message: String },
-    #[error("invalid HTTP route matcher: {0}")]
-    InvalidHttpRoute(#[from] HttpMappingError),
-}
-
-#[derive(Debug)]
-pub(crate) struct CompiledPolicy {
-    policy: IamPolicyInfo,
-    evaluator: AuthorizationEvaluator,
-    routes: Vec<CompiledHttpRoute>,
-}
-
-impl CompiledPolicy {
-    fn compile(mut policy: IamPolicyInfo, revision: u64) -> Result<Self, PolicyError> {
-        policy.revision = revision;
-        Self::validate_unique(
-            policy.actions.iter().map(|action| action.identifier.as_str()),
-            |id| PolicyError::DuplicateAction(id.to_string()),
-        )?;
-        Self::validate_unique(policy.roles.iter().map(|role| role.id.as_str()), |id| {
-            PolicyError::DuplicateRole(id.to_string())
-        })?;
-        Self::validate_unique(
-            policy.role_bindings.iter().map(|binding| binding.id.as_str()),
-            |id| PolicyError::DuplicateRoleBinding(id.to_string()),
-        )?;
-        Self::validate_unique(
-            policy
-                .actions
-                .iter()
-                .flat_map(|action| action.route_matchers.iter())
-                .map(|matcher| matcher.id.as_str()),
-            |id| PolicyError::DuplicateRouteMatcher(id.to_string()),
-        )?;
-
-        let action_ids =
-            policy.actions.iter().map(|action| action.identifier.as_str()).collect::<HashSet<_>>();
-        for role in &policy.roles {
-            for action_id in &role.action_ids {
-                if !action_ids.contains(action_id.as_str()) {
-                    return Err(PolicyError::UnknownAction {
-                        role_id: role.id.clone(),
-                        action_id: action_id.clone(),
-                    });
-                }
-            }
-        }
-
-        let role_ids = policy.roles.iter().map(|role| role.id.as_str()).collect::<HashSet<_>>();
-        let bindings = policy
-            .role_bindings
-            .iter()
-            .map(|binding| compile_role_binding(binding, &role_ids))
-            .collect::<Result<Vec<_>, _>>()?;
-        let routes =
-            policy
-                .actions
-                .iter()
-                .flat_map(|action| {
-                    action.route_matchers.iter().cloned().map(|matcher| {
-                        CompiledHttpRoute::compile(action.identifier.clone(), matcher)
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-        let evaluator = AuthorizationEvaluator::new(policy.roles.clone(), bindings);
-        Ok(Self { policy, evaluator, routes })
-    }
-
-    fn validate_unique<'a>(
-        values: impl IntoIterator<Item = &'a str>,
-        error: impl Fn(&str) -> PolicyError,
-    ) -> Result<(), PolicyError> {
-        let mut seen = HashSet::new();
-        for value in values {
-            if value.trim().is_empty() || !seen.insert(value) {
-                return Err(error(value));
-            }
-        }
-        Ok(())
-    }
-
-    #[must_use]
-    pub(crate) fn policy(&self) -> &IamPolicyInfo {
-        &self.policy
-    }
-
-    #[must_use]
-    pub(crate) fn evaluator(&self) -> &AuthorizationEvaluator {
-        &self.evaluator
-    }
-
-    pub(crate) fn resolve_http_route(
-        &self,
-        method: &str,
-        host: &str,
-        path: &str,
-        claims: &std::collections::HashMap<String, String>,
-    ) -> Result<ResolvedHttpRoute, HttpMappingError> {
-        resolve_route(&self.routes, method, host, path, claims)
-    }
-}
-
-fn compile_role_binding(
-    binding: &IamRoleBindingInfo,
-    roles: &HashSet<&str>,
-) -> Result<CompiledRoleBinding, PolicyError> {
-    if binding.principal_id.trim().is_empty() {
-        return Err(PolicyError::InvalidPrincipal(binding.id.clone()));
-    }
-    if !roles.contains(binding.role_id.as_str()) {
-        return Err(PolicyError::UnknownRole {
-            binding_id: binding.id.clone(),
-            role_id: binding.role_id.clone(),
-        });
-    }
-    let resource_urn = UrnPattern::from_str(&binding.resource_urn).map_err(|error| {
-        PolicyError::InvalidBindingUrn {
-            binding_id: binding.id.clone(),
-            message: error.to_string(),
-        }
-    })?;
-    let conditions = binding.conditions.compile().map_err(|message| {
-        PolicyError::InvalidBindingCondition { binding_id: binding.id.clone(), message }
-    })?;
-    Ok(CompiledRoleBinding {
-        id: binding.id.clone(),
-        principal_id: binding.principal_id.clone(),
-        role_id: binding.role_id.clone(),
-        effect: binding.effect,
-        resource_urn,
-        conditions,
-    })
-}
-
-/// Atomically readable, validated authorization policy runtime.
-#[derive(Debug, Clone)]
-pub struct PolicyRuntime {
-    current: Arc<RwLock<Arc<CompiledPolicy>>>,
-}
-
-impl PolicyRuntime {
-    /// Compiles the initial policy into an immutable runtime catalog.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the policy is invalid.
-    pub fn new(policy: IamPolicyInfo) -> Result<Self, PolicyError> {
-        let revision = policy.revision.max(1);
-        let compiled = Arc::new(CompiledPolicy::compile(policy, revision)?);
-        Ok(Self { current: Arc::new(RwLock::new(compiled)) })
-    }
-
-    #[must_use]
-    pub fn authorize(&self, request: &AuthorizationRequest) -> AuthorizationDecision {
-        self.catalog().evaluator().authorize(request)
-    }
-
-    #[must_use]
-    pub(crate) fn catalog(&self) -> Arc<CompiledPolicy> {
-        self.current.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
-    }
-
-    fn prepare_replacement(
-        policy: IamPolicyInfo,
-        revision: u64,
-    ) -> Result<Arc<CompiledPolicy>, PolicyError> {
-        CompiledPolicy::compile(policy, revision).map(Arc::new)
-    }
-
-    fn install(&self, compiled: Arc<CompiledPolicy>) {
-        *self.current.write().unwrap_or_else(std::sync::PoisonError::into_inner) = compiled;
-    }
+/// Contract required by the authorization transport routes.
+pub trait IAuthorizationHandler:
+    Authorization + AccessContextService + Clone + Send + Sync + 'static
+{
 }
 
 #[derive(Clone)]
-pub struct PolicyHandler {
-    runtime: PolicyRuntime,
-    repository: Arc<dyn PolicyRepository>,
-    principals: Arc<dyn PrincipalRepository>,
+pub struct DefaultAuthorizationHandler {
+    policy: PolicyHandler,
+    principals: PrincipalHandler,
+    cache: Arc<dyn IAuthorizationCache>,
     metrics: AuthzMetrics,
-    write_lock: Arc<tokio::sync::Mutex<()>>,
+    identity: IdentityProperties,
+    scope_delivery: ScopeDeliveryProperties,
+    direct_context_signer: AccessContextSigner,
+    /// Re-signs the JWT for the business microservice when enabled; `None`
+    /// strips the original token header without replacement.
+    resign: Option<ResignSigner>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuthorizeRequest {
-    pub principal_id: String,
-    #[serde(default)]
-    pub group_principal_ids: Vec<String>,
-    pub action: String,
-    pub resource_urn: String,
-    #[serde(default)]
-    pub parent_urns: Vec<String>,
-    #[serde(default)]
-    pub context: EvaluationContext,
+#[derive(Clone)]
+pub struct ResignSigner {
+    key: resign::JwtSigningKey,
+    max_ttl: std::time::Duration,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct AuthorizeResponse {
-    pub allowed: bool,
-    pub reason: String,
-    pub role_binding_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct AuthorizationStatus {
-    pub status: &'static str,
-    pub policy_revision: u64,
-    pub actions: usize,
-    pub roles: usize,
-    pub role_bindings: usize,
-    pub route_matchers: usize,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ResourceCollection<T> {
-    pub policy_revision: u64,
-    pub total: usize,
-    pub items: Vec<T>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ResourceItem<T> {
-    pub policy_revision: u64,
-    pub resource: T,
-}
-
-#[derive(Debug, Error)]
-pub enum PolicyHandlerError {
-    #[error("{resource} `{id}` already exists")]
-    AlreadyExists { resource: &'static str, id: String },
-    #[error("{resource} `{id}` was not found")]
-    NotFound { resource: &'static str, id: String },
-    #[error("path {resource} id `{path_id}` does not match body id `{body_id}`")]
-    IdMismatch { resource: &'static str, path_id: String, body_id: String },
-    #[error("principal `{0}` is disabled")]
-    PrincipalDisabled(String),
-    #[error("{resource} `{id}` is still referenced by {referenced_by}")]
-    Referenced { resource: &'static str, id: String, referenced_by: &'static str },
-    #[error("policy revision conflict: expected {expected}, persisted revision is {actual}")]
-    RevisionConflict { expected: u64, actual: u64 },
-    #[error("invalid authorization request: {0}")]
-    InvalidRequest(String),
-    #[error("principal `{0}` is not active")]
-    AuthorizationPrincipalInactive(String),
-    #[error("invalid authorization policy: {0}")]
-    InvalidPolicy(#[from] PolicyError),
-    #[error("authorization storage unavailable: {0}")]
-    Storage(#[source] anyhow::Error),
-}
-
-impl PolicyHandler {
+impl ResignSigner {
     #[must_use]
+    pub const fn new(key: resign::JwtSigningKey, max_ttl: std::time::Duration) -> Self {
+        Self { key, max_ttl }
+    }
+}
+
+impl DefaultAuthorizationHandler {
+    #[must_use]
+    // The handler's startup wiring is one cohesive dependency set; a builder
+    // or parameter struct would only relocate the same fields.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        runtime: PolicyRuntime,
-        repository: Arc<dyn PolicyRepository>,
-        principals: Arc<dyn PrincipalRepository>,
+        policy: PolicyHandler,
+        principals: PrincipalHandler,
+        cache: Arc<dyn IAuthorizationCache>,
         metrics: AuthzMetrics,
+        identity: IdentityProperties,
+        scope_delivery: ScopeDeliveryProperties,
+        direct_context_signer: AccessContextSigner,
+        resign: Option<ResignSigner>,
     ) -> Self {
         Self {
-            runtime,
-            repository,
+            policy,
             principals,
+            cache,
             metrics,
-            write_lock: Arc::new(tokio::sync::Mutex::new(())),
+            identity,
+            scope_delivery,
+            direct_context_signer,
+            resign,
         }
-    }
-
-    /// Loads the active policy and initializes the immutable runtime catalog.
-    ///
-    /// # Errors
-    ///
-    /// Returns a storage or policy-validation error.
-    pub async fn open(
-        repository: Arc<dyn PolicyRepository>,
-        principals: Arc<dyn PrincipalRepository>,
-        metrics: AuthzMetrics,
-        bootstrap_policy: Option<IamPolicyInfo>,
-    ) -> Result<Self, PolicyHandlerError> {
-        let stored = repository.load().await.map_err(PolicyHandlerError::Storage)?;
-        let initialize = stored.actions.is_empty()
-            && stored.roles.is_empty()
-            && stored.role_bindings.is_empty()
-            && bootstrap_policy.is_some();
-        let policy = match (initialize, bootstrap_policy) {
-            (true, Some(policy)) => policy,
-            _ => stored,
-        };
-        let runtime = PolicyRuntime::new(policy)?;
-        let normalized = runtime.catalog();
-        if initialize {
-            repository.replace(normalized.policy()).await.map_err(PolicyHandlerError::Storage)?;
-        }
-        metrics.set_policy_revision(normalized.policy().revision);
-        tracing::debug!(
-            authguard.policy.revision = normalized.policy().revision,
-            authguard.policy.bootstrap_applied = initialize,
-            authguard.policy.action_count = normalized.policy().actions.len(),
-            authguard.policy.role_count = normalized.policy().roles.len(),
-            authguard.policy.role_binding_count = normalized.policy().role_bindings.len(),
-            "authorization policy catalog loaded from storage"
-        );
-        Ok(Self::new(runtime, repository, principals, metrics))
-    }
-
-    #[must_use]
-    pub fn catalog(&self) -> IamPolicyInfo {
-        self.runtime.catalog().policy().clone()
-    }
-
-    #[must_use]
-    pub fn actions(&self) -> ResourceCollection<IamActionInfo> {
-        let catalog = self.catalog();
-        ResourceCollection {
-            policy_revision: catalog.revision,
-            total: catalog.actions.len(),
-            items: catalog.actions,
-        }
-    }
-
-    #[must_use]
-    pub fn roles(&self) -> ResourceCollection<IamRoleInfo> {
-        let catalog = self.catalog();
-        ResourceCollection {
-            policy_revision: catalog.revision,
-            total: catalog.roles.len(),
-            items: catalog.roles,
-        }
-    }
-
-    #[must_use]
-    pub fn role_bindings(&self) -> ResourceCollection<IamRoleBindingInfo> {
-        let catalog = self.catalog();
-        ResourceCollection {
-            policy_revision: catalog.revision,
-            total: catalog.role_bindings.len(),
-            items: catalog.role_bindings,
-        }
-    }
-
-    #[must_use]
-    pub fn role_binding(&self, id: &str) -> Option<IamRoleBindingInfo> {
-        self.catalog().role_bindings.into_iter().find(|binding| binding.id == id)
-    }
-
-    #[must_use]
-    pub fn action(&self, id: &str) -> Option<IamActionInfo> {
-        self.catalog().actions.into_iter().find(|action| action.identifier == id)
-    }
-
-    #[must_use]
-    pub fn role(&self, id: &str) -> Option<IamRoleInfo> {
-        self.catalog().roles.into_iter().find(|role| role.id == id)
-    }
-
-    /// Returns one action and the current catalog revision.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PolicyHandlerError::NotFound`] when the action does not exist.
-    pub fn action_item(&self, id: &str) -> Result<ResourceItem<IamActionInfo>, PolicyHandlerError> {
-        let catalog = self.catalog();
-        let resource = catalog
-            .actions
-            .into_iter()
-            .find(|action| action.identifier == id)
-            .ok_or_else(|| Self::not_found("action", id))?;
-        Ok(ResourceItem { policy_revision: catalog.revision, resource })
-    }
-
-    /// Returns one role and the current catalog revision.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PolicyHandlerError::NotFound`] when the role does not exist.
-    pub fn role_item(&self, id: &str) -> Result<ResourceItem<IamRoleInfo>, PolicyHandlerError> {
-        let catalog = self.catalog();
-        let resource = catalog
-            .roles
-            .into_iter()
-            .find(|role| role.id == id)
-            .ok_or_else(|| Self::not_found("role", id))?;
-        Ok(ResourceItem { policy_revision: catalog.revision, resource })
-    }
-
-    /// Returns one role binding and the current catalog revision.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PolicyHandlerError::NotFound`] when the binding does not exist.
-    pub fn role_binding_item(
-        &self,
-        id: &str,
-    ) -> Result<ResourceItem<IamRoleBindingInfo>, PolicyHandlerError> {
-        let catalog = self.catalog();
-        let resource = catalog
-            .role_bindings
-            .into_iter()
-            .find(|binding| binding.id == id)
-            .ok_or_else(|| Self::not_found("role binding", id))?;
-        Ok(ResourceItem { policy_revision: catalog.revision, resource })
-    }
-
-    #[must_use]
-    pub fn status(&self) -> AuthorizationStatus {
-        let catalog = self.catalog();
-        AuthorizationStatus {
-            status: "ok",
-            policy_revision: catalog.revision,
-            actions: catalog.actions.len(),
-            roles: catalog.roles.len(),
-            role_bindings: catalog.role_bindings.len(),
-            route_matchers: catalog.actions.iter().map(|action| action.route_matchers.len()).sum(),
-        }
-    }
-
-    /// Validates and evaluates one control-plane authorization request.
-    ///
-    /// # Errors
-    ///
-    /// Returns a validation, inactive-principal, or storage error.
-    pub async fn authorize_request(
-        &self,
-        request: AuthorizeRequest,
-    ) -> Result<AuthorizeResponse, PolicyHandlerError> {
-        let started = Instant::now();
-        if request.principal_id.trim().is_empty()
-            || request.action.trim().is_empty()
-            || request.resource_urn.trim().is_empty()
-        {
-            return Err(PolicyHandlerError::InvalidRequest(
-                "principal_id, action, and resource_urn are required".to_string(),
-            ));
-        }
-        let resource_urn = ResourceUrn::from_str(&request.resource_urn)
-            .map_err(|error| PolicyHandlerError::InvalidRequest(error.to_string()))?;
-        let parent_urns = request
-            .parent_urns
-            .iter()
-            .map(|urn| ResourceUrn::from_str(urn))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| PolicyHandlerError::InvalidRequest(error.to_string()))?;
-        let principal = self
-            .principals
-            .get(&request.principal_id)
-            .await
-            .map_err(PolicyHandlerError::Storage)?;
-        if !principal.is_some_and(|principal| principal.status == PrincipalStatus::Active) {
-            return Err(PolicyHandlerError::AuthorizationPrincipalInactive(request.principal_id));
-        }
-        let request = AuthorizationRequest {
-            principal_id: request.principal_id,
-            group_principal_ids: request.group_principal_ids,
-            action: request.action,
-            resource_urn,
-            parent_urns,
-            context: request.context,
-        };
-        let decision = self.authorize(&request);
-        self.metrics.record_authorization(
-            decision.allowed,
-            &decision.reason,
-            started.elapsed().as_secs_f64(),
-        );
-        tracing::info!(
-            authguard.decision = if decision.allowed { "allow" } else { "deny" },
-            authguard.reason = %decision.reason,
-            authguard.principal_id = %request.principal_id,
-            authguard.principal_group_count = request.group_principal_ids.len(),
-            authguard.action = %request.action,
-            authguard.resource_service = %request.resource_urn.service,
-            authguard.role_binding_id = decision.role_binding_id.as_deref().unwrap_or("none"),
-            duration_seconds = started.elapsed().as_secs_f64(),
-            "control-plane authorization evaluation completed"
-        );
-        Ok(AuthorizeResponse {
-            allowed: decision.allowed,
-            reason: decision.reason,
-            role_binding_id: decision.role_binding_id,
-        })
-    }
-
-    /// Creates one role binding after validating its Principal reference.
-    ///
-    /// # Errors
-    ///
-    /// Returns a conflict, validation, or storage error without partial publication.
-    pub async fn create_role_binding(
-        &self,
-        expected_revision: u64,
-        binding: IamRoleBindingInfo,
-    ) -> Result<(u64, IamRoleBindingInfo), PolicyHandlerError> {
-        self.require_active_principal(&binding.principal_id).await?;
-        let response = binding.clone();
-        let revision = self
-            .mutate(expected_revision, move |policy| {
-                Self::ensure_absent(
-                    policy.role_bindings.iter().map(|item| item.id.as_str()),
-                    "role binding",
-                    &binding.id,
-                )?;
-                policy.role_bindings.push(binding);
-                Ok(())
-            })
-            .await?
-            .revision;
-        Ok((revision, response))
-    }
-
-    /// Replaces one role binding.
-    ///
-    /// # Errors
-    ///
-    /// Returns a mismatch, not-found, validation, or storage error.
-    pub async fn update_role_binding(
-        &self,
-        expected_revision: u64,
-        id: &str,
-        binding: IamRoleBindingInfo,
-    ) -> Result<(u64, IamRoleBindingInfo), PolicyHandlerError> {
-        Self::ensure_matching_id("role binding", id, &binding.id)?;
-        self.require_active_principal(&binding.principal_id).await?;
-        let id = id.to_string();
-        let response = binding.clone();
-        let revision = self
-            .mutate(expected_revision, move |policy| {
-                let current = policy
-                    .role_bindings
-                    .iter_mut()
-                    .find(|candidate| candidate.id == id)
-                    .ok_or_else(|| Self::not_found("role binding", &id))?;
-                *current = binding;
-                Ok(())
-            })
-            .await?
-            .revision;
-        Ok((revision, response))
-    }
-
-    /// Deletes one role binding.
-    ///
-    /// # Errors
-    ///
-    /// Returns not-found or storage errors.
-    pub async fn delete_role_binding(
-        &self,
-        expected_revision: u64,
-        id: &str,
-    ) -> Result<u64, PolicyHandlerError> {
-        let id = id.to_string();
-        Ok(self
-            .mutate(expected_revision, move |policy| {
-                Self::remove_by_id("role binding", &mut policy.role_bindings, &id, |item| &item.id)
-            })
-            .await?
-            .revision)
-    }
-
-    /// Creates one action definition.
-    ///
-    /// # Errors
-    ///
-    /// Returns a conflict, validation, or storage error.
-    pub async fn create_action(
-        &self,
-        expected_revision: u64,
-        action: IamActionInfo,
-    ) -> Result<(u64, IamActionInfo), PolicyHandlerError> {
-        let response = action.clone();
-        let revision = self
-            .mutate(expected_revision, move |policy| {
-                Self::ensure_absent(
-                    policy.actions.iter().map(|item| item.identifier.as_str()),
-                    "action",
-                    &action.identifier,
-                )?;
-                policy.actions.push(action);
-                Ok(())
-            })
-            .await?
-            .revision;
-        Ok((revision, response))
-    }
-
-    /// Replaces one action definition.
-    ///
-    /// # Errors
-    ///
-    /// Returns a mismatch, not-found, validation, or storage error.
-    pub async fn update_action(
-        &self,
-        expected_revision: u64,
-        id: &str,
-        action: IamActionInfo,
-    ) -> Result<(u64, IamActionInfo), PolicyHandlerError> {
-        Self::ensure_matching_id("action", id, &action.identifier)?;
-        let id = id.to_string();
-        let response = action.clone();
-        let revision = self
-            .mutate(expected_revision, move |policy| {
-                let current = policy
-                    .actions
-                    .iter_mut()
-                    .find(|candidate| candidate.identifier == id)
-                    .ok_or_else(|| Self::not_found("action", &id))?;
-                *current = action;
-                Ok(())
-            })
-            .await?
-            .revision;
-        Ok((revision, response))
-    }
-
-    /// Deletes one unreferenced action definition.
-    ///
-    /// # Errors
-    ///
-    /// Returns not-found, validation, or storage errors. A referenced action is rejected.
-    pub async fn delete_action(
-        &self,
-        expected_revision: u64,
-        id: &str,
-    ) -> Result<u64, PolicyHandlerError> {
-        let id = id.to_string();
-        Ok(self
-            .mutate(expected_revision, move |policy| {
-                if policy.roles.iter().any(|role| role.action_ids.contains(&id)) {
-                    return Err(PolicyHandlerError::Referenced {
-                        resource: "action",
-                        id,
-                        referenced_by: "a role",
-                    });
-                }
-                Self::remove_by_id("action", &mut policy.actions, &id, |item| &item.identifier)
-            })
-            .await?
-            .revision)
-    }
-
-    /// Creates one role.
-    ///
-    /// # Errors
-    ///
-    /// Returns a conflict, validation, or storage error.
-    pub async fn create_role(
-        &self,
-        expected_revision: u64,
-        role: IamRoleInfo,
-    ) -> Result<(u64, IamRoleInfo), PolicyHandlerError> {
-        let response = role.clone();
-        let revision = self
-            .mutate(expected_revision, move |policy| {
-                Self::ensure_absent(
-                    policy.roles.iter().map(|item| item.id.as_str()),
-                    "role",
-                    &role.id,
-                )?;
-                policy.roles.push(role);
-                Ok(())
-            })
-            .await?
-            .revision;
-        Ok((revision, response))
-    }
-
-    /// Replaces one role.
-    ///
-    /// # Errors
-    ///
-    /// Returns a mismatch, not-found, validation, or storage error.
-    pub async fn update_role(
-        &self,
-        expected_revision: u64,
-        id: &str,
-        role: IamRoleInfo,
-    ) -> Result<(u64, IamRoleInfo), PolicyHandlerError> {
-        Self::ensure_matching_id("role", id, &role.id)?;
-        let id = id.to_string();
-        let response = role.clone();
-        let revision = self
-            .mutate(expected_revision, move |policy| {
-                let current = policy
-                    .roles
-                    .iter_mut()
-                    .find(|candidate| candidate.id == id)
-                    .ok_or_else(|| Self::not_found("role", &id))?;
-                *current = role;
-                Ok(())
-            })
-            .await?
-            .revision;
-        Ok((revision, response))
-    }
-
-    /// Deletes one unreferenced role.
-    ///
-    /// # Errors
-    ///
-    /// Returns not-found, validation, or storage errors. A referenced role is rejected.
-    pub async fn delete_role(
-        &self,
-        expected_revision: u64,
-        id: &str,
-    ) -> Result<u64, PolicyHandlerError> {
-        let id = id.to_string();
-        Ok(self
-            .mutate(expected_revision, move |policy| {
-                if policy.role_bindings.iter().any(|binding| binding.role_id == id) {
-                    return Err(PolicyHandlerError::Referenced {
-                        resource: "role",
-                        id,
-                        referenced_by: "a role binding",
-                    });
-                }
-                Self::remove_by_id("role", &mut policy.roles, &id, |item| &item.id)
-            })
-            .await?
-            .revision)
-    }
-
-    /// Atomically validates and replaces the complete policy using revision CAS.
-    ///
-    /// # Errors
-    ///
-    /// Returns validation, revision-conflict, or storage errors.
-    pub async fn replace(
-        &self,
-        expected_revision: u64,
-        policy: IamPolicyInfo,
-    ) -> Result<IamPolicyInfo, PolicyHandlerError> {
-        if expected_revision != policy.revision {
-            return Err(PolicyHandlerError::InvalidRequest(
-                "If-Match must equal the policy revision in the request body".to_string(),
-            ));
-        }
-        let _guard = self.write_lock.lock().await;
-        self.require_revision(expected_revision)?;
-        self.require_active_binding_principals(&policy).await?;
-        self.persist_and_publish(expected_revision, policy).await
-    }
-
-    /// Clears every action, role, and role binding in one transaction.
-    ///
-    /// # Errors
-    ///
-    /// Returns a revision-conflict or storage error without publishing a partial catalog.
-    pub async fn reset(&self, expected_revision: u64) -> Result<u64, PolicyHandlerError> {
-        let replacement = self
-            .mutate(expected_revision, |policy| {
-                policy.actions.clear();
-                policy.roles.clear();
-                policy.role_bindings.clear();
-                Ok(())
-            })
-            .await?;
-        Ok(replacement.revision)
-    }
-
-    #[must_use]
-    pub fn authorize(&self, request: &AuthorizationRequest) -> AuthorizationDecision {
-        self.runtime.authorize(request)
-    }
-
-    #[must_use]
-    pub(crate) fn compiled_catalog(&self) -> Arc<CompiledPolicy> {
-        self.runtime.catalog()
-    }
-
-    /// Verifies durable authorization storage connectivity.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the repository cannot be reached.
-    pub async fn readiness(&self) -> anyhow::Result<()> {
-        self.repository.ping().await?;
-        Ok(())
-    }
-
-    async fn require_active_principal(&self, id: &str) -> Result<(), PolicyHandlerError> {
-        let principal = self
-            .principals
-            .get(id)
-            .await
-            .map_err(PolicyHandlerError::Storage)?
-            .ok_or_else(|| Self::not_found("principal", id))?;
-        if principal.status == PrincipalStatus::Disabled {
-            return Err(PolicyHandlerError::PrincipalDisabled(id.to_string()));
-        }
-        Ok(())
-    }
-
-    async fn require_active_binding_principals(
-        &self,
-        policy: &IamPolicyInfo,
-    ) -> Result<(), PolicyHandlerError> {
-        let mut principal_ids = policy
-            .role_bindings
-            .iter()
-            .map(|binding| binding.principal_id.as_str())
-            .collect::<std::collections::BTreeSet<_>>();
-        while let Some(principal_id) = principal_ids.pop_first() {
-            self.require_active_principal(principal_id).await?;
-        }
-        Ok(())
-    }
-
-    async fn mutate(
-        &self,
-        expected_revision: u64,
-        mutation: impl FnOnce(&mut IamPolicyInfo) -> Result<(), PolicyHandlerError>,
-    ) -> Result<IamPolicyInfo, PolicyHandlerError> {
-        let _guard = self.write_lock.lock().await;
-        let current = self.require_revision(expected_revision)?;
-        let mut replacement = current;
-        mutation(&mut replacement)?;
-        self.persist_and_publish(expected_revision, replacement).await
-    }
-
-    async fn persist_and_publish(
-        &self,
-        expected_revision: u64,
-        policy: IamPolicyInfo,
-    ) -> Result<IamPolicyInfo, PolicyHandlerError> {
-        let replacement_revision = expected_revision.checked_add(1).ok_or_else(|| {
-            PolicyHandlerError::Storage(anyhow::anyhow!("policy revision overflow"))
-        })?;
-        let catalog =
-            PolicyRuntime::prepare_replacement(policy, replacement_revision).map_err(|error| {
-                self.metrics.record_policy_reload(false);
-                tracing::warn!(
-                    authguard.policy.expected_revision = expected_revision,
-                    authguard.policy.replacement_revision = replacement_revision,
-                    %error,
-                    "rejected invalid authorization policy mutation"
-                );
-                PolicyHandlerError::InvalidPolicy(error)
-            })?;
-        self.repository.replace(catalog.policy()).await.map_err(|error| {
-            tracing::error!(
-                authguard.policy.expected_revision = expected_revision,
-                %error,
-                "failed to persist authorization catalog mutation"
-            );
-            PolicyHandlerError::Storage(error)
-        })?;
-        self.runtime.install(catalog.clone());
-        self.metrics.record_policy_reload(true);
-        self.metrics.set_policy_revision(catalog.policy().revision);
-        tracing::info!(
-            authguard.policy.previous_revision = expected_revision,
-            authguard.policy.revision = catalog.policy().revision,
-            authguard.policy.action_count = catalog.policy().actions.len(),
-            authguard.policy.role_count = catalog.policy().roles.len(),
-            authguard.policy.role_binding_count = catalog.policy().role_bindings.len(),
-            "authorization policy mutation persisted and published"
-        );
-        Ok(catalog.policy().clone())
-    }
-
-    fn require_revision(
-        &self,
-        expected_revision: u64,
-    ) -> Result<IamPolicyInfo, PolicyHandlerError> {
-        let current = self.catalog();
-        if current.revision != expected_revision {
-            tracing::warn!(
-                authguard.policy.expected_revision = expected_revision,
-                authguard.policy.runtime_revision = current.revision,
-                "rejected stale authorization policy mutation"
-            );
-            return Err(PolicyHandlerError::RevisionConflict {
-                expected: expected_revision,
-                actual: current.revision,
-            });
-        }
-        Ok(current)
-    }
-
-    fn ensure_absent<'a>(
-        ids: impl IntoIterator<Item = &'a str>,
-        resource: &'static str,
-        id: &str,
-    ) -> Result<(), PolicyHandlerError> {
-        if ids.into_iter().any(|candidate| candidate == id) {
-            return Err(PolicyHandlerError::AlreadyExists { resource, id: id.to_string() });
-        }
-        Ok(())
-    }
-
-    fn ensure_matching_id(
-        resource: &'static str,
-        path_id: &str,
-        body_id: &str,
-    ) -> Result<(), PolicyHandlerError> {
-        if path_id == body_id {
-            return Ok(());
-        }
-        Err(PolicyHandlerError::IdMismatch {
-            resource,
-            path_id: path_id.to_string(),
-            body_id: body_id.to_string(),
-        })
-    }
-
-    fn not_found(resource: &'static str, id: &str) -> PolicyHandlerError {
-        PolicyHandlerError::NotFound { resource, id: id.to_string() }
-    }
-
-    fn remove_by_id<T>(
-        resource: &'static str,
-        values: &mut Vec<T>,
-        id: &str,
-        value_id: impl Fn(&T) -> &str,
-    ) -> Result<(), PolicyHandlerError> {
-        let previous_len = values.len();
-        values.retain(|value| value_id(value) != id);
-        if values.len() == previous_len {
-            return Err(Self::not_found(resource, id));
-        }
-        Ok(())
     }
 }
+
+fn log_ext_authz_started() {
+    tracing::info!(
+        event = "authguard.authz.ext_authz.started",
+        rpc.service = "envoy.service.auth.v3.Authorization",
+        rpc.method = "Check",
+        "Envoy ext_authz authorization request received"
+    );
+}
+
+#[tonic::async_trait]
+impl Authorization for DefaultAuthorizationHandler {
+    async fn check(
+        &self,
+        request: Request<CheckRequest>,
+    ) -> Result<Response<CheckResponse>, Status> {
+        let started = Instant::now();
+        log_ext_authz_started();
+        let grpc_trace_context = GrpcTraceContext::from_metadata(request.metadata());
+        let input = match WorkloadRequest::try_from(request.into_inner()) {
+            Ok(input) => input,
+            Err(message) => {
+                let response = self.denied(
+                    started,
+                    HttpStatusCode::BadRequest,
+                    "invalid request",
+                    "invalid_request",
+                    message,
+                );
+                tracing::info!(
+                    event = "authguard.authz.ext_authz.completed",
+                    http.request.id = "",
+                    authguard.policy_revision = self.policy.compiled_catalog().policy().revision,
+                    authguard.decision = "deny",
+                    rpc.grpc.status_code = response.status.as_ref().map_or(0, |status| status.code),
+                    duration_seconds = started.elapsed().as_secs_f64(),
+                    "Envoy ext_authz authorization check completed"
+                );
+                return Ok(Response::new(response));
+            }
+        };
+        let request_id = input.request_id().unwrap_or("").to_string();
+        let (parent, parent_source) = global::get_text_map_propagator(|propagator| {
+            Self::extract_parent_context(propagator, grpc_trace_context.as_ref(), &input.headers)
+        });
+        let span = tracing::info_span!(
+            "envoy.ext_authz.check",
+            otel.kind = "server",
+            rpc.system = "grpc",
+            rpc.service = "envoy.service.auth.v3.Authorization",
+            rpc.method = "Check",
+            authguard.trace.parent_source = parent_source,
+            http.request.method = %input.method,
+            http.request.id = %input.request_id().unwrap_or(""),
+            url.path = %input.path,
+            authguard.decision = tracing::field::Empty,
+            authguard.decision.reason = tracing::field::Empty,
+            authguard.identity.kind = tracing::field::Empty,
+            authguard.principal.id = tracing::field::Empty,
+            authguard.principal.group_count = tracing::field::Empty,
+            authguard.route.id = tracing::field::Empty,
+            authguard.action = tracing::field::Empty,
+            authguard.resource.service = tracing::field::Empty,
+            authguard.policy.revision = tracing::field::Empty,
+            authguard.role_binding.id = tracing::field::Empty,
+            authguard.scope.allow_count = tracing::field::Empty,
+            authguard.scope.deny_count = tracing::field::Empty,
+        );
+        let _ = span.set_parent(parent);
+        let response = async {
+            let (response, policy_revision) = match self.evaluate_request(&input).await {
+                Ok(evaluation) if evaluation.decision.allowed => {
+                    let revision = evaluation.policy_revision;
+                    (self.allowed(started, evaluation).await, revision)
+                }
+                Ok(evaluation) => {
+                    let revision = evaluation.policy_revision;
+                    (
+                        self.denied(
+                            started,
+                            HttpStatusCode::Forbidden,
+                            &evaluation.decision.reason,
+                            "authorization_denied",
+                            "request is not authorized",
+                        ),
+                        revision,
+                    )
+                }
+                Err(failure) => (
+                    self.denied(
+                        started,
+                        failure.status,
+                        failure.metric_reason,
+                        failure.code,
+                        failure.message,
+                    ),
+                    self.policy.compiled_catalog().policy().revision,
+                ),
+            };
+            let allowed = response.status.as_ref().is_some_and(|status| status.code == 0);
+            let decision = if allowed { "allow" } else { "deny" };
+            tracing::Span::current().record("authguard.decision", decision);
+            tracing::info!(
+                event = "authguard.authz.ext_authz.completed",
+                http.request.id = %request_id,
+                authguard.policy_revision = policy_revision,
+                authguard.decision = decision,
+                rpc.grpc.status_code = response.status.as_ref().map_or(0, |status| status.code),
+                duration_seconds = started.elapsed().as_secs_f64(),
+                "Envoy ext_authz authorization check completed"
+            );
+            response
+        }
+        .instrument(span.clone())
+        .await;
+        Ok(Response::new(response))
+    }
+}
+
+impl DefaultAuthorizationHandler {
+    fn extract_parent_context(
+        propagator: &dyn TextMapPropagator,
+        grpc_trace_context: Option<&GrpcTraceContext>,
+        http_headers: &HeaderMap,
+    ) -> (Context, &'static str) {
+        grpc_trace_context.map_or_else(
+            || (propagator.extract(&HeaderExtractor(http_headers)), "http_attributes"),
+            |metadata| (propagator.extract(metadata), "grpc_metadata"),
+        )
+    }
+
+    async fn allowed(&self, started: Instant, evaluation: RequestEvaluation) -> CheckResponse {
+        let RequestEvaluation {
+            principal_id,
+            route,
+            decision,
+            authorization_scope,
+            policy_revision,
+            identity,
+            source_expires_at_epoch_seconds,
+        } = evaluation;
+        let Some(scoped) = authorization_scope else {
+            tracing::error!("allowed authorization evaluation omitted its resource scope");
+            return self.denied(
+                started,
+                HttpStatusCode::InternalServerError,
+                "invalid authorization result",
+                "invalid_authorization_result",
+                "authorization result did not contain a resource scope",
+            );
+        };
+        let allow_urn_count = scoped.allow_resource_urns.len();
+        let deny_urn_count = scoped.deny_resource_urns.len();
+        let urn_count = allow_urn_count + deny_urn_count;
+        let now = epoch_seconds();
+        let resign_token =
+            match self.resign_token(&identity, &principal_id, source_expires_at_epoch_seconds) {
+                Ok(token) => token,
+                Err(failure) => {
+                    return self.denied(
+                        started,
+                        failure.status,
+                        failure.metric_reason,
+                        failure.code,
+                        failure.message,
+                    );
+                }
+            };
+        let direct_context = AccessContext::new(
+            AccessContextInput {
+                principal_id,
+                action: route.action.clone(),
+                resource_urn: route.resource_urn.to_string(),
+                allow_resource_urns: scoped.allow_resource_urns,
+                deny_resource_urns: scoped.deny_resource_urns,
+                policy_revision,
+            },
+            now,
+            self.scope_delivery.context_ttl,
+        );
+        let delivery = match self.prepare_delivery(direct_context, urn_count, now).await {
+            Ok(delivery) => delivery,
+            Err(failure) => {
+                return self.denied(
+                    started,
+                    failure.status,
+                    failure.metric_reason,
+                    failure.code,
+                    failure.message,
+                );
+            }
+        };
+        self.metrics.record_authorization(true, &decision.reason, started.elapsed().as_secs_f64());
+        self.metrics.record_http(CHECK_ROUTE, "gRPC", 200);
+        let ok = self.allowed_http_response(&delivery, resign_token.as_deref());
+        self.metrics.record_scope_delivery(delivery.name());
+        tracing::debug!(
+            authguard.decision = "allow",
+            authguard.route_id = %route.route_id,
+            authguard.action = %route.action,
+            authguard.resource_service = %route.resource_urn.service,
+            authguard.policy_revision = policy_revision,
+            authguard.role_binding_id = decision.role_binding_id.as_deref().unwrap_or("none"),
+            authguard.scope_delivery = delivery.name(),
+            authguard.scope_allow_count = allow_urn_count,
+            authguard.scope_deny_count = deny_urn_count,
+            "authorization request allowed"
+        );
+        let mut response = CheckResponse::with_status(Status::ok("request authorized"));
+        response.set_http_response(ok);
+        response
+    }
+
+    async fn prepare_delivery(
+        &self,
+        direct_context: AccessContext,
+        urn_count: usize,
+        now: u64,
+    ) -> Result<AccessDelivery, CheckFailure> {
+        let encoded_payload = direct_context.encode().map_err(|error| {
+            tracing::error!(%error, "failed to encode access context");
+            CheckFailure::context_encoding()
+        })?;
+        let direct_encoded =
+            self.direct_context_signer.sign_encoded(&encoded_payload).map_err(|error| {
+                tracing::error!(%error, "failed to sign direct access context");
+                CheckFailure::context_encoding()
+            })?;
+        if urn_count <= self.scope_delivery.direct_urn_limit
+            && direct_encoded.len() <= self.scope_delivery.max_direct_header_bytes
+        {
+            tracing::debug!(
+                authguard.scope.delivery = "direct",
+                authguard.scope.urn_count = urn_count,
+                authguard.scope.encoded_bytes = direct_encoded.len(),
+                "prepared signed direct access context"
+            );
+            return Ok(AccessDelivery::Direct(direct_encoded));
+        }
+
+        let token_context = AccessContext::new(
+            AccessContextInput {
+                principal_id: direct_context.principal_id,
+                action: direct_context.action,
+                resource_urn: direct_context.resource_urn,
+                allow_resource_urns: direct_context.allow_resource_urns,
+                deny_resource_urns: direct_context.deny_resource_urns,
+                policy_revision: direct_context.policy_revision,
+            },
+            now,
+            self.scope_delivery.scope_token_ttl,
+        );
+        let encoded = token_context.encode().map_err(|error| {
+            tracing::error!(%error, "failed to encode token-backed access context");
+            CheckFailure::context_encoding()
+        })?;
+        let token = Self::new_scope_token();
+        self.cache
+            .store_scope(&token, &encoded, self.scope_delivery.scope_token_ttl)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "failed to store token-backed access context");
+                CheckFailure::scope_cache_unavailable()
+            })?;
+        tracing::debug!(
+            authguard.scope.delivery = "token",
+            authguard.scope.urn_count = urn_count,
+            authguard.scope.encoded_bytes = encoded.len(),
+            authguard.scope.ttl_seconds = self.scope_delivery.scope_token_ttl.as_secs(),
+            "stored token-backed access context"
+        );
+        Ok(AccessDelivery::Token(token))
+    }
+
+    fn allowed_http_response(
+        &self,
+        delivery: &AccessDelivery,
+        resign_token: Option<&str>,
+    ) -> OkHttpResponseBuilder {
+        let overwrite = Some(HeaderAppendAction::OverwriteIfExistsOrAdd);
+        let mut response = OkHttpResponseBuilder::new();
+        // Never place the same header in both `headers` and `headers_to_remove`.
+        // Envoy's ext_authz contract does not define that combination as a
+        // replacement operation consistently across versions. When re-signing
+        // is enabled, OverwriteIfExistsOrAdd atomically replaces the untrusted
+        // IdP token; otherwise the original credential is stripped.
+        if resign_token.is_none() {
+            response.remove_header("authorization");
+        }
+        for header in LEGACY_ACCESS_HEADERS {
+            response.remove_header(header);
+        }
+        for header in UNTRUSTED_IDENTITY_HEADERS {
+            response.remove_header(header);
+        }
+        // In JWT mode `token_header` is itself `authorization`. Preserve the
+        // slot when it is about to receive Authguard's replacement token;
+        // custom/OIDC identity headers are still always stripped.
+        if resign_token.is_none()
+            || !self.identity.token_header.eq_ignore_ascii_case("authorization")
+        {
+            response.remove_header(&self.identity.token_header);
+        }
+        match delivery {
+            AccessDelivery::Direct(encoded) => {
+                // The trusted value overwrites any client-supplied context;
+                // only the alternate delivery header must be removed.
+                response.remove_header(SCOPE_TOKEN_HEADER);
+                response.add_header(ACCESS_CONTEXT_HEADER, encoded, overwrite, false);
+            }
+            AccessDelivery::Token(token) => {
+                response.remove_header(ACCESS_CONTEXT_HEADER);
+                response.add_header(SCOPE_TOKEN_HEADER, token, overwrite, false);
+            }
+        }
+        if let Some(token) = resign_token {
+            // The re-signed JWT replaces the original IdP token so the
+            // upstream microservice receives only Authguard-issued identity
+            // (authguardOrigin: true) plus the access context.
+            response.add_header("authorization", format!("Bearer {token}"), overwrite, false);
+        }
+        response
+    }
+
+    fn denied(
+        &self,
+        started: Instant,
+        status: HttpStatusCode,
+        metric_reason: &str,
+        code: &str,
+        message: &str,
+    ) -> CheckResponse {
+        self.metrics.record_authorization(false, metric_reason, started.elapsed().as_secs_f64());
+        self.metrics.record_http(CHECK_ROUTE, "gRPC", status as u16);
+        let grpc_status = match status {
+            HttpStatusCode::Unauthorized => Status::unauthenticated(message),
+            HttpStatusCode::BadRequest => Status::invalid_argument(message),
+            HttpStatusCode::InternalServerError => Status::internal(message),
+            _ => Status::permission_denied(message),
+        };
+        let mut denied = DeniedHttpResponseBuilder::new();
+        denied
+            .set_http_status(status)
+            .add_header("content-type", "application/json", None, false)
+            .set_body(json!({ "code": code, "message": message }).to_string());
+        if status == HttpStatusCode::Unauthorized {
+            denied.add_header("www-authenticate", "Bearer realm=\"authguard\"", None, false);
+        }
+        tracing::debug!(
+            authguard.decision = "deny",
+            authguard.reason = code,
+            "authorization request denied"
+        );
+        let mut response = CheckResponse::with_status(grpc_status);
+        response.set_http_response(denied);
+        response
+    }
+}
+
+/// Trace propagation fields copied from the trusted Envoy-to-Authguard gRPC transport.
+///
+/// Only W3C trace context is retained. Other gRPC metadata can contain credentials and must not be
+/// copied into telemetry or logs.
+struct GrpcTraceContext {
+    traceparent: Option<String>,
+    tracestate: Option<String>,
+}
+
+impl GrpcTraceContext {
+    fn from_metadata(metadata: &MetadataMap) -> Option<Self> {
+        metadata.contains_key("traceparent").then(|| Self {
+            traceparent: metadata
+                .get("traceparent")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned),
+            tracestate: metadata
+                .get("tracestate")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned),
+        })
+    }
+}
+
+impl Extractor for GrpcTraceContext {
+    fn get(&self, key: &str) -> Option<&str> {
+        match key {
+            "traceparent" => self.traceparent.as_deref(),
+            "tracestate" => self.tracestate.as_deref(),
+            _ => None,
+        }
+    }
+
+    fn keys(&self) -> Vec<&str> {
+        let mut keys = Vec::with_capacity(2);
+        if self.traceparent.is_some() {
+            keys.push("traceparent");
+        }
+        if self.tracestate.is_some() {
+            keys.push("tracestate");
+        }
+        keys
+    }
+}
+
+struct WorkloadRequest {
+    method: String,
+    host: String,
+    path: String,
+    headers: HeaderMap,
+    source_ip: Option<IpAddr>,
+    secure_transport: bool,
+}
+
+impl TryFrom<CheckRequest> for WorkloadRequest {
+    type Error = &'static str;
+
+    fn try_from(request: CheckRequest) -> Result<Self, Self::Error> {
+        let attributes = request.attributes.ok_or("Envoy CheckRequest is missing attributes")?;
+        let source_ip = attributes.source.as_ref().and_then(Self::peer_ip);
+        let http = attributes
+            .request
+            .and_then(|request| request.http)
+            .ok_or("Envoy CheckRequest is missing HTTP attributes")?;
+        if http.method.is_empty() || http.path.is_empty() {
+            return Err("Envoy CheckRequest method and path are required");
+        }
+        let headers = Self::header_map(&http.headers);
+        let host = if http.host.is_empty() {
+            http.headers.get("host").cloned().unwrap_or_default()
+        } else {
+            http.host
+        };
+        let secure_transport = http.scheme.eq_ignore_ascii_case("https");
+        let path = http.path.split('?').next().unwrap_or("/").to_string();
+        Ok(Self { method: http.method, host, path, headers, source_ip, secure_transport })
+    }
+}
+
+impl WorkloadRequest {
+    fn request_id(&self) -> Option<&str> {
+        self.headers.get("x-request-id").and_then(|value| value.to_str().ok()).filter(|value| {
+            !value.is_empty()
+                && value.len() <= MAX_REQUEST_ID_BYTES
+                && value.bytes().all(|byte| byte.is_ascii_graphic())
+        })
+    }
+
+    fn peer_ip(
+        peer: &envoy_types::pb::envoy::service::auth::v3::attribute_context::Peer,
+    ) -> Option<IpAddr> {
+        use envoy_types::pb::envoy::config::core::v3::address::Address;
+
+        match peer.address.as_ref()?.address.as_ref()? {
+            Address::SocketAddress(socket) => socket.address.parse().ok(),
+            Address::Pipe(_) | Address::EnvoyInternalAddress(_) => None,
+        }
+    }
+
+    fn header_map(headers: &HashMap<String, String>) -> HeaderMap {
+        let mut result = HeaderMap::with_capacity(headers.len());
+        for (name, value) in headers {
+            let Ok(name) = HeaderName::from_bytes(name.as_bytes()) else {
+                continue;
+            };
+            let Ok(value) = HeaderValue::from_str(value) else {
+                continue;
+            };
+            result.insert(name, value);
+        }
+        result
+    }
+}
+
+struct RequestEvaluation {
+    principal_id: String,
+    route: ResolvedHttpRoute,
+    decision: AuthorizationDecision,
+    authorization_scope: Option<AuthorizationScope>,
+    policy_revision: u64,
+    identity: AuthenticatedPrincipalContext,
+    source_expires_at_epoch_seconds: Option<u64>,
+}
+
+enum AccessDelivery {
+    Direct(String),
+    Token(String),
+}
+
+impl AccessDelivery {
+    const fn name(&self) -> &'static str {
+        match self {
+            Self::Direct(_) => "direct",
+            Self::Token(_) => "token",
+        }
+    }
+}
+
+struct CheckFailure {
+    status: HttpStatusCode,
+    metric_reason: &'static str,
+    code: &'static str,
+    message: &'static str,
+}
+
+impl CheckFailure {
+    const fn context_encoding() -> Self {
+        Self {
+            status: HttpStatusCode::InternalServerError,
+            metric_reason: "invalid request",
+            code: "context_encoding_failed",
+            message: "failed to create trusted access context",
+        }
+    }
+
+    const fn scope_cache_unavailable() -> Self {
+        Self {
+            status: HttpStatusCode::ServiceUnavailable,
+            metric_reason: "scope cache unavailable",
+            code: "scope_cache_unavailable",
+            message: "authorization scope is temporarily unavailable",
+        }
+    }
+
+    const fn invalid_identity_expiry() -> Self {
+        Self {
+            status: HttpStatusCode::Unauthorized,
+            metric_reason: "invalid identity",
+            code: "invalid_identity_expiry",
+            message: "trusted identity token expiry is missing or expired",
+        }
+    }
+
+    const fn resign_unavailable() -> Self {
+        Self {
+            status: HttpStatusCode::ServiceUnavailable,
+            metric_reason: "resign unavailable",
+            code: "resign_unavailable",
+            message: "trusted upstream identity could not be issued",
+        }
+    }
+
+    fn principal(error: &PrincipalHandlerError) -> Self {
+        tracing::warn!(%error, "principal resolution failed closed");
+        match error {
+            PrincipalHandlerError::Disabled(_) | PrincipalHandlerError::KindMismatch(_) => Self {
+                status: HttpStatusCode::Forbidden,
+                metric_reason: "principal disabled",
+                code: "principal_disabled",
+                message: "the authenticated principal is disabled",
+            },
+            PrincipalHandlerError::NotFound(_) | PrincipalHandlerError::ProviderUnavailable => {
+                Self {
+                    status: HttpStatusCode::Unauthorized,
+                    metric_reason: "unknown principal",
+                    code: "unknown_principal",
+                    message: "the authenticated principal is not registered",
+                }
+            }
+            PrincipalHandlerError::Referenced(_)
+            | PrincipalHandlerError::IdentityConflict
+            | PrincipalHandlerError::Discovery(_)
+            | PrincipalHandlerError::Storage(_) => Self {
+                status: HttpStatusCode::ServiceUnavailable,
+                metric_reason: "principal resolution unavailable",
+                code: "principal_resolution_unavailable",
+                message: "principal resolution is temporarily unavailable",
+            },
+        }
+    }
+}
+
+impl DefaultAuthorizationHandler {
+    fn request_identity(
+        &self,
+        request: &WorkloadRequest,
+    ) -> Result<AuthenticatedPrincipalContext, CheckFailure> {
+        let identity = match AuthenticatedPrincipalContext::from_gateway_headers(
+            &request.headers,
+            &self.identity.token_header,
+            &self.identity.principal_id_claim,
+            &self.identity.principal_kind_claim,
+            &self.identity.groups_claim,
+        ) {
+            Ok(identity) => identity,
+            Err(IdentityError::Missing) => {
+                return Err(CheckFailure {
+                    status: HttpStatusCode::Unauthorized,
+                    metric_reason: "missing identity",
+                    code: "missing_identity",
+                    message: "trusted identity token is required",
+                });
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "rejected malformed trusted identity token");
+                return Err(CheckFailure {
+                    status: HttpStatusCode::Unauthorized,
+                    metric_reason: "invalid identity",
+                    code: "invalid_identity",
+                    message: "trusted identity token is invalid",
+                });
+            }
+        };
+        let span = tracing::Span::current();
+        span.record("authguard.identity.kind", identity.kind.as_str());
+        tracing::debug!(
+            authguard.principal_id = %identity.principal_id,
+            authguard.identity.kind = identity.kind.as_str(),
+            authguard.identity.group_claim_count = identity.stable_group_ids.len(),
+            authguard.identity.scalar_claim_count = identity.trusted_claims.len(),
+            "parsed gateway-verified canonical IamPrincipalInfo context"
+        );
+        Ok(identity)
+    }
+
+    fn source_token_expiry(&self, request: &WorkloadRequest) -> Result<Option<u64>, CheckFailure> {
+        if self.resign.is_none() {
+            return Ok(None);
+        }
+        let token = request
+            .headers
+            .get(&self.identity.token_header)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| {
+                if self.identity.token_header.eq_ignore_ascii_case("authorization") {
+                    value.split_once(' ').and_then(|(scheme, token)| {
+                        scheme.eq_ignore_ascii_case("bearer").then_some(token)
+                    })
+                } else {
+                    Some(value)
+                }
+            })
+            .ok_or_else(CheckFailure::invalid_identity_expiry)?;
+        let expires_at = token
+            .split('.')
+            .nth(1)
+            .and_then(|encoded| {
+                URL_SAFE_NO_PAD.decode(encoded).or_else(|_| URL_SAFE.decode(encoded)).ok()
+            })
+            .and_then(|payload| serde_json::from_slice::<serde_json::Value>(&payload).ok())
+            .and_then(|claims| claims.get("exp").and_then(serde_json::Value::as_u64))
+            .ok_or_else(CheckFailure::invalid_identity_expiry)?;
+        Ok(Some(expires_at))
+    }
+
+    async fn evaluate_request(
+        &self,
+        request: &WorkloadRequest,
+    ) -> Result<RequestEvaluation, CheckFailure> {
+        let identity = self.request_identity(request)?;
+        let source_expires_at_epoch_seconds = self.source_token_expiry(request)?;
+        let span = tracing::Span::current();
+        let resolved = self
+            .principals
+            .resolve_request(&identity)
+            .await
+            .map_err(|error| CheckFailure::principal(&error))?;
+        span.record("authguard.principal.id", resolved.principal_id.as_str());
+        span.record("authguard.principal.group_count", resolved.group_principal_ids.len());
+        tracing::debug!(
+            authguard.principal_id = %resolved.principal_id,
+            authguard.principal_group_count = resolved.group_principal_ids.len(),
+            "resolved request identity to authorization principals"
+        );
+        let catalog = self.policy.compiled_catalog();
+        span.record("authguard.policy.revision", catalog.policy().revision);
+        let route = match catalog.resolve_http_route(
+            &request.method,
+            &request.host,
+            &request.path,
+            &identity.trusted_claims,
+        ) {
+            Ok(route) => route,
+            Err(HttpMappingError::NotMapped) => {
+                return Err(CheckFailure {
+                    status: HttpStatusCode::Forbidden,
+                    metric_reason: "route not mapped",
+                    code: "route_not_mapped",
+                    message: "request route has no authorization mapping",
+                });
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to resolve HTTP authorization route");
+                return Err(CheckFailure {
+                    status: HttpStatusCode::Forbidden,
+                    metric_reason: "invalid request",
+                    code: "invalid_route_mapping",
+                    message: "request route mapping is invalid",
+                });
+            }
+        };
+        span.record("authguard.route.id", route.route_id.as_str());
+        span.record("authguard.action", route.action.as_str());
+        span.record("authguard.resource.service", route.resource_urn.service.as_str());
+        tracing::debug!(
+            authguard.route_id = %route.route_id,
+            authguard.action = %route.action,
+            authguard.resource_service = %route.resource_urn.service,
+            authguard.policy_revision = catalog.policy().revision,
+            "resolved HTTP request to authorization resource"
+        );
+        let context = EvaluationContext {
+            source_ip: request.source_ip,
+            request_method: Some(request.method.clone()),
+            secure_transport: Some(request.secure_transport),
+            claims: identity.trusted_claims.clone().into_iter().collect(),
+        };
+        let decision = catalog.authorize(&AuthorizationRequest {
+            principal_id: resolved.principal_id.clone(),
+            group_principal_ids: resolved.group_principal_ids.clone(),
+            action: route.action.clone(),
+            resource_urn: route.resource_urn.clone(),
+            parent_urns: route.parent_urns.clone(),
+            context: context.clone(),
+        });
+        span.record("authguard.decision", if decision.allowed { "allow" } else { "deny" });
+        span.record("authguard.decision.reason", decision.reason.as_str());
+        if let Some(role_binding_id) = decision.role_binding_id.as_deref() {
+            span.record("authguard.role_binding.id", role_binding_id);
+        }
+        let authorization_scope = decision.allowed.then(|| {
+            catalog.authorization_scope(
+                &resolved.principal_id,
+                &resolved.group_principal_ids,
+                &route.action,
+                &context,
+            )
+        });
+        if let Some(scope) = authorization_scope.as_ref() {
+            span.record("authguard.scope.allow_count", scope.allow_resource_urns.len());
+            span.record("authguard.scope.deny_count", scope.deny_resource_urns.len());
+        }
+        Ok(RequestEvaluation {
+            principal_id: resolved.principal_id,
+            route,
+            decision,
+            authorization_scope,
+            policy_revision: catalog.policy().revision,
+            identity,
+            source_expires_at_epoch_seconds,
+        })
+    }
+
+    /// Re-signs the JWT for the upstream business microservice.
+    ///
+    /// The token carries `authguardOrigin: true`, the verified identity, and
+    /// the materialized principal id. It is signed with Authguard's RSA
+    /// private key (RS256), so the microservice verifies it with the paired
+    /// public key without calling back into Authguard.
+    fn resign_token(
+        &self,
+        identity: &AuthenticatedPrincipalContext,
+        principal_id: &str,
+        source_expires_at_epoch_seconds: Option<u64>,
+    ) -> Result<Option<String>, CheckFailure> {
+        let Some(resign) = self.resign.as_ref() else {
+            return Ok(None);
+        };
+        let now = epoch_seconds();
+        let source_remaining = source_expires_at_epoch_seconds
+            .and_then(|expires| expires.checked_sub(now))
+            .filter(|remaining| *remaining > 0)
+            .ok_or_else(CheckFailure::invalid_identity_expiry)?;
+        let ttl = resign.max_ttl.min(std::time::Duration::from_secs(source_remaining));
+        let claims = Self::resign_token_claims(identity, principal_id, now, ttl);
+        let payload = serde_json::to_vec(&claims)
+            .map_err(|error| tracing::error!(%error, "failed to encode resign JWT claims"))
+            .map_err(|()| CheckFailure::resign_unavailable())?;
+        let token = resign::sign(&resign.key, &payload)
+            .map_err(|error| tracing::error!(%error, "failed to sign resign JWT"))
+            .map_err(|()| CheckFailure::resign_unavailable())?;
+        tracing::debug!(
+            authguard.principal_id = principal_id,
+            authguard.resign_token.ttl_seconds = ttl.as_secs(),
+            "re-signed JWT for the business microservice"
+        );
+        Ok(Some(token))
+    }
+
+    /// Assembles the resign JWT claims shared between the runtime and tests.
+    #[must_use]
+    pub(crate) fn resign_token_claims(
+        identity: &AuthenticatedPrincipalContext,
+        principal_id: &str,
+        now_epoch_seconds: u64,
+        ttl: std::time::Duration,
+    ) -> serde_json::Value {
+        let mut claims = identity
+            .trusted_claims
+            .iter()
+            .map(|(name, value)| (name.clone(), json!(value)))
+            .collect::<serde_json::Map<_, _>>();
+        claims.insert("iss".to_string(), json!("authguard-authz"));
+        claims.insert("sub".to_string(), json!(principal_id));
+        claims.insert("principal_id".to_string(), json!(principal_id));
+        claims.insert("principal_kind".to_string(), json!(identity.kind.as_str()));
+        claims.insert("authguard_group_ids".to_string(), json!(identity.stable_group_ids));
+        if let Some(acr) = &identity.acr {
+            claims.insert("acr".to_string(), json!(acr));
+        }
+        claims.insert("amr".to_string(), json!(identity.amr));
+        // Marker claim: this JWT was re-signed by Authguard, never the IdP.
+        claims.insert("authguardOrigin".to_string(), json!(true));
+        claims.insert("iat".to_string(), json!(now_epoch_seconds));
+        claims.insert("exp".to_string(), json!(now_epoch_seconds.saturating_add(ttl.as_secs())));
+        serde_json::Value::Object(claims)
+    }
+
+    fn new_scope_token() -> String {
+        let mut bytes = [0_u8; SCOPE_TOKEN_BYTES];
+        rand::rng().fill_bytes(&mut bytes);
+        format!("{SCOPE_TOKEN_PREFIX}{}", URL_SAFE_NO_PAD.encode(bytes))
+    }
+
+    fn valid_scope_token(token: &str) -> bool {
+        token.len() == SCOPE_TOKEN_PREFIX.len() + 43
+            && token.starts_with(SCOPE_TOKEN_PREFIX)
+            && token[SCOPE_TOKEN_PREFIX.len()..]
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    }
+}
+
+#[tonic::async_trait]
+impl AccessContextService for DefaultAuthorizationHandler {
+    async fn resolve_scope(&self, request: Request<String>) -> Result<Response<String>, Status> {
+        let started = Instant::now();
+        tracing::info!(
+            event = "authguard.authz.scope_resolution.started",
+            rpc.service = "authguard.v1.AccessContextService",
+            rpc.method = "ResolveScope",
+            "workload authorization-scope resolution started"
+        );
+        let token = request.into_inner();
+        if !Self::valid_scope_token(&token) {
+            tracing::warn!("rejected malformed authorization scope token");
+            self.metrics.record_scope_resolution("invalid", started.elapsed().as_secs_f64());
+            self.metrics.record_http(RESOLVE_SCOPE_ROUTE, "gRPC", 400);
+            return Err(Status::invalid_argument("invalid scope token"));
+        }
+        let encoded = match self.cache.load_scope(&token).await {
+            Ok(Some(encoded)) => encoded,
+            Ok(None) => {
+                tracing::debug!("authorization scope token was not found or has expired");
+                self.metrics.record_scope_resolution("miss", started.elapsed().as_secs_f64());
+                self.metrics.record_http(RESOLVE_SCOPE_ROUTE, "gRPC", 401);
+                return Err(Status::unauthenticated("scope token is unknown or expired"));
+            }
+            Err(error) => {
+                tracing::error!(%error, "failed to load token-backed access context");
+                self.metrics.record_scope_resolution("error", started.elapsed().as_secs_f64());
+                self.metrics.record_http(RESOLVE_SCOPE_ROUTE, "gRPC", 503);
+                return Err(Status::unavailable("authorization scope is temporarily unavailable"));
+            }
+        };
+        let context = AccessContext::decode(&encoded).map_err(|error| {
+            tracing::warn!(%error, "rejected invalid cached access context");
+            self.metrics.record_scope_resolution("invalid", started.elapsed().as_secs_f64());
+            self.metrics.record_http(RESOLVE_SCOPE_ROUTE, "gRPC", 401);
+            Status::unauthenticated("scope token is unknown or expired")
+        })?;
+        self.metrics.record_scope_resolution("hit", started.elapsed().as_secs_f64());
+        self.metrics.record_http(RESOLVE_SCOPE_ROUTE, "gRPC", 200);
+        tracing::info!(
+            event = "authguard.authz.scope_resolution.succeeded",
+            authguard.principal_id = %context.principal_id,
+            authguard.action = %context.action,
+            authguard.policy_revision = context.policy_revision,
+            authguard.scope_allow_count = context.allow_resource_urns.len(),
+            authguard.scope_deny_count = context.deny_resource_urns.len(),
+            duration_seconds = started.elapsed().as_secs_f64(),
+            "authorization scope token resolved"
+        );
+        Ok(Response::new(encoded))
+    }
+}
+
+impl IAuthorizationHandler for DefaultAuthorizationHandler {}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::model::{AuthorizationConditionSpec, Effect};
+    use axum::http::{HeaderMap, HeaderValue};
+    use opentelemetry::trace::TraceContextExt as _;
+    use opentelemetry_sdk::propagation::TraceContextPropagator;
+    use tonic::metadata::MetadataMap;
+
+    use super::{DefaultAuthorizationHandler, GrpcTraceContext};
+    use authguard_common::AuthenticatedPrincipalContext;
+
+    const GRPC_TRACE_ID: &str = "11111111111111111111111111111111";
+    const HTTP_TRACE_ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
     #[test]
-    fn rejected_replacement_keeps_previous_policy() {
-        let runtime = PolicyRuntime::new(IamPolicyInfo::default()).expect("runtime");
-        let invalid = IamPolicyInfo {
-            actions: vec![IamActionInfo {
-                identifier: "job.read".to_string(),
-                description: String::new(),
-                route_matchers: Vec::new(),
-            }],
-            roles: vec![IamRoleInfo {
-                id: "reader".to_string(),
-                name: "Reader".to_string(),
-                description: String::new(),
-                action_ids: vec!["job.read".to_string()],
-            }],
-            role_bindings: vec![IamRoleBindingInfo {
-                id: "binding-1".to_string(),
-                principal_id: "principal-1".to_string(),
-                role_id: "reader".to_string(),
-                effect: Effect::Allow,
-                resource_urn: "invalid".to_string(),
-                conditions: AuthorizationConditionSpec::default(),
-            }],
-            ..IamPolicyInfo::default()
+    fn prefers_trusted_grpc_trace_context_over_http_attributes() {
+        let metadata =
+            SelfTestData::grpc_metadata(&format!("00-{GRPC_TRACE_ID}-2222222222222222-01"));
+        let grpc = GrpcTraceContext::from_metadata(&metadata);
+        let headers =
+            SelfTestData::http_headers(&format!("00-{HTTP_TRACE_ID}-bbbbbbbbbbbbbbbb-01"));
+
+        let (parent, source) = DefaultAuthorizationHandler::extract_parent_context(
+            &TraceContextPropagator::new(),
+            grpc.as_ref(),
+            &headers,
+        );
+        let span = parent.span();
+
+        assert_eq!(source, "grpc_metadata");
+        assert_eq!(span.span_context().trace_id().to_string(), GRPC_TRACE_ID);
+        assert_eq!(span.span_context().trace_state().header(), "vendor=grpc");
+    }
+
+    #[test]
+    fn falls_back_to_envoy_http_attributes_without_grpc_traceparent() {
+        let metadata = MetadataMap::new();
+        let grpc = GrpcTraceContext::from_metadata(&metadata);
+        let headers =
+            SelfTestData::http_headers(&format!("00-{HTTP_TRACE_ID}-bbbbbbbbbbbbbbbb-01"));
+
+        let (parent, source) = DefaultAuthorizationHandler::extract_parent_context(
+            &TraceContextPropagator::new(),
+            grpc.as_ref(),
+            &headers,
+        );
+        let span = parent.span();
+
+        assert_eq!(source, "http_attributes");
+        assert_eq!(span.span_context().trace_id().to_string(), HTTP_TRACE_ID);
+        assert_eq!(span.span_context().trace_state().header(), "vendor=http");
+    }
+
+    #[test]
+    fn malformed_grpc_traceparent_does_not_downgrade_to_http_attributes() {
+        let metadata = SelfTestData::grpc_metadata("malformed");
+        let grpc = GrpcTraceContext::from_metadata(&metadata);
+        let headers =
+            SelfTestData::http_headers(&format!("00-{HTTP_TRACE_ID}-bbbbbbbbbbbbbbbb-01"));
+
+        let (parent, source) = DefaultAuthorizationHandler::extract_parent_context(
+            &TraceContextPropagator::new(),
+            grpc.as_ref(),
+            &headers,
+        );
+        let span = parent.span();
+
+        assert_eq!(source, "grpc_metadata");
+        assert!(!span.span_context().is_valid());
+    }
+
+    #[test]
+    fn resign_token_claims_mark_authguard_origin_and_keep_scalar_claims() {
+        let identity = AuthenticatedPrincipalContext {
+            principal_id: "principal-1".to_string(),
+            kind: crate::model::PrincipalKind::User,
+            stable_group_ids: vec!["principal-group-7".to_string()],
+            trusted_claims: std::collections::HashMap::from([
+                ("tenant_id".to_string(), "mycompany".to_string()),
+                ("mfa".to_string(), "true".to_string()),
+            ]),
+            acr: Some("urn:mfa".to_string()),
+            amr: vec!["pwd".to_string(), "mfa".to_string()],
         };
-        assert!(PolicyRuntime::prepare_replacement(invalid, 2).is_err());
-        assert_eq!(runtime.catalog().policy().revision, 1);
+        let claims = DefaultAuthorizationHandler::resign_token_claims(
+            &identity,
+            "principal-1",
+            1_700_000_000,
+            std::time::Duration::from_secs(30),
+        );
+
+        assert_eq!(claims["iss"], "authguard-authz");
+        assert_eq!(claims["sub"], "principal-1");
+        assert_eq!(claims["principal_id"], "principal-1");
+        assert_eq!(claims["principal_kind"], "USER");
+        assert_eq!(claims["authguard_group_ids"], serde_json::json!(["principal-group-7"]));
+        assert_eq!(claims["authguardOrigin"], serde_json::json!(true));
+        assert_eq!(claims["iat"], serde_json::json!(1_700_000_000));
+        assert_eq!(claims["exp"], serde_json::json!(1_700_000_030));
+        assert_eq!(claims["tenant_id"], "mycompany", "scalar claims are preserved");
+        assert_eq!(claims["mfa"], "true");
+        assert!(
+            claims.as_object().is_some_and(|object| object.contains_key("exp")),
+            "expiry claim present"
+        );
+    }
+
+    struct SelfTestData;
+
+    impl SelfTestData {
+        fn grpc_metadata(traceparent: &str) -> MetadataMap {
+            let mut metadata = MetadataMap::new();
+            metadata.insert("traceparent", traceparent.parse().expect("valid metadata value"));
+            metadata.insert("tracestate", "vendor=grpc".parse().expect("valid metadata value"));
+            metadata
+        }
+
+        fn http_headers(traceparent: &str) -> HeaderMap {
+            let mut headers = HeaderMap::new();
+            headers.insert("traceparent", HeaderValue::from_str(traceparent).unwrap());
+            headers.insert("tracestate", HeaderValue::from_static("vendor=http"));
+            headers
+        }
     }
 }

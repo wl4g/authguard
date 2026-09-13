@@ -65,6 +65,7 @@ class CustomerGrowthJobControllerE2ETest {
       } finally {
         accessScope.close();
       }
+      System.out.printf("AUTHGUARD_E2E_CASE id=%s%n", scenario.id());
     }
   }
 
@@ -119,7 +120,7 @@ class CustomerGrowthJobControllerE2ETest {
           Number remaining =
               (Number)
                   entityManager
-                      .createNativeQuery("SELECT COUNT(*) FROM customer_growth_jobs WHERE id = ?")
+                      .createNativeQuery("SELECT COUNT(*) FROM e2e_authguard_customer_growth_jobs WHERE id = ?")
                       .setParameter(1, scenario.targetJobId())
                       .getSingleResult();
           yield new ScenarioResult(remaining.longValue() == 0, List.of(), null);
@@ -139,7 +140,7 @@ class CustomerGrowthJobControllerE2ETest {
       case "update" ->
           assertThat(
                   entityManager
-                      .createNativeQuery("SELECT status FROM customer_growth_jobs WHERE id = ?")
+                      .createNativeQuery("SELECT status FROM e2e_authguard_customer_growth_jobs WHERE id = ?")
                       .setParameter(1, scenario.targetJobId())
                       .getSingleResult())
               .isEqualTo("READY");
@@ -154,7 +155,7 @@ class CustomerGrowthJobControllerE2ETest {
   private long countById(Long id) {
     return ((Number)
             entityManager
-                .createNativeQuery("SELECT COUNT(*) FROM customer_growth_jobs WHERE id = ?")
+                .createNativeQuery("SELECT COUNT(*) FROM e2e_authguard_customer_growth_jobs WHERE id = ?")
                 .setParameter(1, id)
                 .getSingleResult())
         .longValue();

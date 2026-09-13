@@ -19,13 +19,16 @@ from urllib import error, parse, request
 from .config import CONFIG_DIR, E2E_DIR, PROJECT_ROOT
 from .model import CommandResult, RunContext
 from .process import run_command
-from .telemetry import E2ETrace, JaegerTraceVerifier
-from verifier.observability_contract import (
+from .telemetry import E2ETrace
+from verifier.s20_observability_contract import (
     ADAPTER_LOG_EVENTS,
     AUTHN_LOG_EVENTS,
     AUTHZ_LOG_EVENTS,
+    AuthorizationJaegerTraceVerifier,
     AuthnJaegerTraceVerifier,
     ControlPlaneJaegerTraceVerifier,
+    JaegerQueryClient,
+    OidcJaegerTraceVerifier,
     require_adapter_events,
     require_json_events,
     verify_authn_metrics,
@@ -51,18 +54,17 @@ ALIYUN_POSTGRES_IMAGE = (
     "registry.cn-shenzhen.aliyuncs.com/wl4g/bitnami_postgresql:18.3"
 )
 AUTHGUARD_IMAGE = "registry.cn-shenzhen.aliyuncs.com/wl4g/authguard:e2e-local"
-AUTHGUARD_API_TOKEN = "e2e-api-token"
+AUTHGUARD_API_TOKEN = "e2e-authguard-api-token"
 E2E_KEYS_DIR = CONFIG_DIR / "e2e-jwt-keys"
 MOCK_IDP_IMAGE = (
-    "registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-customer-growth-mock-idp:e2e-local"
+    "registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-mock-idp:e2e-local"
 )
-MOCK_IDP_DIRECTORY_TOKEN = "e2e-mock-idp-directory-token"
 WORKLOAD_IMAGES = {
-    "go-sqlx": "registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-customer-growth-go-sqlx:e2e-local",
-    "rust-sqlx": "registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-customer-growth-rust-sqlx:e2e-local",
-    "python-sqlalchemy": "registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-customer-growth-python-sqlalchemy:e2e-local",
-    "spring-jdbc": "registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-customer-growth-spring-jdbc:e2e-local",
-    "spring-jpa": "registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-customer-growth-spring-jpa:e2e-local",
+    "go-sqlx": "registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-go-sqlx:e2e-local",
+    "rust-sqlx": "registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-rust-sqlx:e2e-local",
+    "python-sqlalchemy": "registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-python-sqlalchemy:e2e-local",
+    "spring-jdbc": "registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-spring-jdbc:e2e-local",
+    "spring-jpa": "registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-spring-jpa:e2e-local",
 }
 WORKLOAD_DIRECTORIES = {
     "go-sqlx": "golang-sqlx-service",
@@ -72,8 +74,11 @@ WORKLOAD_DIRECTORIES = {
     "spring-jpa": "springboot-jpa-service",
 }
 WORKLOAD_HOSTS = {
-    component: f"e2e-{component}.customer-growth.local" for component in WORKLOAD_IMAGES
+    component: f"e2e-authguard-{component}.customer-growth.local"
+    for component in WORKLOAD_IMAGES
 }
+AUTHN_HOST = "e2e-authguard-authn.customer-growth.local"
+LOCAL_PORT_RANGE = range(28800, 28900)
 GROUP_EXTERNAL_IDS = {
     "direct-readers": "group:11111111-1111-4111-8111-111111111111",
     "token-editors": "group:22222222-2222-4222-8222-222222222222",
@@ -89,16 +94,20 @@ class KubernetesE2E:
 
     def __init__(self, context: RunContext) -> None:
         self.context = context
-        self.namespace = os.getenv("AUTHGUARD_E2E_NAMESPACE", "e2e-customer-growth")
-        self.release = os.getenv("AUTHGUARD_E2E_RELEASE", "e2e-customer-growth")
-        if not self.namespace.startswith("e2e-"):
-            raise ValueError("AUTHGUARD_E2E_NAMESPACE must start with e2e-")
-        if not self.release.startswith("e2e-"):
-            raise ValueError("AUTHGUARD_E2E_RELEASE must start with e2e-")
+        self.namespace = os.getenv(
+            "AUTHGUARD_E2E_NAMESPACE", "e2e-authguard-customer-growth"
+        )
+        self.release = os.getenv(
+            "AUTHGUARD_E2E_RELEASE", "e2e-authguard-customer-growth"
+        )
+        if not self.namespace.startswith("e2e-authguard-"):
+            raise ValueError("AUTHGUARD_E2E_NAMESPACE must start with e2e-authguard-")
+        if not self.release.startswith("e2e-authguard-"):
+            raise ValueError("AUTHGUARD_E2E_RELEASE must start with e2e-authguard-")
         self.envoy_release = f"{self.release}-envoy"
         self.support_release = f"{self.release}-support"
         self.authguard_release = f"{self.release}-authguard"
-        self.gateway_name = "e2e-customer-growth-gateway"
+        self.gateway_name = "e2e-authguard-customer-growth-gateway"
         self.environment = {
             "KUBECONFIG": os.getenv(
                 "KUBECONFIG", str(Path.home() / ".kube" / "config")
@@ -107,6 +116,7 @@ class KubernetesE2E:
         self.commands: list[CommandResult] = []
         self.details: list[str] = []
         self.authn_traces: dict[str, E2ETrace] = {}
+        self.authn_trace_principals: dict[str, str] = {}
         self.api_trace_headers: dict[str, str] = {}
         self.helm_chart = PROJECT_ROOT / "deploy" / "helm" / "authguard"
         self.support_chart = E2E_DIR / "helm"
@@ -121,30 +131,30 @@ class KubernetesE2E:
 
     @property
     def keycloak_service(self) -> str:
-        return f"{self.support_release}-e2e-keycloak"
+        return f"{self.support_release}-keycloak"
 
     @property
     def postgresql_service(self) -> str:
-        return f"{self.support_release}-e2e-postgresql"
+        return f"{self.support_release}-postgresql"
 
     @property
     def jaeger_service(self) -> str:
-        return f"{self.support_release}-e2e-jaeger"
+        return f"{self.support_release}-jaeger"
 
     @property
     def ldap_service(self) -> str:
-        return f"{self.support_release}-e2e-ldap"
+        return f"{self.support_release}-ldap"
 
     @property
     def principal_discovery_secret(self) -> str:
-        return f"{self.support_release}-e2e-principal-discovery-credentials"
+        return f"{self.support_release}-principal-discovery-credentials"[:63].rstrip("-")
 
     @property
     def mock_idp_service(self) -> str:
-        return f"{self.support_release}-e2e-mock-idp"
+        return f"{self.support_release}-mock-idp"
 
     def workload_service(self, component: str) -> str:
-        return f"{self.support_release}-e2e-{component}"
+        return f"{self.support_release}-{component}"
 
     @property
     def issuer(self) -> str:
@@ -174,6 +184,7 @@ class KubernetesE2E:
             self._build_images()
         self._prepare_external_images()
         self._install_envoy_gateway()
+        self._remove_mutable_cluster_images()
         self._install_support_services()
         # Create the consumer Pods first, then import each mutable local image.
         # Under image-GC pressure an unreferenced image can disappear while the
@@ -188,6 +199,9 @@ class KubernetesE2E:
         self._import_image(ALIYUN_REDIS_IMAGE)
         self._install_authguard()
         self._wait_for_resources()
+        self._verify_redis_cluster()
+        self._verify_running_images()
+        self._verify_zero_container_restarts()
 
     def verify_principal_preauthorization(self) -> None:
         """Materialize enterprise identities and apply grants before business login."""
@@ -210,7 +224,7 @@ class KubernetesE2E:
         self._export_verifier_trace(trace)
         verifier = ControlPlaneJaegerTraceVerifier()
         with self._forward_service(self.jaeger_service, 16686) as query_port:
-            payload = self._wait_for_distributed_trace(query_port, trace, verifier)
+            payload = self._jaeger_query(query_port).wait_for_trace(trace, verifier)
         verifier.verify(payload, trace)
         self.details.extend(
             [
@@ -233,6 +247,7 @@ class KubernetesE2E:
                     mock_idp_port,
                     flow["provider_id"],
                     flow["external_identity"].get("username"),
+                    flow["expected_principal"]["trusted_claims"],
                 )
                 for flow in self.authn_scenarios["provider_flows"]
             }
@@ -249,6 +264,7 @@ class KubernetesE2E:
                     mock_idp_port,
                     flow["provider_id"],
                     flow["external_identity"].get("username"),
+                    flow["expected_principal"]["trusted_claims"],
                 )
                 for flow in self.authn_scenarios["provider_flows"]
             }
@@ -261,47 +277,89 @@ class KubernetesE2E:
     def verify_gateway_authorization(self) -> None:
         """Verify pre-authorized user/workload requests through Envoy and AuthZ."""
         with self._forward_service(self.keycloak_service, 8080) as keycloak_port:
-            direct_token = self._password_token(
+            direct_external_token = self._password_token(
                 keycloak_port, "direct-reader", "direct-reader-password"
             )
-            editor_token = self._password_token(
+            editor_external_token = self._password_token(
                 keycloak_port, "token-editor", "token-editor-password"
             )
+            no_data_external_token = self._password_token(
+                keycloak_port, "no-data-reader", "no-data-reader-password"
+            )
+        envoy_service = self._envoy_proxy_service()
+        with self._forward_service(envoy_service, 8082) as authn_gateway_port:
+            oidc_trace = E2ETrace("customer-growth.authentication.oidc.e2e")
+            oidc_span = oidc_trace.start_client("envoy.authn.oidc")
+            direct_token = self._canonicalize_token(
+                authn_gateway_port,
+                direct_external_token,
+                "USER",
+                headers={
+                    "traceparent": oidc_span.traceparent,
+                    "x-request-id": oidc_trace.request_id,
+                },
+            )
+            oidc_span.finish()
+            oidc_trace.finish()
+            editor_token = self._canonicalize_token(
+                authn_gateway_port, editor_external_token, "USER"
+            )
+            no_data_token = self._canonicalize_token(
+                authn_gateway_port, no_data_external_token, "USER"
+            )
+        self._export_verifier_trace(oidc_trace)
+        with self._forward_service(self.jaeger_service, 16686) as query_port:
+            oidc_verifier = OidcJaegerTraceVerifier("principal-direct-reader")
+            oidc_payload = self._jaeger_query(query_port).wait_for_trace(
+                oidc_trace, oidc_verifier
+            )
+        oidc_verifier.verify(oidc_payload, oidc_trace)
+        self.details.append(
+            "Jaeger verified Keycloak OIDC token normalization through Envoy/AuthN to "
+            "canonical principal-direct-reader"
+        )
         for token, principal_id in (
             (direct_token, "principal-direct-reader"),
             (editor_token, "principal-token-editor"),
+            (no_data_token, "principal-no-data-reader"),
         ):
             if self._jwt_claims(token).get("principal_id") != principal_id:
-                raise RuntimeError(f"Keycloak token did not contain {principal_id!r}")
+                raise RuntimeError(f"AuthN canonical token did not contain {principal_id!r}")
 
-        envoy_service = self._envoy_proxy_service()
-        with self._forward_service(envoy_service, 80) as gateway_port:
+        with (
+            self._forward_service(envoy_service, 80) as gateway_port,
+            self._forward_service(envoy_service, 8082) as authn_gateway_port,
+        ):
             self._verify_jwt_gate_precedes_ext_auth(
-                gateway_port,
-                next(iter(WORKLOAD_HOSTS.values())),
-                direct_token,
-            )
-            self._verify_distributed_trace(
                 gateway_port,
                 next(iter(WORKLOAD_HOSTS.values())),
                 direct_token,
             )
             for component, host in WORKLOAD_HOSTS.items():
                 self._verify_workload_contract(
-                    gateway_port, component, host, direct_token, editor_token
+                    gateway_port,
+                    component,
+                    host,
+                    direct_token,
+                    editor_token,
+                    no_data_token,
                 )
-            self._verify_workload_client_credentials(gateway_port)
+                self._verify_distributed_trace(
+                    gateway_port, component, host, direct_token
+                )
+            self._verify_create_denied_by_authz(
+                gateway_port, direct_token, editor_token
+            )
+            self._verify_workload_client_credentials(gateway_port, authn_gateway_port)
             self._verify_resign_token_boundary(gateway_port, direct_token)
+            self._verify_route_matcher_denials()
 
     def verify_runtime_evidence(self) -> None:
         """Verify persistent state plus metrics, logs, traces and runtime health."""
         self._verify_metrics()
-        self._verify_route_matcher_denials()
         self._verify_observability_logs()
-        self._verify_redis_cluster()
+        self._verify_jaeger_runtime_inventory()
         self._verify_postgresql_schema_isolation()
-        self._verify_running_images()
-        self._verify_zero_container_restarts()
 
     def _social_login(
         self,
@@ -309,12 +367,13 @@ class KubernetesE2E:
         mock_idp_port: int,
         provider: str,
         expected_username: str | None,
+        trusted_claims: dict[str, object],
     ) -> dict:
         """Drive browser redirects through Envoy and a real OAuth-like adapter flow."""
 
         trace = E2ETrace(
             "customer-growth.authentication.e2e",
-            request_id=f"e2e-authn-{provider}-{os.urandom(6).hex()}",
+            request_id=f"e2e-authguard-authn-{provider}-{os.urandom(6).hex()}",
         )
 
         class NoRedirect(request.HTTPRedirectHandler):
@@ -344,14 +403,14 @@ class KubernetesE2E:
         authorize_span = trace.start_client(
             "envoy.authn.authorize",
             **{
-                "server.address": "authn.customer-growth.local",
+                "server.address": AUTHN_HOST,
                 "http.request.method": "GET",
             },
         )
         authorize_location = redirect_location(
             f"http://127.0.0.1:{authn_gateway_port}/auth/v1/providers/{provider}/authorize"
             "?return_uri=%2Fcustomer-growth%2Fjobs",
-            host="authn.customer-growth.local",
+            host=AUTHN_HOST,
             headers={
                 "traceparent": authorize_span.traceparent,
                 "x-request-id": trace.request_id,
@@ -367,7 +426,7 @@ class KubernetesE2E:
         callback_span = trace.start_client(
             "envoy.authn.callback",
             **{
-                "server.address": "authn.customer-growth.local",
+                "server.address": AUTHN_HOST,
                 "http.request.method": "GET",
             },
         )
@@ -375,7 +434,7 @@ class KubernetesE2E:
             f"http://127.0.0.1:{authn_gateway_port}{callback_url.path}"
             + (f"?{callback_url.query}" if callback_url.query else ""),
             headers={
-                "Host": "authn.customer-growth.local",
+                "Host": AUTHN_HOST,
                 "traceparent": callback_span.traceparent,
                 "x-request-id": trace.request_id,
             },
@@ -389,31 +448,33 @@ class KubernetesE2E:
         self.authn_traces[provider] = trace
         claims = self._jwt_claims(login.get("accessToken", ""))
         principal = login.get("principal", {})
+        provider_claims = {"id", "openid", "unionid", "access_token", "authorization_code"}
         if (
             claims.get("iss") != self.authn_issuer
             or claims.get("aud") != "customer-growth-job-service"
             or claims.get("principal_id") != principal.get("principalId")
             or claims.get("principal_kind") != "USER"
-            or claims.get("tenant_id") != "example-corp"
             or claims.get("authguard_group_ids") != []
-            or "id" in claims
+            or provider_claims.intersection(claims)
         ):
             raise RuntimeError(f"{provider}: AuthN emitted an invalid canonical Principal token")
+        if any(claims.get(name) != value for name, value in trusted_claims.items()):
+            raise RuntimeError(f"{provider}: AuthN emitted invalid trusted claims")
         if expected_username is not None and claims.get("username") != expected_username:
             raise RuntimeError(f"{provider}: AuthN emitted an invalid normalized username")
+        self.authn_trace_principals[provider] = principal["principalId"]
         self.details.append(
-            f"{provider}: Envoy -> AuthN callback -> token exchange -> userinfo -> "
+            f"{provider}: Envoy -> AuthN callback -> token exchange -> identity lookup -> "
             "ExternalIdentity -> durable identity binding -> canonical Principal succeeded"
         )
         return login
 
     def _bootstrap_authorization_policy(self) -> None:
         """Apply administrator grants to federated enterprise Principals."""
-        with self._forward_service("e2e-customer-growth-authguard", 9091) as port:
+        with self._forward_service(self.authguard_release, 9091) as port:
             canonical_principals = self._materialize_scenario_principals(port)
             self._verify_direct_ldap_principal_discovery(port)
-            self._verify_custom_principal_discovery(port)
-            self._verify_scim_principal_discovery(port, canonical_principals)
+            self._verify_scim_push_provisioning(port, canonical_principals)
             self._required_group_principal_ids(port)
 
             status, body = self._api_http(port, "/api/v1/policy")
@@ -513,30 +574,12 @@ class KubernetesE2E:
             "an independent optional IdP integration"
         )
 
-    def _verify_custom_principal_discovery(self, port: int) -> None:
-        """Prove CustomPrincipalDiscovery against the mock IdP directory API."""
-        fixture = self.principal_scenarios["custom"]
-        identity = fixture["identity"]
-        candidate = self._search_external_principal(
-            port,
-            provider_id=fixture["provider_id"],
-            identity=identity,
-            expected_issuer=self.issuer,
-            expected_external_id=identity["immutable_external_id"],
-        )
-        self._materialize_idempotently(port, candidate, fixture["principal_id"])
-        self.details.append(
-            "Authguard CustomPrincipalDiscovery searched the mock IdP directory API "
-            "(bearer JWT + configurable request/response mapping) and materialized "
-            "its identity idempotently"
-        )
-
-    def _verify_scim_principal_discovery(
+    def _verify_scim_push_provisioning(
         self,
         port: int,
         canonical_principals: dict[str, dict[str, dict]],
     ) -> None:
-        """Prove SCIM lifecycle and explicit convergence on canonical Principal IDs."""
+        """Prove SCIM lifecycle and exact external-identity convergence."""
         fixture = self.principal_scenarios["scim"]
         user_payload = json.loads(json.dumps(fixture["user"]))
         group_payload = json.loads(json.dumps(fixture["group"]))
@@ -554,40 +597,38 @@ class KubernetesE2E:
 
         canonical_user = canonical_principals["users"]["direct-reader"]
         converged_user = json.loads(json.dumps(user_payload))
-        converged_user["principal_id"] = canonical_user["id"]
         converged_user["resource"].update(
             {
                 "id": "scim-canonical-user-convergence",
-                "externalId": "keycloak-direct-reader",
+                "externalId": self.principal_scenarios["keycloak"]["users"][0]["external_id"],
                 "userName": "direct-reader",
-                "display_name": "Direct Reader",
+                "displayName": "Direct Reader",
             }
         )
-        projected = self._scim_event(port, converged_user)
+        projected = self._scim_event(port, converged_user, create=True)
         if projected["id"] != canonical_user["id"]:
             raise RuntimeError("SCIM User did not converge on the canonical OIDC Principal")
         self._get_principal(port, canonical_user["id"])
 
         canonical_group = canonical_principals["groups"]["direct-readers"]
         converged_group = json.loads(json.dumps(group_payload))
-        converged_group["principal_id"] = canonical_group["id"]
         converged_group["resource"].update(
             {
                 "id": "scim-canonical-group-convergence",
-                "externalId": "keycloak-direct-readers",
+                "externalId": self.principal_scenarios["keycloak"]["groups"][0]["external_id"],
                 "displayName": "Direct Readers",
             }
         )
-        projected = self._scim_event(port, converged_group)
+        projected = self._scim_event(port, converged_group, create=True)
         if projected["id"] != canonical_group["id"]:
             raise RuntimeError("SCIM Group did not converge on the canonical OIDC Principal")
         self._get_principal(port, canonical_group["id"])
         self.details.extend(
             [
-                "SCIM RFC 7643 User and Group provisioning events were idempotent across "
+                "SCIM RFC 7643 User and Group resources were idempotent across "
                 "upsert, disable, and reactivation lifecycle transitions",
-                "SCIM and OIDC materialization converged only through an explicit canonical "
-                "principal_id, never through an external subject or email",
+                "SCIM and OIDC materialization converged only through the exact "
+                "(provider, issuer, externalId) identity key, never through email",
             ]
         )
 
@@ -598,8 +639,9 @@ class KubernetesE2E:
         payload: dict,
         expected_kind: str,
     ) -> None:
-        principal_id = payload["principal_id"]
-        first = self._scim_event(port, payload)
+        first = self._scim_event(port, payload, create=True)
+        principal_id = first["id"]
+        payload["principal_id"] = principal_id
         second = self._scim_event(port, payload)
         if first["id"] != second["id"]:
             raise RuntimeError(f"SCIM {expected_kind} upsert was not idempotent")
@@ -609,24 +651,24 @@ class KubernetesE2E:
         if active["id"] != first["id"]:
             raise RuntimeError(f"SCIM {expected_kind} lookup returned a different projection")
 
-        deleted = self._scim_event(
+        self._scim_delete(
             port,
-            {
-                "operation": "delete",
-                "principal_id": principal_id,
-            },
+            principal_id,
+            expected_kind,
         )
-        if deleted["id"] != first["id"] or deleted.get("status") != "DISABLED":
-            raise RuntimeError(f"SCIM {expected_kind} delete did not retain a disabled tombstone")
         disabled = self._get_principal(port, principal_id)
         if disabled.get("kind") != expected_kind or disabled.get("status") != "DISABLED":
             raise RuntimeError(f"SCIM {expected_kind} Principal was not tombstoned")
         if disabled["id"] != first["id"]:
             raise RuntimeError(f"SCIM {expected_kind} tombstone changed its local identifier")
 
-        reactivated = self._scim_event(port, payload)
-        if reactivated["id"] != first["id"] or reactivated.get("status") != "ACTIVE":
+        reactivated = self._scim_event(port, payload, create=True)
+        if reactivated["id"] != first["id"]:
             raise RuntimeError(f"SCIM {expected_kind} upsert did not reactivate its tombstone")
+        if expected_kind == "USER" and reactivated.get("active") is not True:
+            raise RuntimeError("SCIM USER reactivation did not restore active=true")
+        if expected_kind == "GROUP" and "active" in reactivated:
+            raise RuntimeError("SCIM GROUP response exposed non-standard active attribute")
 
     def _search_external_principal(
         self,
@@ -724,18 +766,46 @@ class KubernetesE2E:
             raise RuntimeError("Principal lookup returned a different canonical identifier")
         return principal
 
-    def _scim_event(self, port: int, payload: dict) -> dict:
+    def _scim_event(self, port: int, payload: dict, *, create: bool = False) -> dict:
+        operation = payload["operation"]
+        resource_kind = "Users" if operation == "upsert_user" else "Groups"
+        resource = dict(payload["resource"])
+        schema = (
+            "urn:ietf:params:scim:schemas:core:2.0:User"
+            if resource_kind == "Users"
+            else "urn:ietf:params:scim:schemas:core:2.0:Group"
+        )
+        resource.setdefault("schemas", [schema])
+        resource.pop("id", None)
+        path = f"/scim/v2/{resource_kind}"
+        method = "POST"
+        expected_status = 201
+        if not create:
+            principal_id = parse.quote(payload["principal_id"], safe="")
+            path = f"{path}/{principal_id}"
+            method = "PUT"
+            expected_status = 200
         status, body = self._api_http(
             port,
-            "/api/v1/principal-discovery/scim/events",
-            method="POST",
-            json_body=payload,
+            path,
+            method=method,
+            json_body=resource,
         )
-        self._expect_status(f"SCIM {payload['operation']}", status, 200)
+        self._expect_status(f"SCIM {operation}", status, expected_status)
         projected = json.loads(body)
         if not isinstance(projected, dict) or not projected.get("id"):
-            raise RuntimeError("SCIM event did not return a persisted Principal")
+            raise RuntimeError("SCIM resource operation did not return a persisted Principal")
         return projected
+
+    def _scim_delete(self, port: int, principal_id: str, kind: str) -> None:
+        resource_kind = "Users" if kind == "USER" else "Groups"
+        encoded_id = parse.quote(principal_id, safe="")
+        status, _ = self._api_http(
+            port,
+            f"/scim/v2/{resource_kind}/{encoded_id}",
+            method="DELETE",
+        )
+        self._expect_status(f"SCIM delete {kind}", status, 204)
 
     def _list_principals(self, port: int) -> list[dict]:
         status, body = self._api_http(port, "/api/v1/principals?limit=1000")
@@ -756,8 +826,9 @@ class KubernetesE2E:
         host: str,
         direct_token: str,
         editor_token: str,
+        no_data_token: str,
     ) -> None:
-        label = f"e2e-{component}"
+        label = f"e2e-authguard-{component}"
         status, _ = self._http(gateway_port, host, "/customer-growth/jobs")
         self._expect_status(f"{label}: missing JWT", status, 401)
 
@@ -778,6 +849,15 @@ class KubernetesE2E:
         )
         self._expect_status(f"{label}: opaque token list", status, 200)
         self._expect_job_ids(f"{label}: opaque token list", body, [1, 3, 6])
+
+        status, body = self._http(
+            gateway_port,
+            host,
+            "/customer-growth/jobs",
+            headers={"Authorization": f"Bearer {no_data_token}"},
+        )
+        self._expect_status(f"{label}: LIST action with empty data scope", status, 200)
+        self._expect_job_ids(f"{label}: empty data scope hides every seeded row", body, [])
 
         status, _ = self._http(
             gateway_port,
@@ -877,23 +957,6 @@ class KubernetesE2E:
         status, _ = self._http(
             gateway_port,
             host,
-            "/customer-growth/jobs",
-            method="POST",
-            headers={"Authorization": f"Bearer {direct_token}"},
-            json_body={**created, "id": 102, "job_id": "forbidden-create"},
-        )
-        self._expect_status(f"{label}: read-only create is forbidden", status, 403)
-        status, _ = self._http(
-            gateway_port,
-            host,
-            "/customer-growth/jobs/102",
-            headers={"Authorization": f"Bearer {editor_token}"},
-        )
-        self._expect_status(f"{label}: rejected create does not mutate", status, 404)
-
-        status, _ = self._http(
-            gateway_port,
-            host,
             "/customer-growth/jobs/1",
             method="PUT",
             headers={"Authorization": f"Bearer {direct_token}"},
@@ -929,6 +992,58 @@ class KubernetesE2E:
             headers={"Authorization": f"Bearer {editor_token}"},
         )
         self._expect_status(f"{label}: rejected delete preserves row", status, 200)
+
+    def _verify_create_denied_by_authz(
+        self, gateway_port: int, read_token: str, editor_token: str
+    ) -> None:
+        """Prove every forbidden create terminates at AuthZ, before Biz persistence."""
+        payload = {
+            "id": 102,
+            "region": "global",
+            "tenant_id": "example-corp",
+            "workspace_id": "customer-insights",
+            "project_id": "retention-analytics",
+            "job_id": "forbidden-create",
+            "display_name": "Must not be created",
+            "status": "READY",
+            "owner_user_id": "direct-reader",
+        }
+        with self._forward_envoy_admin() as envoy_admin_port:
+            before_envoy = self._envoy_auth_counters(envoy_admin_port)
+            before_checks = self._authorization_check_count()
+            before_denied = sum(self._authorization_denied_reasons().values())
+            for component, host in WORKLOAD_HOSTS.items():
+                status, _ = self._http(
+                    gateway_port,
+                    host,
+                    "/customer-growth/jobs",
+                    method="POST",
+                    headers={"Authorization": f"Bearer {read_token}"},
+                    json_body=payload,
+                )
+                self._expect_status(f"{component}: create denied by AuthZ", status, 403)
+            after_envoy = self._envoy_auth_counters(envoy_admin_port)
+        if self._authorization_check_count() - before_checks != len(WORKLOAD_HOSTS):
+            raise RuntimeError("forbidden creates did not map one-to-one to AuthZ Check calls")
+        self._expect_counter_delta(
+            "forbidden create Envoy ext_authz.denied",
+            before_envoy,
+            after_envoy,
+            "ext_auth_denied",
+            len(WORKLOAD_HOSTS),
+        )
+        if sum(self._authorization_denied_reasons().values()) - before_denied != len(
+            WORKLOAD_HOSTS
+        ):
+            raise RuntimeError("AuthZ denial metrics did not record every forbidden create")
+        for component, host in WORKLOAD_HOSTS.items():
+            status, _ = self._http(
+                gateway_port,
+                host,
+                "/customer-growth/jobs/102",
+                headers={"Authorization": f"Bearer {editor_token}"},
+            )
+            self._expect_status(f"{component}: rejected create did not mutate Biz DB", status, 404)
 
     def _clean_previous_release(self) -> None:
         for release in (
@@ -1055,7 +1170,15 @@ class KubernetesE2E:
             ALIYUN_JAEGER_IMAGE,
             ALIYUN_POSTGRES_IMAGE,
         )
+        cluster_images = set(
+            self._run(
+                (*self._k3s_command(), "ctr", "-n", "k8s.io", "images", "list", "-q")
+            ).output.splitlines()
+        )
         for image in external_images:
+            if image in cluster_images:
+                self.details.append(f"reuse k3s image: {image}")
+                continue
             inspected = self._run(
                 # Docker returns 1 for a missing image; the Podman-compatible
                 # Docker CLI returns 125 for the same non-fatal cache miss.
@@ -1063,16 +1186,7 @@ class KubernetesE2E:
             )
             if inspected.return_code != 0:
                 self._run(("docker", "pull", image))
-        cluster_images = set(
-            self._run(
-                (*self._k3s_command(), "ctr", "-n", "k8s.io", "images", "list", "-q")
-            ).output.splitlines()
-        )
-        for image in external_images:
-            if image not in cluster_images:
-                self._import_image(image)
-            else:
-                self.details.append(f"reuse k3s image: {image}")
+            self._import_image(image)
 
     def _prepare_workload_images(self) -> None:
         # e2e-local tags are intentionally mutable. Import them immediately before
@@ -1081,7 +1195,36 @@ class KubernetesE2E:
         for image in (*WORKLOAD_IMAGES.values(), MOCK_IDP_IMAGE):
             self._import_image(image)
 
+    def _remove_mutable_cluster_images(self) -> None:
+        """Prevent a recreated Pod from starting an obsolete mutable E2E image tag."""
+        for image in (*WORKLOAD_IMAGES.values(), MOCK_IDP_IMAGE):
+            self._run(
+                (*self._k3s_command(), "ctr", "-n", "k8s.io", "images", "remove", image),
+                allowed_codes={0, 1},
+            )
+
     def _import_image(self, image: str) -> None:
+        inspected = self._run(
+            ("docker", "image", "inspect", image), allowed_codes={0, 1, 125}
+        )
+        if inspected.return_code != 0:
+            cluster_images = set(
+                self._run(
+                    (*self._k3s_command(), "ctr", "-n", "k8s.io", "images", "list", "-q")
+                ).output.splitlines()
+            )
+            if image in cluster_images:
+                self.details.append(f"reuse k3s image: {image}")
+                return
+            if image.endswith(":e2e-local"):
+                raise RuntimeError(
+                    f"image is unavailable from both the local builder and k3s: {image}"
+                )
+            # k3s image GC can remove an unreferenced dependency between the
+            # initial cache check and a later Helm install. Immutable external
+            # images are safe to re-pull; mutable e2e-local images must have
+            # been built explicitly and still fail closed above.
+            self._run(("docker", "pull", image))
         with tempfile.NamedTemporaryFile(suffix=".tar") as archive:
             self._run(("docker", "save", "-o", archive.name, image))
             self._run(
@@ -1123,7 +1266,7 @@ class KubernetesE2E:
         )
 
     def _install_support_services(self) -> None:
-        grpc_target = f"e2e-customer-growth-authguard.{self.namespace}.svc.cluster.local:8081"
+        grpc_target = f"{self.authguard_release}.{self.namespace}.svc.cluster.local:8081"
         self._run(
             (
                 "helm",
@@ -1213,48 +1356,22 @@ class KubernetesE2E:
                 },
                 "ext_authz": {
                     "enabled": True,
-                    "issuer": self.issuer,
                     "gateway": {
                         "create": True,
                         "className": self.gateway_name,
                         "name": self.gateway_name,
                     },
-                    "jwt": {
-                        "enabled": True,
-                        "audiences": ["customer-growth-job-service"],
-                        "additionalProviders": [
-                            {
-                                "name": "authguard-authn",
-                                "issuer": self.authn_issuer,
-                                "audiences": ["customer-growth-job-service"],
-                                "localJWKSConfigMap": (
-                                    f"{self.support_release}-e2e-keycloak-realm-jwks"
-                                ),
-                            }
-                        ],
-                        # Deterministic realm public JWKS from the support chart;
-                        # the Keycloak realm imports the paired RSA key, so no
-                        # dynamic realm key can invalidate Envoy verification.
-                        "localJWKS": {
-                            "existingConfigMap": (
-                                f"{self.support_release}-e2e-keycloak-realm-jwks"
-                            ),
-                            "inline": "",
-                        },
-                        "remoteJWKS": {"uri": "", "backendRefs": []},
-                    },
-                    "oidc": {"enabled": False},
                     "authguardRoute": {"enabled": False},
                     "authnRoute": {
                         "enabled": True,
-                        "name": "e2e-customer-growth-authn",
+                        "name": "e2e-authguard-customer-growth-authn",
                         "listenerPort": 8082,
-                        "hostnames": ["authn.customer-growth.local"],
+                        "hostnames": [AUTHN_HOST],
                     },
                     "tracing": {
                         "enabled": True,
                         "backendRef": {"name": self.jaeger_service, "port": 4317},
-                        "serviceName": "e2e-envoy-proxy",
+                        "serviceName": "e2e-authguard-envoy-proxy",
                     },
                 },
             },
@@ -1267,11 +1384,11 @@ class KubernetesE2E:
                     "tag": "7.0.14",
                     "pullPolicy": "Never",
                 },
-                "password": "e2e-redis-password",
+                "password": "e2e-authguard-redis-password",
                 "cluster": {"nodes": 6, "replicas": 1},
                 "persistence": {"enabled": False},
             },
-            "fullnameOverride": "e2e-customer-growth-authguard",
+            "fullnameOverride": self.authguard_release,
             "secrets": {
                 # kubernetes provider: the support-chart Secret is injected
                 # with envFrom, so all six credentials resolve natively.
@@ -1288,6 +1405,17 @@ class KubernetesE2E:
                         "pullPolicy": "Never",
                     },
                     "disruptionBudget": {"enabled": False},
+                    "canonical_jwt": {
+                        "issuer": self.authn_issuer,
+                        "audiences": ["customer-growth-job-service"],
+                        "local_jwks": {
+                            "existing_config_map": (
+                                f"{self.support_release}-keycloak-realm-jwks"
+                            ),
+                            "inline": "",
+                        },
+                        "remote_jwks": {"uri": "", "backend_refs": []},
+                    },
                 },
                 "authz": {
                     "replicaCount": 1,
@@ -1305,7 +1433,6 @@ class KubernetesE2E:
                             ".svc.cluster.local:4317"
                         ),
                     },
-                    "resignKeyInit": {"enabled": True},
                 },
                 # The COMPLETE main configuration (flowgent-chart style) is
                 # rendered by Helm tpl into the authguard ConfigMap. Policy
@@ -1334,13 +1461,9 @@ class KubernetesE2E:
         )
         iam_postgres_url = (
             f"postgresql://{self.postgresql_service}.{self.namespace}.svc.cluster.local:5432/"
-            "e2e_customer_growth?sslmode=disable&options=-csearch_path%3Dauthguard"
+            "e2e_authguard_customer_growth?sslmode=disable&options=-csearch_path%3Dauthguard"
         )
-        # The CustomPrincipalDiscovery renderer resolves DOUBLE-brace
-        # {{kind}} tokens at runtime; the path below Go-escapes the braces so
-        # Helm tpl emits them literally instead of consuming {{kind}} as a
-        # template action. ${KEY} references resolve from the kubernetes
-        # envFrom-injected Secret (secrets.kubernetes below).
+        # ${KEY} references resolve from the Kubernetes envFrom-injected Secret.
         return "\n".join(
             [
                 "authn:",
@@ -1348,31 +1471,31 @@ class KubernetesE2E:
                 "    github:",
                 "      type: oauth2",
                 "      issuer: https://github.com",
-                "      clientId: github-e2e-client",
-                "      clientSecret: github-e2e-secret",
-                "      callbackUrl: http://authn.customer-growth.local:8082/auth/v1/providers/github/callback",
+                "      clientId: e2e-authguard-github-client",
+                '      clientSecret: "${AUTHGUARD_GITHUB_CLIENT_SECRET}"',
+                f"      callbackUrl: http://{AUTHN_HOST}:8082/auth/v1/providers/github/callback",
                 "      authorization:",
                 f"        endpoint: {mock_idp_url + '/github/login/oauth/authorize'!r}",
                 "        scopes: [read:user, user:email]",
                 "      token:",
                 f"        endpoint: {mock_idp_url + '/github/login/oauth/access_token'!r}",
                 "        method: POST",
+                "        headers:",
+                "          accept: application/json",
                 "      identity:",
                 f"        endpoint: {mock_idp_url + '/github/user'!r}",
                 "        subject: $.id",
                 "        username: $.login",
                 "        email: $.email",
-                "        trustedClaims:",
-                "          tenant_id: $.tenant_id",
                 "    google:",
                 "      type: oauth2",
                 "      issuer: https://accounts.google.com",
-                "      clientId: google-e2e-client",
-                "      clientSecret: google-e2e-secret",
-                "      callbackUrl: http://authn.customer-growth.local:8082/auth/v1/providers/google/callback",
+                "      clientId: e2e-authguard-google-client",
+                '      clientSecret: "${AUTHGUARD_GOOGLE_CLIENT_SECRET}"',
+                f"      callbackUrl: http://{AUTHN_HOST}:8082/auth/v1/providers/google/callback",
                 "      authorization:",
                 f"        endpoint: {mock_idp_url + '/google/o/oauth2/v2/auth'!r}",
-                "        scopes: [openid, profile, email]",
+                "        scopes: [profile, email]",
                 "      token:",
                 f"        endpoint: {mock_idp_url + '/google/token'!r}",
                 "        method: POST",
@@ -1381,14 +1504,29 @@ class KubernetesE2E:
                 "        subject: $.sub",
                 "        username: $.name",
                 "        email: $.email",
+                "    e2e-authguard-keycloak:",
+                "      type: oidc",
+                f"      issuer: {keycloak_base + '/realms/example-corp'!r}",
+                "      clientId: e2e-authguard-principal-discovery",
+                '      clientSecret: "${AUTHGUARD_KEYCLOAK_CLIENT_SECRET}"',
+                f"      callbackUrl: http://{AUTHN_HOST}:8082/auth/v1/providers/e2e-authguard-keycloak/callback",
+                "      scopes: [openid, profile, email]",
+                "      userinfo: true",
+                "      tokenIntrospection:",
+                f"        endpoint: {keycloak_base + '/realms/example-corp/protocol/openid-connect/token/introspect'!r}",
+                "        acceptedAudiences: [customer-growth-job-service]",
+                "      identity:",
+                "        subject: $.sub",
+                "        username: $.preferred_username",
+                "        email: $.email",
                 "        trustedClaims:",
                 "          tenant_id: $.tenant_id",
                 "    wechat:",
                 "      type: oauth2-like",
                 "      issuer: https://open.weixin.qq.com",
-                "      clientId: wechat-e2e-app",
-                "      clientSecret: wechat-e2e-secret",
-                "      callbackUrl: http://authn.customer-growth.local:8082/auth/v1/providers/wechat/callback",
+                "      clientId: e2e-authguard-wechat-app",
+                '      clientSecret: "${AUTHGUARD_WECHAT_CLIENT_SECRET}"',
+                f"      callbackUrl: http://{AUTHN_HOST}:8082/auth/v1/providers/wechat/callback",
                 "      authorization:",
                 f"        endpoint: {mock_idp_url + '/wechat/connect/qrconnect'!r}",
                 "        scopes: [snsapi_login]",
@@ -1404,8 +1542,29 @@ class KubernetesE2E:
                 "      identity:",
                 "        subject: $.unionid",
                 "        fallbackSubject: $.openid",
-                "        trustedClaims:",
-                "          tenant_id: $.tenant_id",
+                "    qq:",
+                "      type: oauth2-like",
+                "      issuer: https://graph.qq.com",
+                "      clientId: e2e-authguard-qq-app",
+                '      clientSecret: "${AUTHGUARD_QQ_CLIENT_SECRET}"',
+                f"      callbackUrl: http://{AUTHN_HOST}:8082/auth/v1/providers/qq/callback",
+                "      authorization:",
+                f"        endpoint: {mock_idp_url + '/qq/oauth2.0/authorize'!r}",
+                "        scopes: [get_user_info, get_vip_info]",
+                "      token:",
+                f"        endpoint: {mock_idp_url + '/qq/oauth2.0/token'!r}",
+                "        method: GET",
+                "        clientCredentials: query",
+                "        query:",
+                "          grant_type: authorization_code",
+                "          client_id: ${clientId}",
+                "          client_secret: ${clientSecret}",
+                "          code: ${authorizationCode}",
+                "          redirect_uri: ${redirectUri}",
+                "          fmt: json",
+                "      identity:",
+                f"        endpoint: {mock_idp_url + '/qq/oauth2.0/me?fmt=json'!r}",
+                "        subject: $.openid",
                 "  accountLinking:",
                 "    strategy: first-login",
                 "    authoritativeProviders: []",
@@ -1464,7 +1623,7 @@ class KubernetesE2E:
                 "  principal_discovery:",
                 "    keycloak:",
                 "      - enabled: true",
-                "        discovery_id: e2e-keycloak",
+                "        discovery_id: e2e-authguard-keycloak",
                 f"        base_url: {keycloak_base!r}",
                 "        realm: example-corp",
                 f"        issuer: {self.issuer!r}",
@@ -1477,7 +1636,7 @@ class KubernetesE2E:
                 "        allow_insecure_http: true",
                 "    ldap:",
                 "      - enabled: true",
-                "        discovery_id: e2e-direct-ldap",
+                "        discovery_id: e2e-authguard-direct-ldap",
                 f"        url: {ldap_url!r}",
                 '        issuer: "urn:authguard:e2e:ldap:example-corp"',
                 '        base_dn: "dc=example,dc=org"',
@@ -1503,42 +1662,15 @@ class KubernetesE2E:
                 "        request_timeout: 10s",
                 "        max_page_size: 100",
                 "        allow_insecure: true",
-                "    custom:",
-                "      - enabled: true",
-                "        discovery_id: e2e-mock-idp",
-                f"        url: {mock_idp_url!r}",
-                f"        issuer: {self.issuer!r}",
-                # Pre-issued vendor bearer token expected by the mock IdP directory API.
-                f"        jwt_token: {MOCK_IDP_DIRECTORY_TOKEN!r}",
-                "        request:",
-                # Helm tpl renders this to the literal `{{kind}}` token that
-                # the connector replaces with user/workload/group at runtime.
-                '          path: "identity/api/v1/{{ "{{" }}kind{{ "}}" }}/search"',
-                "          text_param: search",
-                "          offset_param: offset",
-                "          limit_param: limit",
-                "          external_id_param: id",
-                "        response:",
-                "          array_path: /data/items",
-                "          id_attr: id",
-                "          display_name_attr: displayName",
-                "          username_attr: username",
-                "          email_attr: email",
-                "          enabled_attr: active",
-                "          kind_attr: kind",
-                "        connect_timeout: 3s",
-                "        request_timeout: 5s",
-                "        max_page_size: 100",
-                "        allow_insecure_http: true",
                 "    scim:",
                 "      enabled: true",
-                "      discovery_id: e2e-scim",
+                "      discovery_id: e2e-authguard-keycloak",
                 f"      issuer: {self.issuer!r}",
-                "  resign_token:",
+                "  resign:",
                 "    enabled: true",
-                "    ttl: 60s",
-                "    private_key_file: /etc/authguard/secrets/resign-jwt-private-key.pem",
-                "  api_token: \"\"",
+                "    max_ttl: 60s",
+                '    private_key_b64: "${AUTHGUARD__AUTHZ__RESIGN__PRIVATE_KEY_B64}"',
+                '  api_token: "${AUTHGUARD_SCIM_API_PASSWORD}"',
                 "storage:",
                 "  provider: Postgres",
                 "  bootstrap_policy: null",
@@ -1548,8 +1680,8 @@ class KubernetesE2E:
                 "    connect_timeout: 5s",
                 "  postgres:",
                 f"    url: {iam_postgres_url!r}",
-                "    username: e2e_authguard",
-                "    password: e2e-authguard-postgres-password",
+                "    username: e2e_authguard_service",
+                '    password: "${AUTHGUARD__STORAGE__POSTGRES__PASSWORD}"',
                 "    max_connections: 20",
                 "    min_connections: 0",
                 "    connect_timeout: 5s",
@@ -1691,6 +1823,14 @@ class KubernetesE2E:
                 "resource_urn": f"{retention}/**",
                 "conditions": {},
             },
+            {
+                "id": "no-data-reader-function",
+                "principal_id": user_principal_ids["no-data-reader"],
+                "role_id": "job.reader",
+                "effect": "ALLOW",
+                "resource_urn": retention,
+                "conditions": {},
+            },
         ]
         return policy
 
@@ -1702,8 +1842,8 @@ class KubernetesE2E:
             self.jaeger_service,
             self.postgresql_service,
             *[self.workload_service(component) for component in WORKLOAD_IMAGES],
-            "e2e-customer-growth-authguard",
-            "e2e-customer-growth-authguard-authn",
+            self.authguard_release,
+            f"{self.authguard_release}-authn",
         ):
             self._run(
                 (
@@ -1754,8 +1894,8 @@ class KubernetesE2E:
         keycloak = by_name[self.keycloak_service]["spec"]["template"]["spec"]["containers"][0]
         keycloak_env = {item["name"] for item in keycloak.get("env", [])}
         if "--import-realm" not in keycloak.get("args", []) or not {
-            "E2E_PRINCIPAL_DISCOVERY_CLIENT_SECRET",
-            "E2E_WORKLOAD_CLIENT_SECRET",
+            "E2E_AUTHGUARD_PRINCIPAL_DISCOVERY_CLIENT_SECRET",
+            "E2E_AUTHGUARD_WORKLOAD_CLIENT_SECRET",
         }.issubset(keycloak_env):
             raise RuntimeError("Keycloak realm/client bootstrap configuration is incomplete")
 
@@ -1766,7 +1906,7 @@ class KubernetesE2E:
         }
         if (
             not any(port.get("containerPort") == 389 for port in ldap_container.get("ports", []))
-            or f"{self.support_release}-e2e-keycloak-credentials" not in secret_names
+            or f"{self.support_release}-keycloak-credentials" not in secret_names
         ):
             raise RuntimeError("LDAP fixture/bind-secret bootstrap configuration is incomplete")
 
@@ -1778,11 +1918,16 @@ class KubernetesE2E:
         required = (
             f"base_url: 'http://{self.keycloak_service}",
             f"url: 'ldap://{self.ldap_service}",
-            "discovery_id: e2e-keycloak",
-            "discovery_id: e2e-direct-ldap",
-            "discovery_id: e2e-mock-idp",
+            "discovery_id: e2e-authguard-keycloak",
+            "discovery_id: e2e-authguard-direct-ldap",
             "${AUTHGUARD_KEYCLOAK_CLIENT_SECRET}",
             "${AUTHGUARD_LDAP_BIND_PASSWORD}",
+            "${AUTHGUARD_GITHUB_CLIENT_SECRET}",
+            "${AUTHGUARD_GOOGLE_CLIENT_SECRET}",
+            "${AUTHGUARD_WECHAT_CLIENT_SECRET}",
+            "${AUTHGUARD_QQ_CLIENT_SECRET}",
+            "${AUTHGUARD__STORAGE__POSTGRES__PASSWORD}",
+            "${AUTHGUARD_SCIM_API_PASSWORD}",
         )
         if missing := [value for value in required if value not in runtime]:
             raise RuntimeError(f"AuthZ discovery runtime configuration is incomplete: {missing}")
@@ -1798,12 +1943,64 @@ class KubernetesE2E:
         with self._forward_service(self.mock_idp_service, 8080) as port:
             with request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=15) as response:
                 mock_health = json.loads(response.read())
-        if set(mock_health.get("providers", [])) != {"github", "google", "wechat"}:
+        if set(mock_health.get("providers", [])) != {"github", "google", "wechat", "qq"}:
             raise RuntimeError("mock IdP did not initialize all OAuth2-like provider endpoints")
+        self._verify_secret_wiring()
         self.details.append(
             "Keycloak imported the deterministic realm/users/groups/clients; LDAP mounted its "
-            "bind fixture; the mock IdP exposed GitHub/Google/WeChat contracts; AuthZ discovery "
+            "bind fixture; the mock IdP exposed GitHub/Google/WeChat/QQ contracts; AuthZ discovery "
             "references enterprise directories through Secret-backed credentials"
+        )
+
+    def _verify_secret_wiring(self) -> None:
+        """Verify secret keys and references without reading any secret value."""
+        template = '{{range $key, $_ := .data}}{{printf "%s\\n" $key}}{{end}}'
+        keys = set(
+            self._run(
+                (
+                    "kubectl",
+                    "get",
+                    "secret",
+                    self.principal_discovery_secret,
+                    "-n",
+                    self.namespace,
+                    "-o",
+                    f"go-template={template}",
+                )
+            ).output.splitlines()
+        )
+        expected = {
+            "AUTHGUARD__STORAGE__POSTGRES__PASSWORD",
+            "AUTHGUARD_GITHUB_CLIENT_SECRET",
+            "AUTHGUARD_GOOGLE_CLIENT_SECRET",
+            "AUTHGUARD_WECHAT_CLIENT_SECRET",
+            "AUTHGUARD_QQ_CLIENT_SECRET",
+            "AUTHGUARD_KEYCLOAK_CLIENT_SECRET",
+            "AUTHGUARD_LDAP_BIND_PASSWORD",
+            "AUTHGUARD_SCIM_API_PASSWORD",
+        }
+        if missing := expected - keys:
+            raise RuntimeError(f"external integration Secret lacks keys: {sorted(missing)}")
+        redis_secret = f"{self.authguard_release}-redis-cluster"
+        redis_keys = set(
+            self._run(
+                (
+                    "kubectl",
+                    "get",
+                    "secret",
+                    redis_secret,
+                    "-n",
+                    self.namespace,
+                    "-o",
+                    f"go-template={template}",
+                )
+            ).output.splitlines()
+        )
+        if "redis-password" not in redis_keys:
+            raise RuntimeError("Redis Secret lacks redis-password")
+        self.details.append(
+            "verified key-only wiring for nine external credential classes: PostgreSQL, "
+            "Redis, GitHub, Google, WeChat, QQ, Keycloak, LDAP, and SCIM; no value was read"
         )
 
     def _wait_for_gateway_api_acceptance(self) -> None:
@@ -1811,7 +2008,7 @@ class KubernetesE2E:
         expected_routes = {
             self.workload_service(component) for component in WORKLOAD_IMAGES
         }
-        expected_routes.add("e2e-customer-growth-authn")
+        expected_routes.add("e2e-authguard-customer-growth-authn")
         last_state = "Gateway API status was not observed"
         while time.monotonic() < deadline:
             resources = json.loads(
@@ -1845,7 +2042,7 @@ class KubernetesE2E:
                         for parent in parents
                     ):
                         accepted_routes.add(name)
-                elif kind == "SecurityPolicy" and name == "e2e-customer-growth-authguard":
+                elif kind == "SecurityPolicy" and name == self.authguard_release:
                     ancestors = resource.get("status", {}).get("ancestors", [])
                     policy_accepted = any(
                         _has_true_condition(
@@ -1910,20 +2107,20 @@ class KubernetesE2E:
             )
         providers = spec.get("jwt", {}).get("providers", [])
         issuers = {provider.get("issuer") for provider in providers}
-        if {self.issuer, self.authn_issuer} - issuers:
-            raise RuntimeError("Envoy JWT policy does not trust both enterprise and AuthN issuers")
+        if issuers != {self.authn_issuer}:
+            raise RuntimeError("Envoy JWT policy must trust only the canonical AuthN issuer")
 
         jwt = spec.get("jwt", {})
         providers = jwt.get("providers", [])
         provider = next(
-            (candidate for candidate in providers if candidate.get("issuer") == self.issuer),
+            (candidate for candidate in providers if candidate.get("issuer") == self.authn_issuer),
             None,
         )
         if jwt.get("optional") is not False or provider is None:
-            raise RuntimeError("SecurityPolicy does not require the E2E Keycloak issuer")
+            raise RuntimeError("SecurityPolicy does not require the E2E AuthN issuer")
         if "customer-growth-job-service" not in provider.get("audiences", []):
             raise RuntimeError("SecurityPolicy does not validate the workload JWT audience")
-        expected_jwks_config_map = f"{self.support_release}-e2e-keycloak-realm-jwks"
+        expected_jwks_config_map = f"{self.support_release}-keycloak-realm-jwks"
         local_jwks = provider.get("localJWKS", {})
         value_ref = local_jwks.get("valueRef", {})
         if "remoteJWKS" in provider:
@@ -1943,8 +2140,8 @@ class KubernetesE2E:
         if not isinstance(jwks.get("keys"), list) or not jwks["keys"]:
             raise RuntimeError("the deterministic Envoy local JWKS must contain keys")
         self.details.append(
-            "SecurityPolicy requires the Keycloak issuer/audience and the deterministic "
-            "local JWKS, then calls fail-closed Authguard ext_auth gRPC on port 8080"
+            "SecurityPolicy requires only the AuthN issuer/audience and deterministic local "
+            "JWKS, then calls fail-closed Authguard ext_auth gRPC on port 8080"
         )
 
     def _verify_jwt_gate_precedes_ext_auth(
@@ -2026,7 +2223,9 @@ class KubernetesE2E:
             "exactly one envoy.service.auth.v3.Authorization/Check call"
         )
 
-    def _verify_workload_client_credentials(self, gateway_port: int) -> None:
+    def _verify_workload_client_credentials(
+        self, gateway_port: int, authn_gateway_port: int
+    ) -> None:
         """Prove the machine-identity flow: a business SA exchanges its own
         client secret for an access token (OAuth2 client_credentials — no
         browser, no user login) and the audience mapper stamps the workload
@@ -2035,8 +2234,8 @@ class KubernetesE2E:
             exchange = parse.urlencode(
                 {
                     "grant_type": "client_credentials",
-                    "client_id": "e2e-growth-job-runner",
-                    "client_secret": "e2e-workload-client-secret",
+                    "client_id": "e2e-authguard-growth-job-runner",
+                    "client_secret": "e2e-authguard-workload-client-secret",
                     "audience": "customer-growth-job-service",
                 }
             ).encode()
@@ -2048,7 +2247,10 @@ class KubernetesE2E:
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
             with request.urlopen(token_request, timeout=15) as response:
-                workload_token = json.loads(response.read())["access_token"]
+                workload_external_token = json.loads(response.read())["access_token"]
+        workload_token = self._canonicalize_token(
+            authn_gateway_port, workload_external_token, "WORKLOAD"
+        )
         claims = self._jwt_claims(workload_token)
         audience = claims.get("aud")
         audiences = {audience} if isinstance(audience, str) else set(audience or [])
@@ -2063,20 +2265,73 @@ class KubernetesE2E:
             raise RuntimeError("workload token lacks the WORKLOAD principal_kind claim")
         if claims.get("tenant_id") != "example-corp":
             raise RuntimeError("workload token lacks its trusted tenant_id claim")
-        status, body = self._http(
-            gateway_port,
-            next(iter(WORKLOAD_HOSTS.values())),
-            "/customer-growth/jobs",
-            headers={"Authorization": f"Bearer {workload_token}"},
-        )
-        self._expect_status(
-            "pre-authorized workload SA passed Envoy and AuthZ", status, 200
-        )
-        self._expect_job_ids("workload SA scoped list", body, [1, 2, 6])
+        forbidden = {
+            "id": 103,
+            "region": "global",
+            "tenant_id": "example-corp",
+            "workspace_id": "customer-insights",
+            "project_id": "retention-analytics",
+            "job_id": "workload-forbidden-create",
+            "display_name": "Must not be created",
+            "status": "READY",
+            "owner_user_id": "growth-job-runner",
+        }
+        for component, host in WORKLOAD_HOSTS.items():
+            status, body = self._http(
+                gateway_port,
+                host,
+                "/customer-growth/jobs",
+                headers={"Authorization": f"Bearer {workload_token}"},
+            )
+            self._expect_status(f"{component}: workload read action", status, 200)
+            self._expect_job_ids(f"{component}: workload data scope", body, [1, 2, 6])
+            status, _ = self._http(
+                gateway_port,
+                host,
+                "/customer-growth/jobs",
+                method="POST",
+                headers={"Authorization": f"Bearer {workload_token}"},
+                json_body=forbidden,
+            )
+            self._expect_status(
+                f"{component}: workload without create action is rejected by AuthZ",
+                status,
+                403,
+            )
         self.details.append(
-            "pre-authorized biz SA client_credentials token passed Envoy JWT verification, "
-            "Authguard ext_authz, and resource-scope filtering"
+            "pre-authorized biz SA client_credentials token entered AuthN token exchange, "
+            "then all five services enforced its read scope and AuthZ denied create"
         )
+
+    def _canonicalize_token(
+        self,
+        authn_gateway_port: int,
+        external_token: str,
+        kind: str,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> str:
+        payload = json.dumps(
+            {"subjectToken": external_token, "kind": kind}, separators=(",", ":")
+        ).encode()
+        exchange = request.Request(
+            f"http://127.0.0.1:{authn_gateway_port}"
+            "/auth/v1/providers/e2e-authguard-keycloak/token-exchange",
+            data=payload,
+            method="POST",
+            headers={
+                "Host": AUTHN_HOST,
+                "Content-Type": "application/json",
+                **(headers or {}),
+            },
+        )
+        with request.urlopen(exchange, timeout=20) as response:
+            login = json.loads(response.read())
+        token = login.get("accessToken", "")
+        claims = self._jwt_claims(token)
+        if claims.get("iss") != self.authn_issuer or claims.get("principal_kind") != kind:
+            raise RuntimeError("OIDC token exchange did not return a canonical AuthN token")
+        return token
 
     def _verify_resign_token_boundary(self, gateway_port: int, direct_token: str) -> None:
         """Prove the Authguard-origin boundary on the rust workload.
@@ -2243,7 +2498,7 @@ class KubernetesE2E:
 
     def _authorization_denied_reasons(self) -> dict[str, int]:
         """Per-reason denial counts from the Authguard decisions metric."""
-        with self._forward_service("e2e-customer-growth-authguard", 9091) as port:
+        with self._forward_service(self.authguard_release, 9091) as port:
             with request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=15) as response:
                 metrics = response.read().decode()
         reasons: dict[str, int] = {}
@@ -2270,6 +2525,7 @@ class KubernetesE2E:
                 "client_id": "customer-growth-job-service",
                 "username": username,
                 "password": password,
+                "scope": "openid profile email",
             }
         ).encode()
         token_request = request.Request(
@@ -2285,25 +2541,9 @@ class KubernetesE2E:
             return json.loads(response.read())["access_token"]
 
     def _verify_distributed_trace(
-        self, gateway_port: int, host: str, canonical_token: str
+        self, gateway_port: int, component: str, host: str, canonical_token: str
     ) -> None:
-        trace = E2ETrace("customer-growth.authorization.e2e")
-        token_span = trace.start_client(
-            "keycloak.token",
-            **{"server.address": self.keycloak_service, "http.request.method": "POST"},
-        )
-        with self._forward_service(self.keycloak_service, 8080) as keycloak_port:
-            self._password_token(
-                keycloak_port,
-                "direct-reader",
-                "direct-reader-password",
-                headers={
-                    "traceparent": token_span.traceparent,
-                    "x-request-id": trace.request_id,
-                },
-            )
-        token_span.finish()
-
+        trace = E2ETrace(f"customer-growth.authorization.{component}.e2e")
         gateway_span = trace.start_client(
             "envoy.customer_growth_jobs",
             **{
@@ -2328,18 +2568,16 @@ class KubernetesE2E:
         self._export_verifier_trace(trace)
 
         with self._forward_service(self.jaeger_service, 16686) as query_port:
-            verifier = JaegerTraceVerifier(keycloak_service=self.keycloak_service)
-            payload = self._wait_for_distributed_trace(
-                query_port,
-                trace,
-                verifier,
+            verifier = AuthorizationJaegerTraceVerifier(
+                workload_service=f"e2e-authguard-{component}"
             )
+            payload = self._jaeger_query(query_port).wait_for_trace(trace, verifier)
         verifier.verify(payload, trace)
         self.details.extend(
             [
-                "Jaeger verified one W3C trace with verifier, Keycloak, Envoy Proxy, "
-                "and Authguard spans",
-                f"Jaeger trace ID: {trace.trace_id}",
+                f"{component}: Jaeger verified verifier -> Envoy -> AuthZ and "
+                "Envoy -> Biz causal branches",
+                f"{component} Jaeger trace ID: {trace.trace_id}",
                 (
                     "Jaeger UI: kubectl -n "
                     f"{self.namespace} port-forward service/{self.jaeger_service} "
@@ -2360,17 +2598,18 @@ class KubernetesE2E:
             self._export_verifier_trace(self.authn_traces[provider])
 
         with self._forward_service(self.jaeger_service, 16686) as query_port:
+            jaeger = self._jaeger_query(query_port)
             trace_ids: list[str] = []
             for provider in expected_providers:
                 trace = self.authn_traces[provider]
-                verifier = AuthnJaegerTraceVerifier(provider=provider)
-                payload = self._wait_for_distributed_trace(query_port, trace, verifier)
+                verifier = AuthnJaegerTraceVerifier(
+                    provider=provider,
+                    principal_id=self.authn_trace_principals[provider],
+                )
+                payload = jaeger.wait_for_trace(trace, verifier)
                 verifier.verify(payload, trace)
                 trace_ids.append(trace.trace_id)
-            self._require_jaeger_services(
-                query_port,
-                {"authguard-authn", "authguard-authz"},
-            )
+            jaeger.require_services({"authguard-authn"})
         self.details.append(
             "Jaeger Query API verified AuthN authorize/callback server spans and "
             "provider child spans for " + ", ".join(expected_providers)
@@ -2391,54 +2630,25 @@ class KubernetesE2E:
                         f"Jaeger OTLP export returned HTTP {response.status}"
                     )
 
-    def _require_jaeger_services(self, port: int, expected: set[str]) -> None:
-        deadline = time.monotonic() + min(self.context.timeout_seconds, 60)
-        observed: set[str] = set()
-        while time.monotonic() < deadline:
-            try:
-                with request.urlopen(
-                    f"http://127.0.0.1:{port}/api/services", timeout=10
-                ) as response:
-                    payload = json.loads(response.read())
-                observed = {
-                    service for service in payload.get("data", []) if isinstance(service, str)
-                }
-                if expected <= observed:
-                    self.details.append(
-                        "Jaeger /api/services contains both AuthGuard runtime services: "
-                        + ", ".join(sorted(expected))
-                    )
-                    return
-            except (error.HTTPError, error.URLError, ValueError):
-                pass
-            time.sleep(1)
-        raise RuntimeError(
-            f"Jaeger /api/services is missing {sorted(expected - observed)}; "
-            f"observed={sorted(observed)}"
+    def _verify_jaeger_runtime_inventory(self) -> None:
+        """Require persisted runtime traces from both AuthGuard services and every Biz app."""
+        expected = {
+            "authguard-authn",
+            "authguard-authz",
+            *{f"e2e-authguard-{component}" for component in WORKLOAD_IMAGES},
+        }
+        with self._forward_service(self.jaeger_service, 16686) as port:
+            jaeger = self._jaeger_query(port)
+            jaeger.require_services(expected)
+            jaeger.require_recent_traces(expected)
+        self.details.append(
+            "Jaeger Query API contains recent traces from AuthN, AuthZ, and all five Biz services"
         )
 
-    def _wait_for_distributed_trace(
-        self,
-        port: int,
-        trace: E2ETrace,
-        verifier: JaegerTraceVerifier,
-    ) -> dict:
-        deadline = time.monotonic() + min(self.context.timeout_seconds, 90)
-        last_failure = "trace was not returned"
-        while time.monotonic() < deadline:
-            try:
-                with request.urlopen(
-                    f"http://127.0.0.1:{port}/api/traces/{trace.trace_id}",
-                    timeout=10,
-                ) as response:
-                    payload = json.loads(response.read())
-                verifier.verify(payload, trace)
-                return payload
-            except (error.HTTPError, error.URLError, RuntimeError, ValueError) as failure:
-                last_failure = str(failure)
-                time.sleep(1)
-        raise RuntimeError(
-            f"Jaeger trace {trace.trace_id} did not become complete: {last_failure}"
+    def _jaeger_query(self, port: int) -> JaegerQueryClient:
+        return JaegerQueryClient(
+            base_url=f"http://127.0.0.1:{port}",
+            timeout_seconds=min(self.context.timeout_seconds, 90),
         )
 
     @staticmethod
@@ -2512,9 +2722,10 @@ class KubernetesE2E:
         actual = sorted(job["id"] for job in json.loads(body))
         if actual != sorted(expected):
             raise RuntimeError(f"{scenario}: expected job ids {expected}, got {actual}")
+        self.details.append(f"{scenario}: job ids {actual}")
 
     def _verify_metrics(self) -> None:
-        with self._forward_service("e2e-customer-growth-authguard", 9091) as port:
+        with self._forward_service(self.authguard_release, 9091) as port:
             with request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=15) as response:
                 metrics = response.read().decode()
             self._verify_management_diagnostics(port, metrics, "authguard-authz")
@@ -2526,7 +2737,7 @@ class KubernetesE2E:
         providers = tuple(
             flow["provider_id"] for flow in self.authn_scenarios["provider_flows"]
         )
-        verify_authn_metrics(authn_metrics, providers)
+        verify_authn_metrics(authn_metrics, providers, ("e2e-authguard-keycloak",))
         self.details.append(
             "Positive OpenMetrics samples verified independently from AuthN :8082 and "
             "AuthZ :9091: authorize/callback latency, allow/deny decisions, and "
@@ -2602,6 +2813,7 @@ class KubernetesE2E:
         )
         check_events = 0
         discovery_events: set[str] = set()
+        provisioning_events: set[str] = set()
         discovery_providers: set[str] = set()
         for line in result.output.splitlines():
             try:
@@ -2615,20 +2827,25 @@ class KubernetesE2E:
             ):
                 check_events += 1
             discovery = event.get("fields", {}).get("authguard.principal.discovery")
-            if discovery in {"federation", "SCIM"}:
+            if discovery == "federation":
                 discovery_events.add(discovery)
+            provisioning = event.get("fields", {}).get("authguard.principal.provisioning")
+            if provisioning == "SCIM":
+                provisioning_events.add(provisioning)
             provider = event.get("fields", {}).get("authguard.principal.provider_id")
             if isinstance(provider, str):
                 discovery_providers.add(provider)
         if check_events == 0:
             raise RuntimeError("Authguard logs contain no Envoy Authorization/Check events")
-        missing_discovery = {"federation", "SCIM"} - discovery_events
+        missing_discovery = {"federation"} - discovery_events
         if missing_discovery:
             raise RuntimeError(
                 "Authguard structured logs lack Principal discovery evidence: "
                 + ", ".join(sorted(missing_discovery))
             )
-        expected_providers = {"e2e-keycloak", "e2e-direct-ldap", "e2e-mock-idp"}
+        if "SCIM" not in provisioning_events:
+            raise RuntimeError("Authguard structured logs lack SCIM push provisioning evidence")
+        expected_providers = {"e2e-authguard-keycloak", "e2e-authguard-direct-ldap"}
         if missing := expected_providers - discovery_providers:
             raise RuntimeError(
                 "Authguard structured logs lack provider-specific discovery evidence: "
@@ -2639,7 +2856,7 @@ class KubernetesE2E:
             "envoy.service.auth.v3.Authorization/Check events"
         )
         self.details.append(
-            "Authguard structured logs contain Keycloak, LDAP, custom federation and SCIM "
+            "Authguard structured logs contain Keycloak/LDAP pull federation and SCIM push "
             "materialization events"
         )
         authn_logs = self._run(
@@ -2672,7 +2889,7 @@ class KubernetesE2E:
                     "-n",
                     self.namespace,
                     "-l",
-                    f"app.kubernetes.io/component=e2e-{component}",
+                    f"app.kubernetes.io/component=e2e-authguard-{component}",
                     "--tail=5000",
                 )
             ).output
@@ -2725,7 +2942,7 @@ class KubernetesE2E:
                 "-n",
                 self.namespace,
                 "-l",
-                "app.kubernetes.io/component=e2e-postgresql",
+                "app.kubernetes.io/component=e2e-authguard-postgresql",
                 "-o",
                 "jsonpath={.items[0].metadata.name}",
             )
@@ -2733,24 +2950,26 @@ class KubernetesE2E:
         sql = (
             "SELECT "
             "(SELECT count(*) FROM information_schema.schemata WHERE schema_name IN "
-            "('e2e_customer_growth_go_sqlx','e2e_customer_growth_rust_sqlx','e2e_customer_growth_python_sqlalchemy','e2e_customer_growth_spring_jdbc','e2e_customer_growth_spring_jpa')) || '|' || "
-            "(SELECT count(*) FROM information_schema.tables WHERE table_name='customer_growth_jobs' AND table_schema LIKE 'e2e_%') || '|' || "
-            "CASE WHEN has_schema_privilege('e2e_customer_growth_go_sqlx','e2e_customer_growth_rust_sqlx','USAGE') "
+            "('e2e_authguard_customer_growth_go_sqlx','e2e_authguard_customer_growth_rust_sqlx','e2e_authguard_customer_growth_python_sqlalchemy','e2e_authguard_customer_growth_spring_jdbc','e2e_authguard_customer_growth_spring_jpa')) || '|' || "
+            "(SELECT count(*) FROM information_schema.tables WHERE table_name='e2e_authguard_customer_growth_jobs' AND table_schema LIKE 'e2e_authguard_%') || '|' || "
+            "CASE WHEN has_schema_privilege('e2e_authguard_customer_growth_go_sqlx','e2e_authguard_customer_growth_rust_sqlx','USAGE') "
             "THEN 1 ELSE 0 END || '|' || "
             "(SELECT count(*) FROM information_schema.tables WHERE table_schema='authguard' "
             "AND table_name LIKE 'iam_%') || '|' || "
             "(SELECT count(*) FROM authguard.iam_principal_identity) || '|' || "
             "(SELECT count(*) FROM authguard.iam_principal WHERE id IN "
-            "('principal-direct-reader','principal-token-editor','principal-direct-readers',"
+            "('principal-direct-reader','principal-token-editor','principal-no-data-reader',"
+            "'principal-direct-readers',"
             "'principal-token-editors','principal-growth-job-runner')) || '|' || "
             "(SELECT count(*) FROM authguard.iam_role) || '|' || "
             "(SELECT count(*) FROM authguard.iam_action) || '|' || "
             "(SELECT count(*) FROM authguard.iam_role_binding) || '|' || "
             "(SELECT count(*) FROM authguard.iam_authn_flow) || '|' || "
             "(SELECT count(*) FROM authguard.iam_principal_identity WHERE "
-            "(provider='github' AND subject='987654') OR "
-            "(provider='google' AND subject='google-editor-001') OR "
-            "(provider='wechat' AND subject='wechat-union-001'))"
+            "(provider='github' AND issuer='https://github.com' AND subject='987654') OR "
+            "(provider='google' AND issuer='https://accounts.google.com' AND subject='google-editor-001') OR "
+            "(provider='wechat' AND issuer='https://open.weixin.qq.com' AND subject='wechat-union-001') OR "
+            "(provider='qq' AND issuer='https://graph.qq.com' AND subject='qq-open-001'))"
         )
         isolation = self._run(
             (
@@ -2765,16 +2984,18 @@ class KubernetesE2E:
                 f'PGPASSWORD="$POSTGRESQL_POSTGRES_PASSWORD" psql -U postgres -d "$POSTGRESQL_DATABASE" -Atc "{sql}"',
             )
         ).output.strip()
-        if isolation != "5|5|0|7|3|5|2|4|5|0|3":
+        if isolation != "5|5|0|7|13|6|2|4|6|0|4":
             raise RuntimeError(
                 "PostgreSQL IAM/schema contract mismatch: expected "
-                "5|5|0|7|3|5|2|4|5|0|3, "
+                "5|5|0|7|13|6|2|4|6|0|4, "
                 f"got {isolation!r}"
             )
         self.details.append(
             "five workload schemas remain isolated; one shared AuthGuard IAM schema contains "
-            "seven canonical tables, five pre-authorized enterprise Principals, two roles, "
-            "four actions, five bindings, three durable AuthN identities, and no stale auth flow"
+            "seven canonical tables, six pre-authorized enterprise Principals, two roles, "
+            "four actions, six role bindings, thirteen durable external-identity bindings "
+            "across Keycloak/LDAP/SCIM/social Providers (including two exact "
+            "SCIM/OIDC convergences), and no stale auth flow"
         )
 
     def _verify_running_images(self) -> None:
@@ -2869,21 +3090,38 @@ class KubernetesE2E:
 
     @contextmanager
     def _forward_envoy_admin(self) -> Iterator[int]:
-        pod = self._run(
-            (
-                "kubectl",
-                "get",
-                "pods",
-                "-n",
-                self.namespace,
-                "-l",
-                f"gateway.envoyproxy.io/owning-gateway-name={self.gateway_name}",
-                "-o",
-                "jsonpath={.items[0].metadata.name}",
+        payload = json.loads(
+            self._run(
+                (
+                    "kubectl",
+                    "get",
+                    "pods",
+                    "-n",
+                    self.namespace,
+                    "-l",
+                    f"gateway.envoyproxy.io/owning-gateway-name={self.gateway_name}",
+                    "-o",
+                    "json",
+                )
+            ).output
+        )
+        ready = [
+            item
+            for item in payload.get("items", [])
+            if item.get("status", {}).get("phase") == "Running"
+            and any(
+                condition.get("type") == "Ready" and condition.get("status") == "True"
+                for condition in item.get("status", {}).get("conditions", [])
             )
-        ).output.strip()
+        ]
+        if not ready:
+            raise RuntimeError("no ready Envoy Proxy pod was created")
+        pod = max(
+            ready,
+            key=lambda item: item.get("metadata", {}).get("creationTimestamp", ""),
+        ).get("metadata", {}).get("name", "")
         if not pod:
-            raise RuntimeError("Envoy Proxy pod was not created")
+            raise RuntimeError("ready Envoy Proxy pod has no name")
         with self._forward_resource(f"pod/{pod}", 19000) as port:
             yield port
 
@@ -2957,9 +3195,14 @@ class KubernetesE2E:
 
 
 def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        listener.bind(("127.0.0.1", 0))
-        return listener.getsockname()[1]
+    for port in LOCAL_PORT_RANGE:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            try:
+                listener.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            return port
+    raise RuntimeError("no free E2E host port remains in 28800-28899")
 
 
 def _has_true_condition(conditions: list[dict], condition_type: str) -> bool:

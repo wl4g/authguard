@@ -1,4 +1,4 @@
-"""Phase 24: verify user/workload access through Envoy, AuthZ, and Biz."""
+"""Phase 00: deploy the complete real E2E topology with Helm."""
 
 from __future__ import annotations
 
@@ -14,13 +14,14 @@ def verify(context: RunContext) -> VerificationResult:
     environment = KubernetesE2E(context)
     passed = False
     try:
-        environment.verify_gateway_authorization()
+        environment.verify_prerequisites()
+        environment.redeploy()
         passed = True
     except Exception:
         environment.details.append(traceback.format_exc())
     return VerificationResult(
-        scenario_id="24",
-        title="k3s phase 4/5: OIDC user/workload, Envoy, AuthZ, and Biz CRUD",
+        scenario_id="00",
+        title="Infrastructure: Helm deployment and middleware initialization",
         passed=passed,
         duration_seconds=time.monotonic() - started,
         details=environment.details,

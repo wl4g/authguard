@@ -1,6 +1,6 @@
 # Authguard 文档
 
-Authguard 是一个深度集成 Envoy Gateway 的通用、独立、高性能 IAM 授权项目。它以标准化 URN 作为资源标识和授权边界，既能表达类似 S3 bucket/object/path 的层级授权，也能覆盖类似 GitHub org/repo/team 的企业协作授权。Envoy Gateway 负责入口、OIDC/JWT 认证、路由和流量治理；Authguard 以独立 Rust 微服务提供 external authorization 数据面和 IAM 控制面。
+Authguard 是一个深度集成 Envoy Gateway 的通用、独立、高性能 AuthN/AuthZ 产品。Envoy 负责入口、canonical JWT 校验、路由和流量治理；AuthN 负责外部 OIDC/OAuth-like 协议、身份规范化与账号绑定，AuthZ 只对稳定 Principal 做资源授权。
 
 它尤其适合多人或多个系统主体协作、但角色和资源范围不同的 2B/2B2C 场景。2C 也能使用同一模型，只是简单的“用户只能访问自己的数据”通常直接使用所有权字段即可，无需完整 IAM。业务服务通过 adapter 接收受信访问上下文，并把 allow/deny Resource URN 安全编译为数据库查询范围。
 

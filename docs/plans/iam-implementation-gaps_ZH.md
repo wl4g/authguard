@@ -33,12 +33,11 @@
 
 ### 2.1 SCIM 不是完整 RFC 7644 Server
 
-当前 `POST /api/v1/principal-discovery/scim/events` 只接收 RFC 7643 User/Group 有界字段
-的 upsert/delete 变化。尚未实现：
+当前 `/scim/v2/Users` 与 `/scim/v2/Groups` 实现 RFC 7643 User/Group 有界字段的
+GET/POST/PUT/PATCH/DELETE。尚未实现：
 
-- `/scim/v2/Users`、`/scim/v2/Groups` 标准资源端点；
 - ServiceProviderConfig、ResourceTypes 与 Schemas discovery；
-- SCIM filter、pagination、PATCH/Bulk 与标准错误响应；
+- 复杂 SCIM filter/PATCH path、排序与 Bulk；
 - provisioning client 独立 scope/mTLS 认证模型。
 
 是否演进为完整 SCIM Server 应由明确的企业 provisioning 需求驱动；在此之前文档和 API

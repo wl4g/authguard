@@ -47,6 +47,26 @@ mgmt:
 # Both authguard-authn and authguard-authz deserialize this one typed file.
 # Each process resolves only its owned authn/authz secrets.
 authn:
+  # Standard OIDC example. Browser login uses Authorization Code + PKCE and
+  # nonce-bound ID Token verification. Optional RFC 7662 introspection is the
+  # safe path for translating a WORKLOAD bearer token; UserInfo is not an ID
+  # Token and an unverified JWT payload is never accepted.
+  # providers:
+  #   corporate-oidc:
+  #     type: oidc
+  #     issuer: https://sso.example.com/realms/corporate
+  #     clientId: authguard
+  #     clientSecret: "${AUTHGUARD_CORPORATE_OIDC_CLIENT_SECRET}"
+  #     callbackUrl: https://app.example.com/auth/v1/providers/corporate-oidc/callback
+  #     scopes: [openid, profile, email]
+  #     userinfo: true
+  #     tokenIntrospection:
+  #       endpoint: https://sso.example.com/realms/corporate/protocol/openid-connect/token/introspect
+  #       acceptedAudiences: [customer-growth-job-service]
+  #     identity:
+  #       subject: $.sub
+  #       username: $.preferred_username
+  #       email: $.email
   providers: {}
   accountLinking:
     # Supported strategies:
@@ -83,9 +103,8 @@ authz:
   # Optional control-plane federation only. Login normalization and identity
   # binding belong to authguard-authn and never run on the AuthZ hot path.
   principal_discovery:
-    # keycloak/ldap/custom are flat sibling sections of scim — all are
-    # principal discovery sources. Disabled entries are ignored at startup
-    # and by validation. At most ONE active provider per protocol is allowed
+    # keycloak/ldap/custom are pull discovery sources. Disabled entries are
+    # ignored at startup and by validation. At most ONE active provider per protocol is allowed
     # (startup rejects
     # duplicates), so a candidate is always unambiguous: every result
     # carries its source provider_id + issuer. Control-plane materialization re-resolves
@@ -185,9 +204,8 @@ authz:
     #     allow_insecure_http: false
     #
     # SCIM runs in push mode: an external sync agent authenticates at the
-    # Envoy edge and POSTs
-    # normalized resources to /api/v1/principal-discovery/scim/events, which
-    # ingests them into Authguard storage as principal projections, so the
+    # Envoy edge and provisions /scim/v2/Users or /scim/v2/Groups, which are
+    # ingested into Authguard storage as principal projections, so the
     # hot AuthN path never calls the IdP. Sync-agent credentials remain in the
     # external connector deployment and are not Authguard runtime config.
     # Refer SCIM's specification: RFC-7643 core schema, RFC-7644 protocol.
@@ -197,8 +215,11 @@ authz:
     # SCIM the same way. https://docs.aws.amazon.com/singlesignon/latest/userguide/provision-automatically.html
     scim:
       enabled: false
+      # Use the same provider ID as AuthN when SCIM externalId represents the
+      # same issuer/subject; exact binding lookup then updates one Principal.
       discovery_id: corporate-scim
-      # SCIM events must include the canonical principal_id resolved by AuthN.
+      # POST creates a canonical principal_id; PUT/PATCH/DELETE use the
+      # server-issued id returned by the SCIM resource.
       issuer: https://idp.example.com/realms/example-corp
   # On every allowed check Authguard re-signs the verified client identity as
   # a short-lived JWT (RS256) carrying `authguardOrigin: true` and replaces
@@ -206,14 +227,15 @@ authz:
   # the client JWT are preserved — only the marker claim is added — so the
   # microservice verifying this signature proves the request passed through
   # Envoy Gateway and rejects clients calling its API directly. The RSA
-  # private key stays in Authguard (inject
-  # AUTHGUARD__AUTHZ__RESIGN_TOKEN__PRIVATE_KEY from a Secret); business
+  # private key stays in Authguard (inject the base64-encoded PKCS#8 PEM as
+  # AUTHGUARD__AUTHZ__RESIGN__PRIVATE_KEY_B64); business
   # workloads verify with the paired public key only.
   # Disabled leaves the original identity token stripped without replacement.
-  resign_token:
+  resign:
     enabled: false
-    ttl: 60s
-    private_key: ""  # PKCS#8 PEM RSA private key, or private_key_file: /run/secrets/...
+    # Effective expiry is min(max_ttl, source canonical JWT remaining lifetime).
+    max_ttl: 60s
+    private_key_b64: ""
   # Keep empty in source. Inject AUTHGUARD__AUTHZ__API_TOKEN from a Secret.
   api_token: ""
 

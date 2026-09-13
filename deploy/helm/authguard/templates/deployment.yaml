@@ -1,8 +1,5 @@
+{{- if .Values.authguard.authz.enabled }}
 {{- $provider := include "authguard.secretsProvider" . -}}
-{{- $ext := .Values.envoy_gateway.ext_authz -}}
-{{- if and $ext.enabled (eq $ext.jwt.enabled $ext.oidc.enabled) -}}
-{{- fail "envoy_gateway.ext_authz requires exactly one of jwt.enabled or oidc.enabled" -}}
-{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -50,52 +47,11 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if .Values.authguard.authz.resignKeyInit.enabled }}
-      initContainers:
-        # Decodes the base64 PKCS#8 PEM resign-JWT key from the injected
-        # environment (or the mounted KEY=VALUE env file) into the
-        # private_key_file configured under authz.resign_token. The runtime image
-        # is distroless, so the decode runs here.
-        - name: resign-key-decode
-          image: "{{ .Values.authguard.authz.resignKeyInit.image.repository }}:{{ .Values.authguard.authz.resignKeyInit.image.tag }}"
-          imagePullPolicy: {{ .Values.authguard.authz.resignKeyInit.image.pullPolicy }}
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
-            runAsUser: 65532
-            runAsGroup: 65532
-            capabilities: { drop: ["ALL"] }
-          {{- if and (eq $provider "kubernetes") .Values.secrets.kubernetes.existingSecret }}
-          envFrom:
-            - secretRef:
-                name: {{ .Values.secrets.kubernetes.existingSecret }}
-          {{- end }}
-          command: ["sh", "-c"]
-          args:
-            - |
-              key="${AUTHGUARD_RESIGN_TOKEN_PRIVATE_KEY:-}"
-              if [ -z "$key" ] && [ -f /etc/authguard/csi/env ]; then
-                key="$(sed -n 's/^AUTHGUARD_RESIGN_TOKEN_PRIVATE_KEY=//p' /etc/authguard/csi/env | head -n 1)"
-              fi
-              if [ -z "$key" ] && [ -f /vault/secrets/env ]; then
-                key="$(sed -n 's/^AUTHGUARD_RESIGN_TOKEN_PRIVATE_KEY=//p' /vault/secrets/env | head -n 1)"
-              fi
-              if [ -n "$key" ]; then
-                printf '%s' "$key" | base64 -d > /etc/authguard/secrets/resign-jwt-private-key.pem
-              fi
-          volumeMounts:
-            - name: secrets
-              mountPath: /etc/authguard/secrets
-            {{- if or (eq $provider "gcp") (eq $provider "aws") }}
-            - name: csi-secrets
-              mountPath: {{ include "authguard.csiSecretsMountPath" . }}
-              readOnly: true
-            {{- end }}
-      {{- end }}
       containers:
         - name: authguard-authz
           image: "{{ .Values.authguard.authz.image.repository }}:{{ .Values.authguard.authz.image.tag }}"
           imagePullPolicy: {{ .Values.authguard.authz.image.pullPolicy }}
+          args: ["authz"]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -158,8 +114,6 @@ spec:
             - name: config
               mountPath: /etc/authguard
               readOnly: true
-            - name: secrets
-              mountPath: /etc/authguard/secrets
             {{- if or (eq $provider "gcp") (eq $provider "aws") }}
             - name: csi-secrets
               mountPath: {{ include "authguard.csiSecretsMountPath" . }}
@@ -171,8 +125,6 @@ spec:
         - name: config
           configMap:
             name: {{ include "authguard.fullname" . }}-config
-        - name: secrets
-          emptyDir: {}
         {{- if or (eq $provider "gcp") (eq $provider "aws") }}
         - name: csi-secrets
           csi:
@@ -199,3 +151,4 @@ spec:
       topologySpreadConstraints:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+{{- end }}

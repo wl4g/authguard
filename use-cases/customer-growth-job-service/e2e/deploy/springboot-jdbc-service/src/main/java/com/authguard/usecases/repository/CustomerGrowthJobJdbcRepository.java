@@ -32,7 +32,7 @@ public class CustomerGrowthJobJdbcRepository {
 
   public CustomerGrowthJobEntity create(CustomerGrowthJobEntity job) {
     jdbcTemplate.update(
-        "INSERT INTO customer_growth_jobs(id, region, tenant_id, workspace_id, project_id, job_id, display_name, status, owner_user_id) "
+        "INSERT INTO e2e_authguard_customer_growth_jobs(id, region, tenant_id, workspace_id, project_id, job_id, display_name, status, owner_user_id) "
             + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         job.id(),
         job.region(),
@@ -52,7 +52,7 @@ public class CustomerGrowthJobJdbcRepository {
     args.addAll(scope.args());
     List<CustomerGrowthJobEntity> rows =
         jdbcTemplate.query(
-            "SELECT * FROM customer_growth_jobs WHERE id = ? AND (" + scope.where() + ")",
+            "SELECT * FROM e2e_authguard_customer_growth_jobs WHERE id = ? AND (" + scope.where() + ")",
             ROW_MAPPER,
             args.toArray());
     return rows.stream().findFirst();
@@ -67,7 +67,7 @@ public class CustomerGrowthJobJdbcRepository {
     args.addAll(scope.args());
     int affected =
         jdbcTemplate.update(
-            "UPDATE customer_growth_jobs SET display_name = ?, status = ?, owner_user_id = ? "
+            "UPDATE e2e_authguard_customer_growth_jobs SET display_name = ?, status = ?, owner_user_id = ? "
                 + "WHERE id = ? AND ("
                 + scope.where()
                 + ")",
@@ -82,7 +82,7 @@ public class CustomerGrowthJobJdbcRepository {
     args.addAll(scope.args());
     int affected =
         jdbcTemplate.update(
-            "DELETE FROM customer_growth_jobs WHERE id = ? AND (" + scope.where() + ")",
+            "DELETE FROM e2e_authguard_customer_growth_jobs WHERE id = ? AND (" + scope.where() + ")",
             args.toArray());
     requireAffected(affected, id);
   }
@@ -120,7 +120,7 @@ public class CustomerGrowthJobJdbcRepository {
     addEquals(clauses, args, "owner_user_id", criteria.ownerUserId());
 
     return jdbcTemplate.query(
-        "SELECT * FROM customer_growth_jobs WHERE "
+        "SELECT * FROM e2e_authguard_customer_growth_jobs WHERE "
             + String.join(" AND ", clauses)
             + " ORDER BY region, tenant_id, workspace_id, project_id, job_id",
         ROW_MAPPER,

@@ -4,7 +4,7 @@ COPY use-cases/customer-growth-job-service/e2e/deploy/mocksvc-idp-service/requir
 RUN pip install --no-cache-dir -r /tmp/service-requirements.txt
 COPY use-cases/customer-growth-job-service/e2e/deploy/mocksvc-idp-service /app/service
 ENV PYTHONPATH=/app/service
-RUN useradd --system --uid 65532 --no-create-home e2e-mock-idp
+RUN useradd --system --uid 65532 --no-create-home e2e-authguard-mock-idp
 USER 65532:65532
 EXPOSE 8080
 # OAuth authorization codes are deliberately one-time in this disposable IdP;

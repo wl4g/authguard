@@ -31,9 +31,6 @@ envoy_gateway:
 # ─────────────────────────────────────────────────────────────────────
   ext_authz:
     enabled: true
-    # External issuer verified by Envoy for the selected standard JWT/OIDC
-    # integration. AuthZ still consumes only AuthN's canonical principal_id.
-    issuer: https://idp.example.com/realms/example-corp
     gateway:
       create: true
       name: authguard
@@ -47,35 +44,6 @@ envoy_gateway:
         port: 4317
       # Empty uses Envoy Gateway's <gateway>.<namespace> service-name default.
       serviceName: ""
-    # JWT mode: Envoy verifies Authorization: Bearer <token> against the JWKS
-    # below, forwards the verified token to Authguard, and extracts the identity.
-    # The public key is public information: provide localJWKS.inline (a JWKS with
-    # only public keys), an existingConfigMap, or remoteJWKS.uri. jwt.enabled
-    # MUST be paired with a public key — an empty JWKS cannot verify any token.
-    jwt:
-      enabled: true
-      audiences: [customer-growth-job-service]
-      # Additional trusted canonical-token issuers. Each is still verified by
-      # Envoy; AuthZ receives only the normalized Principal claims.
-      additionalProviders: []
-      localJWKS:
-        existingConfigMap: ""
-        inline: '{"keys":[]}'
-      remoteJWKS:
-        uri: ""
-        backendRefs: []
-    # OIDC mode (browser users): Envoy Gateway handles the IdP redirect/callback
-    # and token exchange (authorization_code); users log in on the IdP UI. The
-    # forwarded ID token carries x-authguard-id-token. Workloads do NOT use this
-    # flow — they authenticate with their own SA via OAuth2 client_credentials.
-    oidc:
-      enabled: false
-      clientID: authguard
-      # Existing Opaque Secret holding the OIDC client secret.
-      clientSecretRef:
-        name: ""
-        key: client-secret
-      redirectURL: ""
     # Optional HTTPRoute through the managed Gateway to a protected workload.
     authguardRoute:
       enabled: false
@@ -100,11 +68,22 @@ authguard:
     enabled: true
     replicaCount: 2
     image:
-      repository: registry.cn-shenzhen.aliyuncs.com/wl4g/authguard
+      repository: ghcr.io/wl4g/authguard
       tag: "latest"
       pullPolicy: IfNotPresent
     service:
       port: 8082
+    # Envoy verifies only AuthN-issued canonical session JWTs. External OIDC
+    # discovery, callback, token exchange and ID-token validation stay in AuthN.
+    canonical_jwt:
+      issuer: authguard-authn
+      audiences: [authguard]
+      local_jwks:
+        existing_config_map: ""
+        inline: '{"keys":[]}'
+      remote_jwks:
+        uri: ""
+        backend_refs: []
     resources:
       requests: { cpu: 50m, memory: 64Mi }
       limits: { cpu: 500m, memory: 256Mi }
@@ -121,25 +100,17 @@ authguard:
   # injection mechanism selected by the top-level `secrets` block.
   # ───────────────────────────────────────────────────────────────────
   authz:
+    # Disable for authentication-only 2C applications that do not need
+    # resource-level authorization; also set envoy_gateway.ext_authz.enabled=false.
+    enabled: true
     # SQLite is the default backend, so the zero-configuration deployment is a
     # single replica. Select PostgreSQL before increasing this value.
     replicaCount: 1
     image:
-      repository: registry.cn-shenzhen.aliyuncs.com/wl4g/authguard
+      repository: ghcr.io/wl4g/authguard
       tag: "latest"
       pullPolicy: IfNotPresent
     imagePullSecrets: []
-    # Deploy-time decoder for the resign-JWT key: the runtime image is
-    # distroless, so an init container decodes AUTHGUARD_RESIGN_TOKEN_PRIVATE_KEY
-    # (base64 PKCS#8 PEM) into authz.resign_token.private_key_file. Enable this
-    # together with authz.resign_token.enabled inside authguard-config. busybox is
-    # not mirrored in the Aliyun registry, so this defaults to mirrored alpine.
-    resignKeyInit:
-      enabled: false
-      image:
-        repository: registry.cn-shenzhen.aliyuncs.com/wl4g/alpine
-        tag: "3.21"
-        pullPolicy: IfNotPresent
     serviceAccount:
       create: true
       name: ""
@@ -240,7 +211,7 @@ authguard:
       # Unknown principal_id values always fail closed. Authentication-only 2C
       # routes should not attach ext_authz; authorized 2C routes use first-login.
       identity:
-        token_header: {{ .Values.envoy_gateway.ext_authz.jwt.enabled | ternary "authorization" "x-authguard-id-token" }}
+        token_header: authorization
         principal_id_claim: principal_id
         principal_kind_claim: principal_kind
         groups_claim: authguard_group_ids
@@ -253,8 +224,8 @@ authguard:
         scope_token_ttl: 30s
       principal_discovery:
         # Connector SA credentials resolve from the injected environment
-        # ("${ENV_KEY}"); each connector authenticates BEFORE any call:
-        # keycloak/scim exchange OIDC client_credentials, ldap binds directly.
+        # ("${ENV_KEY}"). Keycloak obtains renewable client_credentials before
+        # Admin API calls; LDAP binds directly.
         #
         # keycloak:
         #   - enabled: false
@@ -334,24 +305,24 @@ authguard:
         ldap: []
         custom: []
         # SCIM runs in push mode: an external connector authenticates at the
-        # Envoy edge and POSTs normalized resources to
-        # /api/v1/principal-discovery/scim/events, which ingests them into
+        # Envoy edge and provisions /scim/v2/Users or /scim/v2/Groups, which are ingested into
         # Authguard storage as principal projections, so the hot AuthN path
         # never calls the IdP.
         scim:
           enabled: false
+          # Match the AuthN provider ID when externalId is its stable subject.
           discovery_id: corporate-scim
-          issuer: {{ .Values.envoy_gateway.ext_authz.issuer | quote }}
+          issuer: ""
       # On every allowed check Authguard re-signs the verified client identity
-      # as RS256 with `authguardOrigin: true`; all client JWT attributes are
-      # preserved, only the marker claim is added. The private key is decoded
-      # by the resign-key-decode init container from
-      # AUTHGUARD_RESIGN_TOKEN_PRIVATE_KEY (base64 PKCS#8 PEM) into the
-      # private_key_file below; workloads hold only the paired public key.
-      resign_token:
+      # as RS256 with `authguardOrigin: true`. The base64 PKCS#8 PEM is read
+      # directly from config/environment; no key-decoding init container is
+      # needed. Business workloads hold only the paired public key.
+      resign:
         enabled: false
-        ttl: 60s
-        private_key_file: /etc/authguard/secrets/resign-jwt-private-key.pem
+        # Never extend the incoming AuthN session: effective TTL is
+        # min(max_ttl, source JWT remaining lifetime).
+        max_ttl: 60s
+        private_key_b64: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD__AUTHZ__RESIGN__PRIVATE_KEY_B64}"{{ end }}
       # kubernetes: overridden natively by AUTHGUARD__AUTHZ__API_TOKEN from
       # the injected environment; file-based providers resolve the reference.
       api_token: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD__AUTHZ__API_TOKEN}"{{ end }}
@@ -430,20 +401,23 @@ redis_cluster:
 # vault:      the Vault Agent Injector writes the same multi-line KEY=VALUE
 #             content to /vault/secrets/env.
 #
-# Secret contract (keys inside the Secret / KEY=VALUE content):
-#   AUTHGUARD_REDIS_PASSWORD            (only when redis_cluster is external;
-#                                       in-cluster uses the Bitnami Secret)
-#   AUTHGUARD__STORAGE__POSTGRES__URL       (required when storage.provider=PostgreSQL)
-#   AUTHGUARD__STORAGE__POSTGRES__USERNAME  (required when storage.provider=PostgreSQL)
-#   AUTHGUARD__STORAGE__POSTGRES__PASSWORD  (required when storage.provider=PostgreSQL)
-#   AUTHGUARD_AUTHN_SESSION_PRIVATE_KEY  (AuthN RS256 key when referenced by
-#                                       authn.session.privateKey)
-#   <provider-specific keys>            (AuthN client secrets referenced by
-#                                       ${...} in provider entries)
-#   AUTHGUARD_KEYCLOAK_CLIENT_SECRET    (keycloak connector SA)
-#   AUTHGUARD_LDAP_BIND_PASSWORD        (ldap connector SA)
-#   AUTHGUARD_RESIGN_TOKEN_PRIVATE_KEY    (base64 PKCS#8 PEM, required when
-#                                       authz.resign_token.enabled=true)
+# Eight external-integration credential classes exercised by the real E2E:
+#   1. PostgreSQL password: AUTHGUARD__STORAGE__POSTGRES__PASSWORD
+#   2. Redis password:      AUTHGUARD__CACHE__REDIS__PASSWORD (an in-chart
+#                           cluster is injected from its own Bitnami Secret)
+#   3. GitHub client secret: AUTHGUARD_GITHUB_CLIENT_SECRET
+#   4. Google client secret: AUTHGUARD_GOOGLE_CLIENT_SECRET
+#   5. WeChat client secret: AUTHGUARD_WECHAT_CLIENT_SECRET
+#   6. Keycloak discovery SA: AUTHGUARD_KEYCLOAK_CLIENT_SECRET
+#   7. LDAP bind password:   AUTHGUARD_LDAP_BIND_PASSWORD
+#   8. SCIM API password:    AUTHGUARD_SCIM_API_PASSWORD
+#
+# AuthGuard also needs product-owned cryptographic material. These are not
+# external connection passwords and therefore are intentionally not counted
+# as another integration class:
+#   AUTHGUARD_AUTHN_SESSION_PRIVATE_KEY  (AuthN canonical JWT signing key)
+#   AUTHGUARD__AUTHZ__RESIGN__PRIVATE_KEY_B64 (base64 PKCS#8 PEM when
+#                                               authz.resign.enabled=true)
 #   AUTHGUARD__AUTHZ__API_TOKEN          (required for /api/v1 control-plane API)
 #   AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY   (required; shared with workloads)
 secrets:

@@ -106,6 +106,7 @@ func TestAuthorizationScenariosFromSharedFixture(t *testing.T) {
 			if scenario.ExpectedStatus != "" && actualStatus != scenario.ExpectedStatus {
 				t.Fatalf("status=%q want=%q", actualStatus, scenario.ExpectedStatus)
 			}
+			t.Logf("AUTHGUARD_E2E_CASE id=%s", scenario.ID)
 		})
 	}
 }
@@ -117,17 +118,17 @@ func assertDeniedMutationDidNotChangeDatabase(
 	switch scenario.Operation {
 	case "create":
 		var count int
-		if err := db.Get(&count, "SELECT COUNT(*) FROM customer_growth_jobs WHERE id = ?", scenario.Job.ID); err != nil || count != 0 {
+		if err := db.Get(&count, "SELECT COUNT(*) FROM e2e_authguard_customer_growth_jobs WHERE id = ?", scenario.Job.ID); err != nil || count != 0 {
 			t.Fatalf("denied create changed database count=%d err=%v", count, err)
 		}
 	case "update":
 		var status string
-		if err := db.Get(&status, "SELECT status FROM customer_growth_jobs WHERE id = ?", scenario.TargetJobID); err != nil || status != "READY" {
+		if err := db.Get(&status, "SELECT status FROM e2e_authguard_customer_growth_jobs WHERE id = ?", scenario.TargetJobID); err != nil || status != "READY" {
 			t.Fatalf("denied update changed status=%q err=%v", status, err)
 		}
 	case "delete":
 		var count int
-		if err := db.Get(&count, "SELECT COUNT(*) FROM customer_growth_jobs WHERE id = ?", scenario.TargetJobID); err != nil || count != 1 {
+		if err := db.Get(&count, "SELECT COUNT(*) FROM e2e_authguard_customer_growth_jobs WHERE id = ?", scenario.TargetJobID); err != nil || count != 1 {
 			t.Fatalf("denied delete changed database count=%d err=%v", count, err)
 		}
 	}
@@ -187,7 +188,7 @@ func executeScenario(
 			return false, nil, ""
 		}
 		var remaining int
-		if queryErr := db.Get(&remaining, "SELECT COUNT(*) FROM customer_growth_jobs WHERE id = ?", scenario.TargetJobID); queryErr != nil {
+		if queryErr := db.Get(&remaining, "SELECT COUNT(*) FROM e2e_authguard_customer_growth_jobs WHERE id = ?", scenario.TargetJobID); queryErr != nil {
 			t.Fatal(queryErr)
 		}
 		return remaining == 0, nil, ""

@@ -7,7 +7,7 @@ use anyhow::Context as _;
 use async_trait::async_trait;
 use authguard_common::apm::propagate_http_trace_context;
 use authguard_common::apm::{init_telemetry, AuthnMetrics, TelemetryConfig};
-use authguard_common::config::{AppConfig, CONFIG_FILE_ENV, DEFAULT_CONFIG};
+use authguard_common::config::AppConfig;
 use authguard_common::route::management::{self, ManagementState, ReadinessProbe};
 use axum::middleware;
 
@@ -28,8 +28,7 @@ impl ReadinessProbe for AuthnReadiness {
 ///
 /// Returns an error for invalid configuration, telemetry, storage, or listener startup.
 pub async fn run() -> anyhow::Result<()> {
-    let config_file = std::env::var(CONFIG_FILE_ENV).unwrap_or_else(|_| DEFAULT_CONFIG.to_string());
-    let config = AppConfig::load_authn(&config_file)?;
+    let config = AppConfig::get();
     let telemetry = init_telemetry(&TelemetryConfig::from_settings(
         "authguard-authn",
         config.get_logging(),

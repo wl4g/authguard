@@ -5,8 +5,8 @@ use std::time::{Duration, Instant, SystemTime};
 use crate::{
     AccountLinkingError, AuthnFlowRepository, AuthnProperties, GithubOauth2Provider,
     GoogleOauth2Provider, IProviderAdapter, IamAuthFlowInfo, IdentityBindingRepository,
-    JitPrincipalDiscovery, OAuthLikeCallback, OAuthLikeProvider, PrincipalKind, ProviderProperties,
-    QqOauth2Provider, ReqwestProviderTransport, WechatOauth2Provider,
+    JitPrincipalDiscovery, OAuthLikeCallback, OAuthLikeProvider, OidcProvider, PrincipalKind,
+    ProviderProperties, QqOauth2Provider, ReqwestProviderTransport, WechatOauth2Provider,
 };
 use anyhow::Context as _;
 use authguard_common::apm::AuthnMetrics;
@@ -63,6 +63,13 @@ pub(crate) struct LoginResponse {
     principal: authguard_common::AuthenticatedPrincipalContext,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TokenExchangeRequest {
+    subject_token: String,
+    kind: PrincipalKind,
+}
+
 impl AuthenticationHandler {
     pub(crate) async fn open(metrics: AuthnMetrics) -> anyhow::Result<Self> {
         let config = authguard_common::config::AppConfig::get();
@@ -87,7 +94,7 @@ impl AuthenticationHandler {
             }
             provider => anyhow::bail!("unsupported IAM storage provider `{provider}`"),
         };
-        let providers = build_providers(config.get_authn())?;
+        let providers = build_providers(config.get_authn()).await?;
         let signing_key = load_session_key(config.get_authn(), providers.is_empty())?;
         tracing::info!(
             provider_count = providers.len(),
@@ -124,6 +131,10 @@ pub(crate) async fn authorize(
         let state_value = random_state();
         let expires_at_epoch_seconds =
             epoch_seconds().saturating_add(state.session.state_ttl.as_secs());
+        let authorization = runtime
+            .adapter
+            .authorize(&runtime.client_id, &runtime.callback_url, &state_value)
+            .map_err(ApiError::provider)?;
         state
             .flows
             .create(
@@ -131,16 +142,14 @@ pub(crate) async fn authorize(
                 &IamAuthFlowInfo {
                     provider: provider.clone(),
                     return_uri: query.return_uri,
+                    nonce: authorization.nonce,
+                    pkce_verifier: authorization.pkce_verifier,
                     expires_at_epoch_seconds,
                 },
             )
             .await
             .map_err(ApiError::storage)?;
-        let url = runtime
-            .adapter
-            .authorization_url(&runtime.client_id, &runtime.callback_url, &state_value)
-            .map_err(ApiError::provider)?;
-        Ok(Redirect::temporary(url.as_str()))
+        Ok(Redirect::temporary(authorization.url.as_str()))
     }
     .await;
     let outcome = result.as_ref().err().map_or("success", ApiError::metric_outcome);
@@ -193,6 +202,8 @@ pub(crate) async fn callback(
                 redirect_uri: runtime.callback_url.clone(),
                 client_id: runtime.client_id.clone(),
                 client_secret: runtime.client_secret.clone(),
+                nonce: flow.nonce,
+                pkce_verifier: flow.pkce_verifier,
             })
             .await
             .map_err(ApiError::provider)?;
@@ -235,48 +246,161 @@ pub(crate) async fn callback(
     result
 }
 
-fn build_providers(config: &AuthnProperties) -> anyhow::Result<BTreeMap<String, ProviderRuntime>> {
+pub(crate) async fn token_exchange(
+    AxumPath(provider): AxumPath<String>,
+    State(state): State<AuthenticationHandler>,
+    Json(request): Json<TokenExchangeRequest>,
+) -> Result<Json<LoginResponse>, ApiError> {
+    let started = Instant::now();
+    tracing::info!(
+        event = "authguard.authn.token_exchange.started",
+        provider,
+        principal_kind = request.kind.as_str(),
+        "external OIDC bearer normalization started"
+    );
+    let result = async {
+        if request.subject_token.is_empty() {
+            return Err(ApiError::invalid_request("subjectToken is required"));
+        }
+        if request.kind == PrincipalKind::Group {
+            return Err(ApiError::invalid_request(
+                "GROUP principals cannot authenticate with bearer tokens",
+            ));
+        }
+        let runtime =
+            state.providers.get(&provider).ok_or_else(|| ApiError::invalid_provider(&provider))?;
+        let identity = runtime
+            .adapter
+            .authenticate_bearer(&request.subject_token, request.kind)
+            .await
+            .map_err(ApiError::provider)?;
+        let principal = JitPrincipalDiscovery::new(state.linking.clone(), state.identities.clone())
+            .discover(&identity, request.kind)
+            .await
+            .map_err(ApiError::linking)?;
+        let access_token = issue_token(
+            state.signing_key.as_ref().ok_or_else(ApiError::signing_unavailable)?,
+            &state.session,
+            &principal,
+        )?;
+        Ok(Json(LoginResponse {
+            access_token,
+            token_type: "Bearer",
+            expires_in: state.session.ttl.as_secs(),
+            return_uri: String::new(),
+            principal,
+        }))
+    }
+    .await;
+    let outcome = result.as_ref().err().map_or("success", ApiError::metric_outcome);
+    state.metrics.record_flow(
+        &provider,
+        "token_exchange",
+        outcome,
+        started.elapsed().as_secs_f64(),
+    );
+    match &result {
+        Ok(response) => tracing::info!(
+            event = "authguard.authn.token_exchange.succeeded",
+            provider,
+            principal_id = %response.0.principal.principal_id,
+            duration_seconds = started.elapsed().as_secs_f64(),
+            "external OIDC bearer normalized to canonical Principal"
+        ),
+        Err(error) => tracing::warn!(
+            event = "authguard.authn.token_exchange.failed",
+            provider,
+            error_code = error.code,
+            duration_seconds = started.elapsed().as_secs_f64(),
+            "external OIDC bearer normalization failed closed"
+        ),
+    }
+    result
+}
+
+async fn build_providers(
+    config: &AuthnProperties,
+) -> anyhow::Result<BTreeMap<String, ProviderRuntime>> {
     let transport = ReqwestProviderTransport::new(Duration::from_secs(10))?;
-    config
-        .providers
-        .iter()
-        .map(|(provider, config)| {
-            let oauth = match config {
-                ProviderProperties::OAuth2(config) | ProviderProperties::OAuth2Like(config) => {
-                    config
+    let mut providers = BTreeMap::new();
+    for (provider, properties) in &config.providers {
+        let runtime = match properties {
+            ProviderProperties::Oidc(oidc) => {
+                validate_oidc_provider(
+                    provider,
+                    &oidc.issuer,
+                    &oidc.client_id,
+                    &oidc.callback_url,
+                )?;
+                ProviderRuntime {
+                    adapter: Arc::new(OidcProvider::discover(provider, oidc.clone()).await?),
+                    client_id: oidc.client_id.clone(),
+                    client_secret: oidc.client_secret.clone(),
+                    callback_url: oidc.callback_url.clone(),
                 }
-                ProviderProperties::Custom(_) => anyhow::bail!(
-                    "custom provider `{provider}` requires a registered Provider SPI adapter"
-                ),
-            };
-            if oauth.client_id.is_empty()
-                || oauth.client_secret.is_empty()
-                || oauth.callback_url.is_empty()
-            {
-                anyhow::bail!("provider `{provider}` requires clientId, clientSecret, callbackUrl");
             }
-            let adapter: Arc<dyn IProviderAdapter> = match provider.as_str() {
-                "github" => Arc::new(GithubOauth2Provider::new(oauth.clone(), transport.clone())?),
-                "google" => Arc::new(GoogleOauth2Provider::new(oauth.clone(), transport.clone())?),
-                "qq" => Arc::new(QqOauth2Provider::new(oauth.clone(), transport.clone())?),
-                "wechat" => Arc::new(WechatOauth2Provider::new(oauth.clone(), transport.clone())?),
-                _ => Arc::new(OAuthLikeProvider::new(
-                    provider.clone(),
-                    oauth.clone(),
-                    transport.clone(),
-                )?),
-            };
-            Ok((
-                provider.clone(),
+            ProviderProperties::OAuth2(oauth) | ProviderProperties::OAuth2Like(oauth) => {
+                validate_provider_credentials(
+                    provider,
+                    &oauth.client_id,
+                    &oauth.client_secret,
+                    &oauth.callback_url,
+                )?;
+                let adapter: Arc<dyn IProviderAdapter> = match provider.as_str() {
+                    "github" => {
+                        Arc::new(GithubOauth2Provider::new(oauth.clone(), transport.clone())?)
+                    }
+                    "google" => {
+                        Arc::new(GoogleOauth2Provider::new(oauth.clone(), transport.clone())?)
+                    }
+                    "qq" => Arc::new(QqOauth2Provider::new(oauth.clone(), transport.clone())?),
+                    "wechat" => {
+                        Arc::new(WechatOauth2Provider::new(oauth.clone(), transport.clone())?)
+                    }
+                    _ => Arc::new(OAuthLikeProvider::new(
+                        provider.clone(),
+                        oauth.clone(),
+                        transport.clone(),
+                    )?),
+                };
                 ProviderRuntime {
                     adapter,
                     client_id: oauth.client_id.clone(),
                     client_secret: oauth.client_secret.clone(),
                     callback_url: oauth.callback_url.clone(),
-                },
-            ))
-        })
-        .collect()
+                }
+            }
+            ProviderProperties::Custom(_) => anyhow::bail!(
+                "custom provider `{provider}` requires a registered Provider SPI adapter"
+            ),
+        };
+        providers.insert(provider.clone(), runtime);
+    }
+    Ok(providers)
+}
+
+fn validate_provider_credentials(
+    provider: &str,
+    client_id: &str,
+    client_secret: &str,
+    callback_url: &str,
+) -> anyhow::Result<()> {
+    if client_id.is_empty() || client_secret.is_empty() || callback_url.is_empty() {
+        anyhow::bail!("provider `{provider}` requires clientId, clientSecret, callbackUrl");
+    }
+    Ok(())
+}
+
+fn validate_oidc_provider(
+    provider: &str,
+    issuer: &str,
+    client_id: &str,
+    callback_url: &str,
+) -> anyhow::Result<()> {
+    if issuer.is_empty() || client_id.is_empty() || callback_url.is_empty() {
+        anyhow::bail!("OIDC provider `{provider}` requires issuer, clientId, callbackUrl");
+    }
+    Ok(())
 }
 
 fn load_session_key(
@@ -306,7 +430,12 @@ fn issue_token(
     principal: &authguard_common::AuthenticatedPrincipalContext,
 ) -> Result<String, ApiError> {
     let now = epoch_seconds();
-    let mut claims = serde_json::Map::from_iter([
+    let mut claims = principal
+        .trusted_claims
+        .iter()
+        .map(|(name, value)| (name.clone(), json!(value)))
+        .collect::<serde_json::Map<_, _>>();
+    claims.extend([
         ("iss".to_string(), json!(session.issuer)),
         ("aud".to_string(), json!(session.audience)),
         ("sub".to_string(), json!(principal.principal_id)),
@@ -319,9 +448,6 @@ fn issue_token(
     ]);
     if let Some(acr) = &principal.acr {
         claims.insert("acr".to_string(), json!(acr));
-    }
-    for (name, value) in &principal.trusted_claims {
-        claims.insert(name.clone(), json!(value));
     }
     let payload =
         serde_json::to_vec(&Value::Object(claims)).map_err(|_| ApiError::signing_unavailable())?;

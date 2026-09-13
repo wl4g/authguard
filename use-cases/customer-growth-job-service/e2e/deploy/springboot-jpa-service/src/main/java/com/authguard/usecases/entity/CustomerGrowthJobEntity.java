@@ -6,7 +6,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
 @Entity
-@Table(name = "customer_growth_jobs")
+@Table(name = "e2e_authguard_customer_growth_jobs")
 public class CustomerGrowthJobEntity {
   @Id private Long id;
 

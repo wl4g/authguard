@@ -6,11 +6,11 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
-    app.kubernetes.io/component: e2e-jaeger
+    app.kubernetes.io/component: e2e-authguard-jaeger
 spec:
   selector:
     app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/component: e2e-jaeger
+    app.kubernetes.io/component: e2e-authguard-jaeger
   ports:
     - name: otlp-grpc
       appProtocol: grpc
@@ -35,18 +35,18 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
-    app.kubernetes.io/component: e2e-jaeger
+    app.kubernetes.io/component: e2e-authguard-jaeger
 spec:
   replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/instance: {{ .Release.Name }}
-      app.kubernetes.io/component: e2e-jaeger
+      app.kubernetes.io/component: e2e-authguard-jaeger
   template:
     metadata:
       labels:
         app.kubernetes.io/instance: {{ .Release.Name }}
-        app.kubernetes.io/component: e2e-jaeger
+        app.kubernetes.io/component: e2e-authguard-jaeger
     spec:
       automountServiceAccountToken: false
       securityContext:

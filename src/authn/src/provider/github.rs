@@ -106,6 +106,8 @@ mod tests {
                 redirect_uri: "https://app.example/callback".to_string(),
                 client_id: "client".to_string(),
                 client_secret: "secret".to_string(),
+                nonce: None,
+                pkce_verifier: None,
             })
             .await
             .expect("authenticate");

@@ -33,12 +33,14 @@ impl<T: ProviderTransport> IProviderAdapter for WechatOauth2Provider<T> {
         redirect_uri: &str,
         state: &str,
     ) -> Result<reqwest::Url, ProviderError> {
-        self.0.authorization_url_with_client_id_parameter(
+        let mut url = self.0.authorization_url_with_client_id_parameter(
             client_id,
             redirect_uri,
             state,
             WECHAT_CLIENT_ID,
-        )
+        )?;
+        url.set_fragment(Some("wechat_redirect"));
+        Ok(url)
     }
 
     async fn authenticate(
@@ -128,6 +130,7 @@ mod tests {
         let query = url.query_pairs().into_owned().collect::<BTreeMap<_, _>>();
         assert_eq!(query.get("appid").map(String::as_str), Some("wx-app-id"));
         assert!(!query.contains_key("client_id"));
+        assert_eq!(url.fragment(), Some("wechat_redirect"));
 
         let identity = adapter
             .authenticate(OAuthLikeCallback {
@@ -135,6 +138,8 @@ mod tests {
                 redirect_uri: "https://app.example/callback".to_string(),
                 client_id: "wx-app-id".to_string(),
                 client_secret: "wx-secret".to_string(),
+                nonce: None,
+                pkce_verifier: None,
             })
             .await
             .expect("authenticate");

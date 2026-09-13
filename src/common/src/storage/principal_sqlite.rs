@@ -7,12 +7,17 @@ use async_trait::async_trait;
 use sqlx::QueryBuilder;
 
 use super::authn::{IdentityBindingRepository, IdentityRepositoryError};
-use super::authz::{AuthzSqliteRepository, PrincipalReferenced, PrincipalRepository};
+use super::authz::{
+    AuthzSqliteRepository, PrincipalIdentityConflict, PrincipalReferenced, PrincipalRepository,
+};
 use super::base_sqlite::{
     sqlite_delete, sqlite_insert, sqlite_select, sqlite_update, sqlite_upsert,
 };
 use super::SqliteRepository;
-use crate::model::{ExternalIdentity, ExternalIdentityKey, IamPrincipalInfo, PrincipalStatus};
+use crate::model::{
+    ExternalIdentity, ExternalIdentityKey, IamPrincipalIdentityInfo, IamPrincipalInfo,
+    PrincipalStatus,
+};
 
 #[derive(Debug)]
 pub struct AuthnSqliteRepository {
@@ -173,6 +178,51 @@ impl PrincipalRepository for AuthzSqliteRepository {
         self.get(&principal.id).await?.context("upserted IAM principal is missing")
     }
 
+    async fn upsert_with_identity(
+        &self,
+        principal: &IamPrincipalInfo,
+        identity: &IamPrincipalIdentityInfo,
+    ) -> anyhow::Result<IamPrincipalInfo> {
+        validate_principal(principal)?;
+        let mut transaction = self.pool.begin().await?;
+        sqlx::query(
+            "INSERT INTO iam_principal(\
+                id, kind, display_name, status, authorization_state, last_seen_at\
+             ) VALUES (?, ?, ?, ?, JSON(?), CURRENT_TIMESTAMP) \
+             ON CONFLICT(id) DO UPDATE SET \
+                kind = excluded.kind, display_name = excluded.display_name, \
+                status = excluded.status, authorization_state = excluded.authorization_state, \
+                last_seen_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP",
+        )
+        .bind(&principal.id)
+        .bind(principal.kind.as_str())
+        .bind(&principal.display_name)
+        .bind(principal.status.as_str())
+        .bind(serde_json::to_string(&principal.authorization_state)?)
+        .execute(&mut *transaction)
+        .await?;
+        let bound = sqlx::query(
+            "INSERT INTO iam_principal_identity(\
+                principal_id, provider, issuer, subject, claims, last_authenticated_at\
+             ) VALUES (?, ?, ?, ?, JSON(?), CURRENT_TIMESTAMP) \
+             ON CONFLICT(provider, issuer, subject) DO UPDATE SET \
+                claims = excluded.claims, last_authenticated_at = CURRENT_TIMESTAMP \
+             WHERE iam_principal_identity.principal_id = excluded.principal_id",
+        )
+        .bind(&identity.principal_id)
+        .bind(&identity.provider)
+        .bind(&identity.issuer)
+        .bind(&identity.subject)
+        .bind(serde_json::to_string(&identity.claims)?)
+        .execute(&mut *transaction)
+        .await?;
+        if bound.rows_affected() != 1 {
+            return Err(PrincipalIdentityConflict.into());
+        }
+        transaction.commit().await?;
+        self.get(&principal.id).await?.context("upserted IAM principal is missing")
+    }
+
     async fn get(&self, id: &str) -> anyhow::Result<Option<IamPrincipalInfo>> {
         Ok(sqlite_select!(
             optional & self.pool,
@@ -181,6 +231,40 @@ impl PrincipalRepository for AuthzSqliteRepository {
                     JSON(authorization_state) AS authorization_state \
              FROM iam_principal WHERE id = ?",
             id,
+        )?)
+    }
+
+    async fn find_by_identity(
+        &self,
+        identity: &ExternalIdentityKey,
+    ) -> anyhow::Result<Option<IamPrincipalInfo>> {
+        Ok(sqlite_select!(
+            optional & self.pool,
+            IamPrincipalInfo,
+            "SELECT p.id, p.kind, p.display_name, p.status, \
+                    JSON(p.authorization_state) AS authorization_state \
+             FROM iam_principal p \
+             JOIN iam_principal_identity i ON i.principal_id = p.id \
+             WHERE i.provider = ? AND i.issuer = ? AND i.subject = ?",
+            &identity.provider,
+            &identity.issuer,
+            &identity.subject,
+        )?)
+    }
+
+    async fn get_identity(
+        &self,
+        principal_id: &str,
+        provider: &str,
+    ) -> anyhow::Result<Option<IamPrincipalIdentityInfo>> {
+        Ok(sqlite_select!(
+            optional & self.pool,
+            IamPrincipalIdentityInfo,
+            "SELECT principal_id, provider, issuer, subject, JSON(claims) AS claims \
+             FROM iam_principal_identity \
+             WHERE principal_id = ? AND provider = ?",
+            principal_id,
+            provider,
         )?)
     }
 

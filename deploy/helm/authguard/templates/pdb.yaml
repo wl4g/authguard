@@ -1,4 +1,4 @@
-{{- if .Values.authguard.authz.disruptionBudget.enabled }}
+{{- if and .Values.authguard.authz.enabled .Values.authguard.authz.disruptionBudget.enabled }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:

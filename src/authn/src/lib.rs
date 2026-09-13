@@ -16,8 +16,8 @@ pub use authguard_common::storage;
 pub use principal::jit as account_linking;
 
 pub use config::{
-    AccountLinkingProperties, AuthnProperties, LinkingStrategy, ProviderProperties,
-    SessionProperties,
+    AccountLinkingProperties, AuthnProperties, LinkingStrategy, OidcProviderProperties,
+    ProviderProperties, SessionProperties,
 };
 pub use model::{
     AuthenticatedPrincipalContext, ExternalIdentity, ExternalIdentityKey, IamPrincipalInfo,
@@ -26,7 +26,7 @@ pub use model::{
 pub use principal::{AccountLinkingError, AccountLinkingService, JitPrincipalDiscovery};
 pub use provider::{
     GithubOauth2Provider, GoogleOauth2Provider, IProviderAdapter, OAuthLikeCallback,
-    OAuthLikeProvider, ProviderError, ProviderTransport, QqOauth2Provider,
+    OAuthLikeProvider, OidcProvider, ProviderError, ProviderTransport, QqOauth2Provider,
     ReqwestProviderTransport, WechatOauth2Provider,
 };
 pub use storage::{

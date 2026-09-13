@@ -1,4 +1,4 @@
-"""Phase 23: verify AuthN OAuth-like normalization and account linking."""
+"""Phase 21: verify DB, logs, metrics, Jaeger, cache, and runtime health."""
 
 from __future__ import annotations
 
@@ -14,13 +14,13 @@ def verify(context: RunContext) -> VerificationResult:
     environment = KubernetesE2E(context)
     passed = False
     try:
-        environment.verify_authentication()
+        environment.verify_runtime_evidence()
         passed = True
     except Exception:
         environment.details.append(traceback.format_exc())
     return VerificationResult(
-        scenario_id="23",
-        title="k3s phase 3/5: AuthN callback, normalization, linking, and tracing",
+        scenario_id="21",
+        title="Observability: PostgreSQL, logs, metrics, Jaeger, and runtime health",
         passed=passed,
         duration_seconds=time.monotonic() - started,
         details=environment.details,

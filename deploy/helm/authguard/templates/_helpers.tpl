@@ -45,8 +45,8 @@ app.kubernetes.io/component: authn
 {{- lower (default "kubernetes" .Values.secrets.provider) -}}
 {{- end -}}
 
-{{- define "authguard.jwtJwksConfigMapName" -}}
-{{- default (printf "%s-jwt-jwks" (include "authguard.fullname" .)) .Values.envoy_gateway.ext_authz.jwt.localJWKS.existingConfigMap -}}
+{{- define "authguard.canonicalJwksConfigMapName" -}}
+{{- default (printf "%s-canonical-jwks" (include "authguard.fullname" .)) .Values.authguard.authn.canonical_jwt.local_jwks.existing_config_map -}}
 {{- end -}}
 
 {{- define "authguard.redisFullname" -}}

@@ -34,9 +34,5 @@ opentelemetry_sdk.workspace = true
 rusqlite.workspace = true
 sqlx.workspace = true
 
-[[bin]]
-name = "authguard-authz"
-path = "src/main.rs"
-
 [lints]
 workspace = true

@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS iam_authn_flow (
   state_hash TEXT PRIMARY KEY CHECK (TRIM(state_hash) <> ''),
   provider TEXT NOT NULL CHECK (TRIM(provider) <> ''),
   return_uri TEXT NOT NULL DEFAULT '',
+  nonce TEXT,
+  pkce_verifier TEXT,
   expires_at_epoch_seconds BIGINT NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

@@ -2,7 +2,7 @@
 {{- $ext := .Values.envoy_gateway.ext_authz -}}
 {{- $gateway := $ext.gateway -}}
 {{- $tracing := $ext.tracing -}}
-{{- if and $ext.enabled $gateway.create }}
+{{- if $gateway.create }}
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
 metadata:
@@ -23,9 +23,11 @@ spec:
       envoyDeployment:
         container:
           image: {{ $envoyGateway.global.images.envoyProxy.image }}
+  {{- if $ext.enabled }}
   filterOrder:
     - name: envoy.filters.http.jwt_authn
       before: envoy.filters.http.ext_authz
+  {{- end }}
   {{- if $tracing.enabled }}
   telemetry:
     tracing:

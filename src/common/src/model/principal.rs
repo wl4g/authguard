@@ -20,7 +20,7 @@ pub struct IamPrincipalInfo {
 }
 
 /// Binding persisted in `iam_principal_identity`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::FromRow)]
 pub struct IamPrincipalIdentityInfo {
     pub principal_id: String,
     pub provider: String,

@@ -22,7 +22,7 @@ func NewCustomerGrowthJobRepository(db *sqlx.DB) *CustomerGrowthJobRepository {
 }
 
 func (r *CustomerGrowthJobRepository) Create(job entity.CustomerGrowthJobEntity) (entity.CustomerGrowthJobEntity, error) {
-	query := r.db.Rebind("INSERT INTO customer_growth_jobs(id, region, tenant_id, workspace_id, project_id, job_id, display_name, status, owner_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+	query := r.db.Rebind("INSERT INTO e2e_authguard_customer_growth_jobs(id, region, tenant_id, workspace_id, project_id, job_id, display_name, status, owner_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	_, err := r.db.Exec(
 		query,
 		job.ID, job.Region, job.TenantID, job.WorkspaceID, job.ProjectID, job.JobID, job.DisplayName, job.Status, job.OwnerUserID,
@@ -33,7 +33,7 @@ func (r *CustomerGrowthJobRepository) Create(job entity.CustomerGrowthJobEntity)
 func (r *CustomerGrowthJobRepository) FindByIDVisible(scope model.SqlScope, id int64) (entity.CustomerGrowthJobEntity, bool, error) {
 	var job entity.CustomerGrowthJobEntity
 	args := append([]any{id}, scope.Args...)
-	query := r.db.Rebind("SELECT * FROM customer_growth_jobs WHERE id = ? AND (" + scope.Where + ")")
+	query := r.db.Rebind("SELECT * FROM e2e_authguard_customer_growth_jobs WHERE id = ? AND (" + scope.Where + ")")
 	err := r.db.Get(&job, query, args...)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -47,7 +47,7 @@ func (r *CustomerGrowthJobRepository) FindByIDVisible(scope model.SqlScope, id i
 func (r *CustomerGrowthJobRepository) UpdateVisible(scope model.SqlScope, job entity.CustomerGrowthJobEntity) (entity.CustomerGrowthJobEntity, error) {
 	args := []any{job.DisplayName, job.Status, job.OwnerUserID, job.ID}
 	args = append(args, scope.Args...)
-	query := r.db.Rebind("UPDATE customer_growth_jobs SET display_name = ?, status = ?, owner_user_id = ? WHERE id = ? AND (" + scope.Where + ")")
+	query := r.db.Rebind("UPDATE e2e_authguard_customer_growth_jobs SET display_name = ?, status = ?, owner_user_id = ? WHERE id = ? AND (" + scope.Where + ")")
 	result, err := r.db.Exec(
 		query,
 		args...,
@@ -67,7 +67,7 @@ func (r *CustomerGrowthJobRepository) UpdateVisible(scope model.SqlScope, job en
 
 func (r *CustomerGrowthJobRepository) DeleteByIDVisible(scope model.SqlScope, id int64) error {
 	args := append([]any{id}, scope.Args...)
-	query := r.db.Rebind("DELETE FROM customer_growth_jobs WHERE id = ? AND (" + scope.Where + ")")
+	query := r.db.Rebind("DELETE FROM e2e_authguard_customer_growth_jobs WHERE id = ? AND (" + scope.Where + ")")
 	result, err := r.db.Exec(query, args...)
 	if err != nil {
 		return err
@@ -105,7 +105,7 @@ func (r *CustomerGrowthJobRepository) FindVisibleJobs(scope model.SqlScope, crit
 	addEquals(&clauses, &args, "project_id", criteria.ProjectID)
 	addEquals(&clauses, &args, "status", criteria.Status)
 	addEquals(&clauses, &args, "owner_user_id", criteria.OwnerUserID)
-	query := r.db.Rebind("SELECT * FROM customer_growth_jobs WHERE " + strings.Join(clauses, " AND ") +
+	query := r.db.Rebind("SELECT * FROM e2e_authguard_customer_growth_jobs WHERE " + strings.Join(clauses, " AND ") +
 		" ORDER BY region, tenant_id, workspace_id, project_id, job_id",
 	)
 	err := r.db.Select(

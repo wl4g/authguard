@@ -23,7 +23,7 @@ def archive_reports() -> Path | None:
     ]
     if not current:
         return None
-    archive = REPORTS_DIR / datetime.now().strftime("archived-%Y%m%d-%H%M%S")
+    archive = REPORTS_DIR / datetime.now().strftime("archived-%Y%m%d-%H%M%S-%f")
     archive.mkdir()
     for path in current:
         shutil.move(str(path), archive / path.name)

@@ -11,7 +11,7 @@ Protected workloads resolve x-authguard-scope-token with:
   AUTHGUARD_GRPC_TLS=false
 
 Management endpoints are available only on Service port {{ .Values.authguard.authz.service.mgmtPort }}.
-Configure a real policy and gateway-authenticated OIDC/JWT identity before routing production traffic.
+Configure AuthN Providers, canonical JWT keys, and a real policy before routing production traffic.
 Import the authorization policy into Authguard storage as a post-deploy step
 (POST /api/v1/policy) — it is not part of authguard.authguard-config.
 

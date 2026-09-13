@@ -35,13 +35,13 @@ AuthGuard also does not replace Envoy Gateway or copy business resources into it
 
 ## 3. Component responsibilities
 
-### 3.1 Envoy Gateway: edge and PEP
+### 3.1 Envoy Gateway: edge and **PEP(Policy Enforcement Point)**
 
-Envoy Gateway owns the common entry point for Biz UI login requests, callbacks, and business traffic. It owns TLS, routing, traffic policy, standard OIDC/JWT capabilities, and the hot-path `jwt_authn -> ext_authz(authguard-authz)` chain.
+Envoy Gateway owns the common entry point for Biz UI login requests, callbacks, and business traffic. It owns TLS, routing, traffic policy, canonical JWT verification, and the hot-path `jwt_authn -> ext_authz(authguard-authz)` chain.
 
 For requests carrying an AuthN-issued canonical session/token, Envoy verifies signature, issuer, audience, and lifetime before forwarding the trusted token to AuthZ. AuthZ does not implement OAuth protocols or repeat provider authentication.
 
-Standard OIDC should use Envoy Gateway's native OIDC/JWT support first. AuthN maps the verified external identity to a canonical Principal. Non-standard OAuth2, OAuth2-like, and proprietary providers still enter through Envoy, while all protocol variance remains inside AuthN.
+Standard OIDC authorization redirects, callbacks, discovery, token exchange, ID Token verification, and optional UserInfo run in AuthN, exactly like OAuth2-like and proprietary Provider flows. Envoy never receives provider authorization codes or provider tokens; it verifies only AuthN-issued canonical JWTs on business routes.
 
 ### 3.2 authguard-authn
 
@@ -83,9 +83,7 @@ AuthZ owns only authorization concerns:
 
 AuthZ never processes OAuth callbacks, passwords, LDAP login binds, GitHub `/user`, WeChat userinfo, DSP tokens, provider access tokens, authorization codes, login sessions, or account linking.
 
-Keycloak/LDAP/SCIM discovery can remain an optional AuthZ control-plane integration for candidate search and authorization-side materialization. Materialization requires the canonical `principal_id` already resolved by AuthN. These connectors never participate in the AuthZ hot path.
-
-SCIM ingestion is an HTTP push boundary. SCIM defines HTTP resource provisioning; it does not define a WebSocket or long-poll delivery channel. When an upstream IdP cannot push changes, a separate connector or reconciliation agent may poll that IdP and push normalized SCIM events to AuthGuard. AuthZ does not own a generic discovery refresh scheduler.
+LDAP, Keycloak, and custom directory connectors pull candidates when an administrator pre-authorizes a Principal; SCIM complements them by pushing later employee and group lifecycle changes through `/scim/v2/Users` and `/scim/v2/Groups` into the same canonical Principal projection. Neither direction participates in the AuthZ hot path. SCIM is HTTP provisioning, not a WebSocket or long-poll channel; an upstream that cannot push must use an external reconciliation connector rather than an AuthZ refresh scheduler.
 
 ## 4. Principal is not an external identity
 
@@ -180,6 +178,24 @@ A Provider entry answers only:
 ```yaml
 authn:
   providers:
+    corporate-oidc:
+      type: oidc
+      issuer: https://sso.example.com/realms/corporate
+      clientId: authguard
+      clientSecret: ${AUTHGUARD_CORPORATE_OIDC_CLIENT_SECRET}
+      callbackUrl: https://app.example.com/auth/v1/providers/corporate-oidc/callback
+      scopes: [openid, profile, email]
+      userinfo: true
+      # Optional RFC 7662 path for WORKLOAD bearer-token translation. Browser
+      # Authorization Code login still validates its signed ID Token + nonce.
+      tokenIntrospection:
+        endpoint: https://sso.example.com/realms/corporate/protocol/openid-connect/token/introspect
+        acceptedAudiences: [customer-growth-job-service]
+      identity:
+        subject: $.sub
+        username: $.preferred_username
+        email: $.email
+
     github:
       type: oauth2
       issuer: https://github.com
@@ -227,6 +243,13 @@ authn:
 Simple field paths such as `$.data.user.id` are supported. Conditional expressions, functions, scripts, and a general-purpose DSL are intentionally excluded.
 
 Provider entries must not declare `authoritative`, `secondary`, `canCreatePrincipal`, or `canLink`. Account governance belongs only to `accountLinking`.
+
+For `type: oidc`, browser login uses discovery, Authorization Code + PKCE,
+nonce-bound ID Token verification, and optional UserInfo. UserInfo is not an ID
+Token. A WORKLOAD token-exchange request uses RFC 7662 introspection when
+`tokenIntrospection` is configured and requires an exact issuer plus one
+explicitly accepted audience; AuthN never treats an unverified JWT payload as
+identity.
 
 ### 5.1 Minimal Provider SPI
 
@@ -292,13 +315,18 @@ AuthN selects the correct source, extracts a stable subject, and normalizes imme
 
 ```text
 Enterprise OIDC / Keycloak / Entra
-  -> Envoy Gateway native OIDC/JWT
-  -> AuthN identity normalization / binding lookup
+  -> Envoy Gateway -> authguard-authn authorize/callback
+  -> OIDC discovery / code exchange / ID Token verification / optional UserInfo
+  -> ExternalIdentity -> binding lookup
   -> canonical session/token
   -> Envoy jwt_authn
   -> authguard-authz ext_authz
   -> Biz Service
 ```
+
+For non-browser workloads, AuthN may normalize an external enterprise bearer
+through its bounded token-translation endpoint and then issue the same
+canonical Principal token. The external token never enters AuthZ.
 
 ### 8.2 GitHub / WeChat
 
@@ -385,7 +413,8 @@ src/authz                        authguard-authz crate
   route/authorization.rs        Envoy ext_authz/access-context gRPC entry points
   handler/{authorization,principal}.rs
                                 authorization catalog and Principal use cases
-  handler/envoy_authz.rs        ext_authz evaluation and scope delivery
+  handler/authorization.rs      ext_authz evaluation and scope delivery
+  handler/policy.rs             authorization catalog CRUD and compilation
   principal/{ldap,keycloak,scim}/
                                 optional 2B control-plane federation connectors
   server.rs                     process initialization and listener lifecycle

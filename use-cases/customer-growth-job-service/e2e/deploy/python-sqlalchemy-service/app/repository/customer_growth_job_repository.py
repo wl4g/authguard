@@ -13,7 +13,7 @@ class CustomerGrowthJobRepository:
     def create(self, job: CustomerGrowthJobEntity) -> CustomerGrowthJobEntity:
         self._connection.exec_driver_sql(
             self._sql(
-                "INSERT INTO customer_growth_jobs(id, region, tenant_id, workspace_id, project_id, job_id, display_name, status, owner_user_id) "
+                "INSERT INTO e2e_authguard_customer_growth_jobs(id, region, tenant_id, workspace_id, project_id, job_id, display_name, status, owner_user_id) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
             ),
             (
@@ -32,7 +32,7 @@ class CustomerGrowthJobRepository:
 
     def find_by_id_visible(self, scope: SqlScope, job_id: int) -> CustomerGrowthJobEntity | None:
         row = self._connection.exec_driver_sql(
-            self._sql(f"SELECT * FROM customer_growth_jobs WHERE id = ? AND ({scope.where})"),
+            self._sql(f"SELECT * FROM e2e_authguard_customer_growth_jobs WHERE id = ? AND ({scope.where})"),
             (job_id, *scope.args),
         ).fetchone()
         return _row_to_entity(row) if row is not None else None
@@ -40,7 +40,7 @@ class CustomerGrowthJobRepository:
     def update_visible(self, scope: SqlScope, job: CustomerGrowthJobEntity) -> CustomerGrowthJobEntity:
         result = self._connection.exec_driver_sql(
             self._sql(
-                "UPDATE customer_growth_jobs SET display_name = ?, status = ?, owner_user_id = ? "
+                "UPDATE e2e_authguard_customer_growth_jobs SET display_name = ?, status = ?, owner_user_id = ? "
                 f"WHERE id = ? AND ({scope.where})"
             ),
             (job.display_name, job.status, job.owner_user_id, job.id, *scope.args),
@@ -51,7 +51,7 @@ class CustomerGrowthJobRepository:
 
     def delete_by_id_visible(self, scope: SqlScope, job_id: int) -> None:
         result = self._connection.exec_driver_sql(
-            self._sql(f"DELETE FROM customer_growth_jobs WHERE id = ? AND ({scope.where})"),
+            self._sql(f"DELETE FROM e2e_authguard_customer_growth_jobs WHERE id = ? AND ({scope.where})"),
             (job_id, *scope.args),
         )
         if result.rowcount == 0:
@@ -93,7 +93,7 @@ class CustomerGrowthJobRepository:
         rows = self._connection.exec_driver_sql(
             self._sql(
                 "SELECT * "
-                f"FROM customer_growth_jobs WHERE {' AND '.join(clauses)} "
+                f"FROM e2e_authguard_customer_growth_jobs WHERE {' AND '.join(clauses)} "
                 "ORDER BY region, tenant_id, workspace_id, project_id, job_id"
             ),
             tuple(args),

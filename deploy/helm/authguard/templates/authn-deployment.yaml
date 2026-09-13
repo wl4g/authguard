@@ -38,7 +38,7 @@ spec:
         - name: authguard-authn
           image: "{{ .Values.authguard.authn.image.repository }}:{{ .Values.authguard.authn.image.tag }}"
           imagePullPolicy: {{ .Values.authguard.authn.image.pullPolicy }}
-          command: ["/usr/local/bin/authguard-authn"]
+          args: ["authn"]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -46,6 +46,8 @@ spec:
           env:
             - name: AUTHGUARD_CONFIG_FILE
               value: /etc/authguard/authguard.yaml
+            - name: AUTHGUARD__SERVER__SERVICE_NAME
+              value: authguard-authn
             - name: AUTHGUARD_AUTHN_BIND
               value: 0.0.0.0:{{ .Values.authguard.authn.service.port }}
             {{- if or (eq $provider "gcp") (eq $provider "aws") }}

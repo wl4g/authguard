@@ -1,0 +1,12 @@
+{{- $ext := .Values.envoy_gateway.ext_authz -}}
+{{- $canonical := .Values.authguard.authn.canonical_jwt -}}
+{{- if and $ext.enabled (not $canonical.remote_jwks.uri) (not $canonical.local_jwks.existing_config_map) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "authguard.canonicalJwksConfigMapName" . }}
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+data:
+  jwks: {{ required "authguard.authn.canonical_jwt.local_jwks.inline is required when remote_jwks.uri and existing_config_map are empty" $canonical.local_jwks.inline | quote }}
+{{- end }}

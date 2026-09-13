@@ -1,228 +1,33 @@
-use std::collections::BTreeMap;
+//! RFC-compatible SCIM 2.0 User and Group provisioning routes.
+//!
+//! Protocol references:
+//! - RFC 7644 resource endpoints and methods:
+//!   <https://www.rfc-editor.org/rfc/rfc7644.html#section-3.2>
+//! - RFC 7644 create, retrieve, replace, PATCH, and delete semantics:
+//!   <https://www.rfc-editor.org/rfc/rfc7644.html#section-3.3>
+//!   <https://www.rfc-editor.org/rfc/rfc7644.html#section-3.4>
+//!   <https://www.rfc-editor.org/rfc/rfc7644.html#section-3.5>
+//!   <https://www.rfc-editor.org/rfc/rfc7644.html#section-3.6>
+//! - RFC 7643 User and Group core schemas:
+//!   <https://www.rfc-editor.org/rfc/rfc7643.html#section-4.1>
+//!   <https://www.rfc-editor.org/rfc/rfc7643.html#section-4.2>
+//!
+//! GitHub Enterprise SCIM integration reference:
+//! <https://docs.github.com/en/enterprise-cloud@latest/rest/authentication/permissions-required-for-github-apps?apiVersion=2026-03-10#enterprise-permissions-for-enterprise-scim>
+//!
+//! `AuthGuard` supports the bounded provisioning profile implemented below;
+//! unsupported complex PATCH paths and filters fail with a SCIM error instead
+//! of being silently accepted.
 
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+#[path = "scim.rs"]
+mod implementation;
+mod model;
 
-use super::{
-    ExternalPrincipalRef, IPrincipalDiscovery, PrincipalDiscoveryError, PrincipalProjection,
+pub use implementation::ScimPrincipalDiscovery;
+pub(crate) use implementation::{
+    ScimProjectionEvent, ScimProvisioningRequest, ScimResource, ScimStoredResource,
 };
-use crate::model::PrincipalKind;
-
-/// A normalized subset of the SCIM User resource.
-///
-/// Schema: RFC 7643 <https://www.rfc-editor.org/rfc/rfc7643.html>.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ScimUserResource {
-    pub id: String,
-    /// Canonical external identity key (normally the OIDC `sub`).
-    ///
-    /// RFC 7643 `externalId`: <https://www.rfc-editor.org/rfc/rfc7643.html#section-3.1>
-    #[serde(default, rename = "externalId")]
-    pub external_id: Option<String>,
-    #[serde(rename = "userName")]
-    pub user_name: String,
-    #[serde(default)]
-    pub display_name: Option<String>,
-    #[serde(default)]
-    pub active: Option<bool>,
-    #[serde(default)]
-    pub emails: Vec<ScimEmail>,
-    #[serde(default)]
-    pub attributes: BTreeMap<String, Value>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ScimEmail {
-    pub value: String,
-    #[serde(default)]
-    pub primary: bool,
-}
-
-/// A normalized subset of the SCIM Group resource.
-///
-/// Schema: RFC 7643 <https://www.rfc-editor.org/rfc/rfc7643.html>.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ScimGroupResource {
-    pub id: String,
-    /// Canonical provider group identifier when it differs from the SCIM resource id.
-    #[serde(default, rename = "externalId")]
-    pub external_id: Option<String>,
-    #[serde(rename = "displayName")]
-    pub display_name: String,
-    #[serde(default)]
-    pub attributes: BTreeMap<String, Value>,
-}
-
-/// One SCIM provisioning change accepted by Authguard.
-///
-/// Protocol: RFC 7644 <https://www.rfc-editor.org/rfc/rfc7644.html>.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "operation", rename_all = "snake_case")]
-pub enum ScimProvisioningRequest {
-    UpsertUser { principal_id: String, resource: ScimUserResource },
-    UpsertGroup { principal_id: String, resource: ScimGroupResource },
-    Delete { principal_id: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ScimProjectionEvent {
-    Upsert { principal_id: String, projection: PrincipalProjection },
-    Delete { principal_id: String },
-}
-
-/// Strongly typed SCIM discovery/provisioning adapter.
-///
-/// It only normalizes protocol resources. Persistence and authorization-cache
-/// invalidation remain the handler's responsibility.
-///
-/// SCIM is the industry-standard provisioning protocol and is widely adopted
-/// across identity vendors: AWS IAM Identity Center supports automatic user
-/// provisioning via SCIM, for example:
-/// <https://docs.aws.amazon.com/singlesignon/latest/userguide/provision-automatically.html>
-#[derive(Debug, Clone)]
-pub struct ScimPrincipalDiscovery {
-    discovery_id: String,
-    issuer: String,
-}
-
-impl ScimPrincipalDiscovery {
-    /// Creates a SCIM adapter for one authoritative external issuer.
-    ///
-    /// # Errors
-    ///
-    /// Rejects blank identifiers or issuers.
-    pub fn new(
-        discovery_id: impl Into<String>,
-        issuer: impl Into<String>,
-    ) -> Result<Self, PrincipalDiscoveryError> {
-        let discovery_id = discovery_id.into();
-        let issuer = issuer.into();
-        if discovery_id.trim().is_empty() || discovery_id.trim() != discovery_id {
-            return Err(PrincipalDiscoveryError::InvalidConfiguration(
-                "SCIM discovery id must be canonical and non-empty".to_string(),
-            ));
-        }
-        if issuer.trim().is_empty() || issuer.trim() != issuer {
-            return Err(PrincipalDiscoveryError::InvalidConfiguration(
-                "SCIM issuer must be canonical and non-empty".to_string(),
-            ));
-        }
-        Ok(Self { discovery_id, issuer })
-    }
-
-    /// Normalizes one SCIM change through the common discovery contract.
-    ///
-    /// # Errors
-    ///
-    /// Returns a validation error for malformed resources.
-    pub async fn provision(
-        &self,
-        request: ScimProvisioningRequest,
-    ) -> Result<ScimProjectionEvent, PrincipalDiscoveryError> {
-        self.discover(request).await
-    }
-
-    fn reference(&self, external_id: String) -> ExternalPrincipalRef {
-        ExternalPrincipalRef {
-            provider_id: self.discovery_id.clone(),
-            issuer: self.issuer.clone(),
-            external_id,
-        }
-    }
-}
-
-#[async_trait]
-impl IPrincipalDiscovery<ScimProvisioningRequest> for ScimPrincipalDiscovery {
-    type Output = ScimProjectionEvent;
-
-    fn provider(&self) -> &'static str {
-        "SCIM"
-    }
-
-    fn provider_id(&self) -> &str {
-        &self.discovery_id
-    }
-
-    async fn discover(
-        &self,
-        request: ScimProvisioningRequest,
-    ) -> Result<Self::Output, PrincipalDiscoveryError> {
-        match request {
-            ScimProvisioningRequest::UpsertUser { principal_id, resource: user } => {
-                require_identifier("canonical IamPrincipalInfo ID", &principal_id)?;
-                require_identifier("SCIM User id", &user.id)?;
-                require_identifier("SCIM userName", &user.user_name)?;
-                let external_id = user.external_id.as_deref().unwrap_or(&user.id);
-                require_identifier("SCIM User externalId", external_id)?;
-                let display_name = user
-                    .display_name
-                    .filter(|value| !value.trim().is_empty())
-                    .unwrap_or_else(|| user.user_name.clone());
-                let email = user
-                    .emails
-                    .iter()
-                    .find(|email| email.primary)
-                    .or_else(|| user.emails.first())
-                    .map(|email| email.value.clone());
-                Ok(ScimProjectionEvent::Upsert {
-                    principal_id,
-                    projection: PrincipalProjection {
-                        reference: self.reference(external_id.to_string()),
-                        kind: PrincipalKind::User,
-                        display_name,
-                        username: Some(user.user_name),
-                        email,
-                        enabled: user.active.unwrap_or(true),
-                        attributes: user.attributes,
-                    },
-                })
-            }
-            ScimProvisioningRequest::UpsertGroup { principal_id, resource: group } => {
-                require_identifier("canonical IamPrincipalInfo ID", &principal_id)?;
-                require_identifier("SCIM Group id", &group.id)?;
-                require_identifier("SCIM Group displayName", &group.display_name)?;
-                let external_id = group.external_id.as_deref().unwrap_or(&group.id);
-                let external_id = external_id.strip_prefix("group:").unwrap_or(external_id);
-                require_identifier("SCIM Group externalId", external_id)?;
-                Ok(ScimProjectionEvent::Upsert {
-                    principal_id,
-                    projection: PrincipalProjection {
-                        reference: self.reference(format!("group:{external_id}")),
-                        kind: PrincipalKind::Group,
-                        display_name: group.display_name,
-                        username: None,
-                        email: None,
-                        enabled: true,
-                        attributes: group.attributes,
-                    },
-                })
-            }
-            ScimProvisioningRequest::Delete { principal_id } => {
-                require_identifier("canonical IamPrincipalInfo ID", &principal_id)?;
-                Ok(ScimProjectionEvent::Delete { principal_id })
-            }
-        }
-    }
-
-    async fn resolve_principal(
-        &self,
-        _reference: &ExternalPrincipalRef,
-    ) -> Result<Option<PrincipalProjection>, PrincipalDiscoveryError> {
-        Err(PrincipalDiscoveryError::InvalidQuery(
-            "SCIM ingestion does not search external identity stores".to_string(),
-        ))
-    }
-}
-
-fn require_identifier(name: &str, value: &str) -> Result<(), PrincipalDiscoveryError> {
-    if value.trim().is_empty() || value.trim() != value || value.len() > 512 {
-        return Err(PrincipalDiscoveryError::InvalidQuery(format!(
-            "{name} must contain 1 to 512 canonical bytes"
-        )));
-    }
-    Ok(())
-}
+pub use model::*;
 
 #[cfg(test)]
 mod tests;

@@ -18,6 +18,7 @@ struct PolicyRouteState {
     handler: PolicyHandler,
 }
 
+// Implementation of PAP(Policy Administration Point)
 pub struct PolicyRoutes {
     state: PolicyRouteState,
 }

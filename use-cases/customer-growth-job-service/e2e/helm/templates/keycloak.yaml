@@ -27,14 +27,18 @@ stringData:
   # access-context HMAC key is read directly through secret_env.
   AUTHGUARD_KEYCLOAK_CLIENT_SECRET: {{ $clientSecret | quote }}
   AUTHGUARD_LDAP_BIND_PASSWORD: {{ $authguardLdapBindPassword | quote }}
-  AUTHGUARD__AUTHZ__API_TOKEN: {{ required "authguard.apiToken is required" .Values.authguard.apiToken | quote }}
+  AUTHGUARD_GITHUB_CLIENT_SECRET: "e2e-authguard-github-secret"
+  AUTHGUARD_GOOGLE_CLIENT_SECRET: "e2e-authguard-google-secret"
+  AUTHGUARD_WECHAT_CLIENT_SECRET: "e2e-authguard-wechat-secret"
+  AUTHGUARD_QQ_CLIENT_SECRET: "e2e-authguard-qq-secret"
+  AUTHGUARD__STORAGE__POSTGRES__PASSWORD: {{ .Values.postgresql.authguardPassword | quote }}
+  AUTHGUARD_SCIM_API_PASSWORD: {{ required "authguard.apiToken is required" .Values.authguard.apiToken | quote }}
   AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY: {{ .Values.authguard.accessContext.signingKey | quote }}
   # AuthN signs canonical sessions; Envoy receives only the paired public JWKS.
   AUTHGUARD_AUTHN_SESSION_PRIVATE_KEY: |
 {{ required "keycloak.realmSigningPrivateKey must contain the AuthN test signing key" .Values.keycloak.realmSigningPrivateKey | indent 4 }}
-  # base64 of the PKCS#8 PEM: the Authguard resign-key init container
-  # decodes this env var back into private_key_file.
-  AUTHGUARD_RESIGN_TOKEN_PRIVATE_KEY: {{ required "keycloak.resignJwtPrivateKey must contain the resign JWT private key" .Values.keycloak.resignJwtPrivateKey | b64enc | quote }}
+  # Base64 PKCS#8 PEM is consumed directly by authz.resign.private_key_b64.
+  AUTHGUARD__AUTHZ__RESIGN__PRIVATE_KEY_B64: {{ required "keycloak.resignJwtPrivateKey must contain the resign JWT private key" .Values.keycloak.resignJwtPrivateKey | b64enc | quote }}
 ---
 apiVersion: v1
 kind: Secret
@@ -112,11 +116,11 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
-    app.kubernetes.io/component: e2e-keycloak
+    app.kubernetes.io/component: e2e-authguard-keycloak
 spec:
   selector:
     app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/component: e2e-keycloak
+    app.kubernetes.io/component: e2e-authguard-keycloak
   ports:
     - { name: http, port: 8080, targetPort: http }
 ---
@@ -126,18 +130,18 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
-    app.kubernetes.io/component: e2e-keycloak
+    app.kubernetes.io/component: e2e-authguard-keycloak
 spec:
   replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/instance: {{ .Release.Name }}
-      app.kubernetes.io/component: e2e-keycloak
+      app.kubernetes.io/component: e2e-authguard-keycloak
   template:
     metadata:
       labels:
         app.kubernetes.io/instance: {{ .Release.Name }}
-        app.kubernetes.io/component: e2e-keycloak
+        app.kubernetes.io/component: e2e-authguard-keycloak
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -163,13 +167,13 @@ spec:
             - { name: KC_HTTP_ENABLED, value: "true" }
             - { name: KC_HOSTNAME, value: {{ $issuer | quote }} }
             - { name: KC_HOSTNAME_STRICT, value: "false" }
-            - { name: E2E_PRINCIPAL_DISCOVERY_CLIENT_SECRET, valueFrom: { secretKeyRef: { name: {{ $principalSecretName }}, key: AUTHGUARD_KEYCLOAK_CLIENT_SECRET } } }
-            - { name: E2E_WORKLOAD_CLIENT_SECRET, value: {{ .Values.keycloak.workloadClientSecret | quote }} }
+            - { name: E2E_AUTHGUARD_PRINCIPAL_DISCOVERY_CLIENT_SECRET, valueFrom: { secretKeyRef: { name: {{ $principalSecretName }}, key: AUTHGUARD_KEYCLOAK_CLIENT_SECRET } } }
+            - { name: E2E_AUTHGUARD_WORKLOAD_CLIENT_SECRET, value: {{ .Values.keycloak.workloadClientSecret | quote }} }
             # Keycloak substitutes the placeholder into the raw realm JSON, so
             # the pod must see the PEM with \n JSON escapes, not real newlines:
             # replace turns newlines into \n, quote re-escapes the backslashes.
-            - { name: E2E_REALM_SIGNING_PRIVATE_KEY, value: {{ required "keycloak.realmSigningPrivateKey must contain the fixed realm RSA private key" .Values.keycloak.realmSigningPrivateKey | replace "\n" "\\n" | quote }} }
-            - { name: E2E_REALM_SIGNING_CERTIFICATE, value: {{ required "keycloak.realmSigningCertificate must contain the fixed realm RSA certificate" .Values.keycloak.realmSigningCertificate | replace "\n" "\\n" | quote }} }
+            - { name: E2E_AUTHGUARD_REALM_SIGNING_PRIVATE_KEY, value: {{ required "keycloak.realmSigningPrivateKey must contain the fixed realm RSA private key" .Values.keycloak.realmSigningPrivateKey | replace "\n" "\\n" | quote }} }
+            - { name: E2E_AUTHGUARD_REALM_SIGNING_CERTIFICATE, value: {{ required "keycloak.realmSigningCertificate must contain the fixed realm RSA certificate" .Values.keycloak.realmSigningCertificate | replace "\n" "\\n" | quote }} }
             {{- if .Values.jaeger.enabled }}
             - { name: KC_TRACING_ENABLED, value: "true" }
             - { name: KC_TRACING_SAMPLER_TYPE, value: "always_on" }
@@ -202,7 +206,7 @@ spec:
 ---
 # The deterministic realm signing public key as a JWKS, mounted as the
 # localJWKS.existingConfigMap of the Authguard SecurityPolicy. Keycloak
-# imports the same RSA key through E2E_REALM_SIGNING_PRIVATE_KEY, so JWT
+# imports the same RSA key through E2E_AUTHGUARD_REALM_SIGNING_PRIVATE_KEY, so JWT
 # verification never depends on a dynamically generated realm key.
 apiVersion: v1
 kind: ConfigMap

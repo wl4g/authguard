@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"authguard/use-cases/customer-growth-job-service/e2e/deploy/golang-sqlx-service/pkg/dto"
 	"authguard/use-cases/customer-growth-job-service/e2e/deploy/golang-sqlx-service/pkg/repository"
 	"authguard/use-cases/customer-growth-job-service/e2e/deploy/golang-sqlx-service/pkg/service"
+	"authguard/use-cases/customer-growth-job-service/e2e/deploy/golang-sqlx-service/pkg/telemetry"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
@@ -32,6 +34,11 @@ func main() {
 	)))
 	database := openDatabase()
 	defer database.Close()
+	tracer, err := telemetry.Initialize(context.Background())
+	if err != nil {
+		log.Fatalf("initialize OpenTelemetry: %v", err)
+	}
+	defer tracer.Shutdown(context.Background())
 
 	jobRepository := repository.NewCustomerGrowthJobRepository(database)
 	jobService := service.NewCustomerGrowthJobService(jobRepository)
@@ -65,7 +72,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              ":" + environmentOrDefault("PORT", "8080"),
-		Handler:           mux,
+		Handler:           telemetry.HTTP(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

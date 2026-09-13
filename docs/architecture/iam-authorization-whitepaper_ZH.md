@@ -37,19 +37,19 @@ AuthGuard 不重新实现 API Gateway，也不把业务资源复制进 IAM 核�
 
 ## 3. 组件职责
 
-### 3.1 Envoy Gateway：统一入口与 PEP
+### 3.1 Envoy Gateway：统一入口与 PEP(Policy Enforcement Point)
 
 Envoy Gateway 负责：
 
 - 所有 Biz UI 登录请求、callback 与业务请求的统一入口；
 - 路由、TLS、流量策略和请求边界；
-- 标准 OIDC/JWT 的原生能力；
+- AuthN canonical JWT 的签名、issuer、audience 与时效验证；
 - 热路径中的 `jwt_authn → ext_authz(authguard-authz)`；
 - 删除客户端伪造的 AuthGuard 内部身份头。
 
 对于已经由 AuthN 签发 canonical session/token 的请求，Envoy 验证签名、issuer、audience 与有效期，再把受信 token 交给 AuthZ。AuthZ 不重复实现 OAuth 或 Provider 协议。
 
-对于标准 OIDC，Envoy Gateway 原生 OIDC/JWT 能力优先处理标准重定向和 token 验证；AuthN 只负责把已验证的外部身份映射成 canonical Principal。对于 GitHub、WeChat、DSP 等非标准或 OAuth2-like Provider，Envoy 仍然拥有入口，协议差异集中在 AuthN。
+标准 OIDC 的 discovery、授权重定向、callback、code exchange、ID Token 验签和可选 UserInfo 全部由 AuthN 处理，与 GitHub、WeChat、DSP 等 OAuth2-like/专有协议保持同一模块边界。Envoy 不接收 Provider authorization code 或 access token；业务热路径只验证 AuthN 签发的 canonical JWT。
 
 ### 3.2 authguard-authn：Authentication / Identity Provider Adapter Engine
 
@@ -102,9 +102,7 @@ AuthZ 不处理：
 - account linking；
 - Provider access token 或 authorization code。
 
-Keycloak/LDAP/SCIM discovery 可以继续作为 AuthZ 管理面集成能力，用于搜索和物化授权对象，但物化请求必须携带 AuthN 已解析的 `principal_id`。这些 connector 不参与 AuthZ 热路径，也不把 `(issuer, subject)` 重新定义成 Principal。
-
-SCIM 采用 HTTP push 边界。SCIM 定义的是 HTTP 资源供应协议，并未定义 WebSocket 或 long-poll 推送通道。若上游 IdP 无法主动推送，应由独立 connector/reconciliation agent 轮询 IdP，再把标准化的 SCIM event 推送给 AuthGuard；AuthZ 不承担通用 discovery 定时刷新任务。
+LDAP、Keycloak 和自定义目录 connector 在管理员预授权时按需 pull 候选 Principal；SCIM 与其互补，在员工或用户组生命周期变化后通过 `/scim/v2/Users`、`/scim/v2/Groups` push 更新同一份 canonical Principal 投影。两者均不进入 AuthZ 热路径。SCIM 是 HTTP provisioning，而非 WebSocket/long-poll；无法主动推送的上游应由独立 reconciliation connector 轮询，AuthZ 不承担通用刷新任务。
 
 ## 4. Principal 与 ExternalIdentity
 
@@ -213,6 +211,24 @@ Provider 配置只回答两个问题：
 ```yaml
 authn:
   providers:
+    corporate-oidc:
+      type: oidc
+      issuer: https://sso.example.com/realms/corporate
+      clientId: authguard
+      clientSecret: ${AUTHGUARD_CORPORATE_OIDC_CLIENT_SECRET}
+      callbackUrl: https://app.example.com/auth/v1/providers/corporate-oidc/callback
+      scopes: [openid, profile, email]
+      userinfo: true
+      # 可选的 RFC 7662 机器令牌转换；浏览器 Authorization Code 登录仍会
+      # 独立验证签名 ID Token、issuer、audience、nonce 与 PKCE。
+      tokenIntrospection:
+        endpoint: https://sso.example.com/realms/corporate/protocol/openid-connect/token/introspect
+        acceptedAudiences: [customer-growth-job-service]
+      identity:
+        subject: $.sub
+        username: $.preferred_username
+        email: $.email
+
     github:
       type: oauth2
       issuer: https://github.com
@@ -261,6 +277,12 @@ authn:
 简单 JSON path 只支持类似 `$.data.user.id` 的字段访问，不扩展成带条件、函数和脚本的 DSL。
 
 Provider 节点禁止声明 `authoritative`、`secondary`、`canCreatePrincipal` 或 `canLink`。这些账号治理语义统一放在 `accountLinking`。
+
+对于 `type: oidc`，浏览器登录使用 discovery、Authorization Code + PKCE、
+绑定 nonce 的 ID Token 验证以及可选 UserInfo；UserInfo 并不是 ID Token。
+WORKLOAD token exchange 仅在配置 `tokenIntrospection` 时通过 RFC 7662
+验证，并严格匹配 issuer 与显式允许的 audience；AuthN 绝不会把未经验证的
+JWT payload 当作身份。
 
 ### 5.1 最小 Provider SPI
 
@@ -334,15 +356,16 @@ AuthN 根据 Provider 配置选择正确来源，提取 stable subject 后立即
 
 ```text
 Enterprise OIDC / Keycloak / Entra
-  -> Envoy Gateway native OIDC/JWT
-  -> AuthN identity normalization / binding lookup
+  -> Envoy Gateway -> authguard-authn authorize/callback
+  -> OIDC discovery / code exchange / ID Token verification / optional UserInfo
+  -> ExternalIdentity -> identity binding lookup
   -> canonical session/token
   -> Envoy jwt_authn
   -> authguard-authz ext_authz
   -> Biz Service
 ```
 
-标准协议优先由 Envoy 处理；AuthN 不重复验证已经由可信 Envoy 验证的 token，但必须完成 canonical Principal 映射。
+非浏览器 Workload 可将企业 IdP 签发的 bearer 交给 AuthN 的受限 token-translation 入口完成 UserInfo/稳定 subject 解析，再得到同样的 canonical Principal token；外部 token 不进入 AuthZ。
 
 ### 8.2 GitHub / WeChat
 
@@ -441,7 +464,8 @@ src/authz                        authguard-authz crate
   route/authorization.rs        Envoy ext_authz/access-context gRPC 入口
   handler/{authorization,principal}.rs
                                 授权目录与 Principal 管理用例
-  handler/envoy_authz.rs        ext_authz evaluation and scope delivery
+  handler/authorization.rs      ext_authz 请求鉴权与 scope 下发
+  handler/policy.rs             授权目录 CRUD 与编译
   principal/{ldap,keycloak,scim}/
                                 可选 2B 控制面 federation connectors
   server.rs                     进程初始化与 listener 生命周期

@@ -1,7 +1,3 @@
-{{- $ext := .Values.envoy_gateway.ext_authz -}}
-{{- if and $ext.enabled (eq $ext.jwt.enabled $ext.oidc.enabled) -}}
-{{- fail "envoy_gateway.ext_authz requires exactly one of jwt.enabled or oidc.enabled" -}}
-{{- end -}}
 {{- $runtimeConfig := index .Values.authguard "authguard-config" | default "" -}}
 {{- if not $runtimeConfig -}}
 {{- fail "authguard.authguard-config must contain the full authguard.yaml content" -}}

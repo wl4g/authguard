@@ -43,7 +43,7 @@ impl Default for AuthnMetrics {
         );
         registry.register(
             "authguard_authn_flow_duration_seconds",
-            "End-to-end AuthN authorize/callback latency",
+            "End-to-end AuthN authorize/callback/token-exchange latency",
             duration.clone(),
         );
         Self { registry: Arc::new(Mutex::new(registry)), flows, duration }
@@ -95,6 +95,7 @@ fn bounded_operation(operation: &str) -> &'static str {
     match operation {
         "authorize" => "authorize",
         "callback" => "callback",
+        "token_exchange" => "token_exchange",
         "link" => "link",
         _ => "other",
     }
@@ -301,5 +302,21 @@ fn bounded_reason(reason: &str) -> &'static str {
 impl MetricsRenderer for AuthzMetrics {
     fn render_metrics(&self) -> Result<String, std::fmt::Error> {
         self.render()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AuthnMetrics;
+
+    #[test]
+    fn preserves_the_bounded_token_exchange_operation() {
+        let metrics = AuthnMetrics::default();
+        metrics.record_flow("e2e-keycloak", "token_exchange", "success", 0.01);
+
+        let rendered = metrics.render().expect("render metrics");
+        assert!(rendered.contains(
+            "authguard_authn_flows_total{provider=\"e2e-keycloak\",operation=\"token_exchange\",outcome=\"success\"} 1"
+        ));
     }
 }

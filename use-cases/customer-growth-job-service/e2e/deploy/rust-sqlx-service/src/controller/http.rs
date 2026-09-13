@@ -1,4 +1,5 @@
 use authguard_adapter_rust::{HttpHeaderAccessFilter, RequestAccess};
+use authguard_common::apm::propagate_http_trace_context;
 use axum::{
     extract::{Path, Query, Request, State},
     http::{HeaderMap, StatusCode},
@@ -45,6 +46,7 @@ pub fn routes(
         .route("/customer-growth/jobs", get(list_jobs).post(create_job))
         .route("/customer-growth/jobs/{id}", get(get_job).put(update_job).delete(delete_job))
         .layer(middleware::from_fn_with_state(state.clone(), verify_resign_token))
+        .layer(middleware::from_fn(propagate_http_trace_context))
         .with_state(state)
 }
 

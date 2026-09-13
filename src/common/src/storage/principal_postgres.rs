@@ -6,12 +6,17 @@ use anyhow::{bail, Context as _};
 use async_trait::async_trait;
 
 use super::authn::{IdentityBindingRepository, IdentityRepositoryError};
-use super::authz::{AuthzPostgresRepository, PrincipalReferenced, PrincipalRepository};
+use super::authz::{
+    AuthzPostgresRepository, PrincipalIdentityConflict, PrincipalReferenced, PrincipalRepository,
+};
 use super::base_postgres::{
     postgres_delete, postgres_insert, postgres_select, postgres_update, postgres_upsert,
 };
 use super::PostgresRepository;
-use crate::model::{ExternalIdentity, ExternalIdentityKey, IamPrincipalInfo, PrincipalStatus};
+use crate::model::{
+    ExternalIdentity, ExternalIdentityKey, IamPrincipalIdentityInfo, IamPrincipalInfo,
+    PrincipalStatus,
+};
 
 #[derive(Debug)]
 pub struct AuthnPostgresRepository {
@@ -170,6 +175,52 @@ impl PrincipalRepository for AuthzPostgresRepository {
         .context("upsert IAM principal projection")
     }
 
+    async fn upsert_with_identity(
+        &self,
+        principal: &IamPrincipalInfo,
+        identity: &IamPrincipalIdentityInfo,
+    ) -> anyhow::Result<IamPrincipalInfo> {
+        validate_principal(principal)?;
+        let mut transaction = self.pool.begin().await?;
+        let projected = sqlx::query_as::<_, IamPrincipalInfo>(
+            "INSERT INTO iam_principal(\
+                id, kind, display_name, status, authorization_state, last_seen_at\
+             ) VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP) \
+             ON CONFLICT(id) DO UPDATE SET \
+                kind = EXCLUDED.kind, display_name = EXCLUDED.display_name, \
+                status = EXCLUDED.status, authorization_state = EXCLUDED.authorization_state, \
+                last_seen_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP \
+             RETURNING id, kind, display_name, status, authorization_state",
+        )
+        .bind(&principal.id)
+        .bind(principal.kind.as_str())
+        .bind(&principal.display_name)
+        .bind(principal.status.as_str())
+        .bind(serde_json::to_value(&principal.authorization_state)?)
+        .fetch_one(&mut *transaction)
+        .await?;
+        let bound = sqlx::query(
+            "INSERT INTO iam_principal_identity(\
+                principal_id, provider, issuer, subject, claims, last_authenticated_at\
+             ) VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP) \
+             ON CONFLICT(provider, issuer, subject) DO UPDATE SET \
+                claims = EXCLUDED.claims, last_authenticated_at = CURRENT_TIMESTAMP \
+             WHERE iam_principal_identity.principal_id = EXCLUDED.principal_id",
+        )
+        .bind(&identity.principal_id)
+        .bind(&identity.provider)
+        .bind(&identity.issuer)
+        .bind(&identity.subject)
+        .bind(&identity.claims)
+        .execute(&mut *transaction)
+        .await?;
+        if bound.rows_affected() != 1 {
+            return Err(PrincipalIdentityConflict.into());
+        }
+        transaction.commit().await?;
+        Ok(projected)
+    }
+
     async fn get(&self, id: &str) -> anyhow::Result<Option<IamPrincipalInfo>> {
         Ok(postgres_select!(
             optional & self.pool,
@@ -177,6 +228,39 @@ impl PrincipalRepository for AuthzPostgresRepository {
             "SELECT id, kind, display_name, status, authorization_state \
              FROM iam_principal WHERE id = $1",
             id,
+        )?)
+    }
+
+    async fn find_by_identity(
+        &self,
+        identity: &ExternalIdentityKey,
+    ) -> anyhow::Result<Option<IamPrincipalInfo>> {
+        Ok(postgres_select!(
+            optional & self.pool,
+            IamPrincipalInfo,
+            "SELECT p.id, p.kind, p.display_name, p.status, p.authorization_state \
+             FROM iam_principal p \
+             JOIN iam_principal_identity i ON i.principal_id = p.id \
+             WHERE i.provider = $1 AND i.issuer = $2 AND i.subject = $3",
+            &identity.provider,
+            &identity.issuer,
+            &identity.subject,
+        )?)
+    }
+
+    async fn get_identity(
+        &self,
+        principal_id: &str,
+        provider: &str,
+    ) -> anyhow::Result<Option<IamPrincipalIdentityInfo>> {
+        Ok(postgres_select!(
+            optional & self.pool,
+            IamPrincipalIdentityInfo,
+            "SELECT principal_id, provider, issuer, subject, claims \
+             FROM iam_principal_identity \
+             WHERE principal_id = $1 AND provider = $2",
+            principal_id,
+            provider,
         )?)
     }
 

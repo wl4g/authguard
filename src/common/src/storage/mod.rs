@@ -16,8 +16,8 @@ pub use authn::{
     IamAuthFlowInfo, IdentityBindingRepository, IdentityRepositoryError,
 };
 pub use authz::{
-    AuthzPostgresRepository, AuthzSqliteRepository, PolicyRepository, PrincipalReferenced,
-    PrincipalRepository,
+    AuthzPostgresRepository, AuthzSqliteRepository, PolicyRepository, PrincipalIdentityConflict,
+    PrincipalReferenced, PrincipalRepository,
 };
 pub use base_postgres::PostgresRepository;
 pub use base_sqlite::SqliteRepository;

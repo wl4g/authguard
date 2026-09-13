@@ -15,6 +15,7 @@ from common import (
     RunContext,
     VerificationResult,
     archive_reports,
+    verify_scenario_matrix,
     write_round_report,
     write_summary,
 )
@@ -45,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-image-build",
         action="store_true",
-        help="Reuse locally tagged images during k3s deployment phase 21.",
+        help="Reuse locally tagged images during Kubernetes infrastructure phase 00.",
     )
     parser.add_argument(
         "--timeout",
@@ -129,6 +130,11 @@ def main() -> int:
             write_round_report(round_number, result)
             status = "PASS" if result.passed else "FAIL"
             print(f"{status} ({result.duration_seconds:.2f}s)")
+        if matrix := verify_scenario_matrix(results):
+            results.append(matrix)
+            write_round_report(round_number, matrix)
+            status = "PASS" if matrix.passed else "FAIL"
+            print(f"  [18] {matrix.title} ... {status}")
         all_rounds.append(results)
 
     summary = write_summary(all_rounds)

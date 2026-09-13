@@ -7,11 +7,11 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
-    app.kubernetes.io/component: e2e-ldap
+    app.kubernetes.io/component: e2e-authguard-ldap
 spec:
   selector:
     app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/component: e2e-ldap
+    app.kubernetes.io/component: e2e-authguard-ldap
   ports:
     - { name: ldap, port: 389, targetPort: ldap }
 ---
@@ -21,18 +21,18 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
-    app.kubernetes.io/component: e2e-ldap
+    app.kubernetes.io/component: e2e-authguard-ldap
 spec:
   replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/instance: {{ .Release.Name }}
-      app.kubernetes.io/component: e2e-ldap
+      app.kubernetes.io/component: e2e-authguard-ldap
   template:
     metadata:
       labels:
         app.kubernetes.io/instance: {{ .Release.Name }}
-        app.kubernetes.io/component: e2e-ldap
+        app.kubernetes.io/component: e2e-authguard-ldap
     spec:
       automountServiceAccountToken: false
       securityContext:

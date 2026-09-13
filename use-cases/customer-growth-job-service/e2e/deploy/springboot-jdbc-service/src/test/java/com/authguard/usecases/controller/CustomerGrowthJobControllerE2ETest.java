@@ -51,6 +51,7 @@ class CustomerGrowthJobControllerE2ETest {
           accessScope.close();
         }
       }
+      System.out.printf("AUTHGUARD_E2E_CASE id=%s%n", scenario.id());
     }
   }
 
@@ -140,7 +141,7 @@ class CustomerGrowthJobControllerE2ETest {
               application
                   .jdbcTemplate()
                   .queryForObject(
-                      "SELECT COUNT(*) FROM customer_growth_jobs WHERE id = ?",
+                      "SELECT COUNT(*) FROM e2e_authguard_customer_growth_jobs WHERE id = ?",
                       Integer.class,
                       scenario.targetJobId());
           yield new ScenarioResult(remaining != null && remaining == 0, List.of(), null);
@@ -160,7 +161,7 @@ class CustomerGrowthJobControllerE2ETest {
                   application
                       .jdbcTemplate()
                       .queryForObject(
-                          "SELECT COUNT(*) FROM customer_growth_jobs WHERE id = ?",
+                          "SELECT COUNT(*) FROM e2e_authguard_customer_growth_jobs WHERE id = ?",
                           Integer.class,
                           scenario.job().id()))
               .isZero();
@@ -169,7 +170,7 @@ class CustomerGrowthJobControllerE2ETest {
                   application
                       .jdbcTemplate()
                       .queryForObject(
-                          "SELECT status FROM customer_growth_jobs WHERE id = ?",
+                          "SELECT status FROM e2e_authguard_customer_growth_jobs WHERE id = ?",
                           String.class,
                           scenario.targetJobId()))
               .isEqualTo("READY");
@@ -178,7 +179,7 @@ class CustomerGrowthJobControllerE2ETest {
                   application
                       .jdbcTemplate()
                       .queryForObject(
-                          "SELECT COUNT(*) FROM customer_growth_jobs WHERE id = ?",
+                          "SELECT COUNT(*) FROM e2e_authguard_customer_growth_jobs WHERE id = ?",
                           Integer.class,
                           scenario.targetJobId()))
               .isOne();

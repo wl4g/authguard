@@ -1,0 +1,23 @@
+[package]
+name = "authguard-cmd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "authguard"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+authguard-authn = { path = "../authn" }
+authguard-authz = { path = "../authz" }
+authguard-common.workspace = true
+clap.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

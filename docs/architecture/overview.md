@@ -13,9 +13,9 @@ partitioned by root section, not by duplicating files.
 
 Responsibilities are intentionally narrow:
 
-- Envoy Gateway owns the edge, TLS, routing, standard OIDC/JWT capabilities, and the PEP;
+- Envoy Gateway owns the edge, TLS, routing, canonical JWT verification, and the **PEP(Policy Enforcement Point)**;
 - `authguard-authn` owns Provider protocols, `ExternalIdentity` normalization, and account linking;
-- `authguard-authz` authorizes only internal stable `principal_id` values.
+- `authguard-authz` Responsible for only internally stable `principal_id` and jointly with backend Business microservices (embed authguard adapters sdk) to resolve URNs and authorization access control at the data/resources level as SQL Query where conditions, and implement **PDP (Policy Decision Point)**.
 
 > Envoy owns the edge. AuthGuard owns identity normalization and authorization.
 
@@ -63,15 +63,15 @@ AuthZ retains:
 - Resource URNs, parent URNs, and conditions;
 - explicit DENY precedence and default deny;
 - signed access contexts and opaque scope tokens;
-- optional control-plane Keycloak, LDAP, and SCIM Principal federation/materialization.
+- optional control-plane LDAP/Keycloak pull discovery and complementary SCIM push provisioning.
 
-Discovery connectors do not participate in login or the hot path. Materializing a candidate requires the canonical `principal_id` already resolved by AuthN.
+Pull connectors do not participate in login or the hot path. Administrator materialization persists the selected canonical `principal_id` and identity binding; SCIM then pushes lifecycle changes to the same Principal projection.
 
 ## Protocol boundary
 
 - GitHub OAuth is not OIDC; it commonly uses an access token to call GitHub `/user`;
 - an ID Token is not UserInfo, and an Access Token is not a user identity;
-- standard OIDC should prefer Envoy Gateway native support;
+- standard OIDC discovery/callback/ID Token/UserInfo handling belongs to AuthN;
 - GitHub/WeChat/DSP variance belongs in AuthN, without Envoy patches or Lua/Wasm;
 - AuthGuard introduces no Kubernetes CRD or Controller.
 

@@ -61,6 +61,7 @@ class PythonCustomerGrowthJobServiceE2ETest(unittest.TestCase):
                         self.assertEqual(ids, scenario.get("expected_job_ids", []))
                     if expected_status := scenario.get("expected_status"):
                         self.assertEqual(status, expected_status)
+                    print(f"AUTHGUARD_E2E_CASE id={scenario['id']}")
 
 
 def assert_denied_mutation_did_not_change_database(
@@ -69,21 +70,21 @@ def assert_denied_mutation_did_not_change_database(
     operation = scenario["operation"]
     if operation == "create":
         count = db.exec_driver_sql(
-            "SELECT COUNT(*) FROM customer_growth_jobs WHERE id = ?",
+            "SELECT COUNT(*) FROM e2e_authguard_customer_growth_jobs WHERE id = ?",
             (scenario["job"]["id"],),
         ).scalar_one()
         if count != 0:
             raise AssertionError("denied create changed the database")
     elif operation == "update":
         status = db.exec_driver_sql(
-            "SELECT status FROM customer_growth_jobs WHERE id = ?",
+            "SELECT status FROM e2e_authguard_customer_growth_jobs WHERE id = ?",
             (scenario["target_job_id"],),
         ).scalar_one()
         if status != "READY":
             raise AssertionError(f"denied update changed status to {status}")
     elif operation == "delete":
         count = db.exec_driver_sql(
-            "SELECT COUNT(*) FROM customer_growth_jobs WHERE id = ?",
+            "SELECT COUNT(*) FROM e2e_authguard_customer_growth_jobs WHERE id = ?",
             (scenario["target_job_id"],),
         ).scalar_one()
         if count != 1:
@@ -141,7 +142,7 @@ def execute_scenario(
         if operation == "delete":
             controller.delete_job(scenario["target_job_id"])
             remaining = db.exec_driver_sql(
-                "SELECT COUNT(*) FROM customer_growth_jobs WHERE id = ?",
+                "SELECT COUNT(*) FROM e2e_authguard_customer_growth_jobs WHERE id = ?",
                 (scenario["target_job_id"],),
             ).scalar_one()
             return remaining == 0, [], ""

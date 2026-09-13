@@ -12,8 +12,11 @@ pub use authguard_common::principal::*;
 pub use keycloak::KeycloakPrincipalDiscovery;
 pub use ldap::LdapPrincipalDiscovery;
 pub use scim::{
-    ScimGroupResource, ScimPrincipalDiscovery, ScimProjectionEvent, ScimProvisioningRequest,
-    ScimUserResource,
+    ScimErrorResponse, ScimGroupResource, ScimListQuery, ScimListResponse, ScimPatchRequest,
+    ScimPrincipalDiscovery, ScimUserResource, ERROR_SCHEMA, LIST_SCHEMA,
+};
+pub(crate) use scim::{
+    ScimProjectionEvent, ScimProvisioningRequest, ScimResource, ScimStoredResource,
 };
 
 pub struct PrincipalDiscoveryComponent {
@@ -76,13 +79,13 @@ impl PrincipalDiscoveryComponent {
                 )
             })
             .transpose()
-            .context("configure SCIM IamPrincipalInfo discovery")?;
+            .context("configure SCIM Principal discovery")?;
         let federated_provider_count = federated.len();
         let handler = PrincipalHandler::new(repository, federated, scim);
         tracing::info!(
             authguard.principal.federated_provider_count = federated_provider_count,
             authguard.principal.scim_enabled = config.scim.enabled,
-            "principal discovery providers configured"
+            "principal pull discovery and push provisioning configured"
         );
         Ok(Self { handler })
     }

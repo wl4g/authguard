@@ -88,19 +88,16 @@ Provider entries describe protocol mechanics only. `authoritativeProviders` and 
 
 ## Envoy Gateway boundary
 
-Envoy Gateway is the common edge and PEP:
-
-- standard OIDC/JWT uses native Envoy Gateway capabilities where possible;
-- login, callback, and business routes all enter through Envoy;
-- canonical request hot path is `jwt_authn -> ext_authz(authguard-authz)`;
-- GitHub/WeChat/DSP protocol logic stays in AuthN, without Envoy patches or Lua/Wasm.
+Envoy Gateway is the common edge and PEP(Policy Enforcement Point). All standard OIDC and OAuth-like
+authorization, callback, token exchange, ID Token validation, UserInfo, and
+normalization run in AuthN. Envoy validates only the AuthN-issued canonical JWT;
+the request hot path is `jwt_authn -> ext_authz(authguard-authz)`.
 
 The managed Gateway uses a `protected` listener for business routes and a
 separate `authn` listener for `/auth/` authorize/callback routes. The
 SecurityPolicy targets only `sectionName: protected`, so a user can establish a
-session while every business request still requires JWT verification and
-AuthZ. `jwt.additionalProviders` allows Envoy to verify both an external
-enterprise issuer and AuthN's canonical-session issuer.
+session while every business request still requires canonical JWT verification
+and AuthZ. External IdP issuers are deliberately absent from this SecurityPolicy.
 
 The AuthN Service is `<release>-authguard-authn:8082`. The AuthZ Service exposes:
 
@@ -131,7 +128,7 @@ Common environment keys include:
 | Keycloak discovery service account | optional AuthZ integration | `AUTHGUARD_KEYCLOAK_CLIENT_SECRET` |
 | LDAP discovery bind | optional AuthZ integration | `AUTHGUARD_LDAP_BIND_PASSWORD` |
 | Direct access-context HMAC | AuthZ and workloads | `AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY` |
-| AuthZ resign key | AuthZ delivery | `AUTHGUARD_RESIGN_TOKEN_PRIVATE_KEY` |
+| AuthZ resign key | AuthZ delivery | `AUTHGUARD__AUTHZ__RESIGN__PRIVATE_KEY_B64` |
 
 Provider client secrets for AuthN are likewise secret-injected and must not be committed in Provider YAML. Keycloak secrets are needed only when the optional Keycloak integration is enabled.
 
@@ -151,21 +148,22 @@ secrets:
 
 ### Optional resign token
 
-When `authz.resign_token.enabled=true`, the init container decodes the base64 PKCS#8 key from `AUTHGUARD_RESIGN_TOKEN_PRIVATE_KEY`. AuthZ replaces the upstream authorization header with a short-lived RS256 token whose `sub` and `principal_id` are the canonical Principal ID.
+When `authz.resign.enabled=true`, AuthZ reads the base64 PKCS#8 key directly,
+then replaces the upstream authorization header with a short-lived RS256 token.
+Its expiry is bounded by both `max_ttl` and the source canonical JWT's remaining
+lifetime. There is no key-decoding init container.
 
 ```yaml
 authguard:
-  resignKeyInit:
-    enabled: true
   authguard-config: |
     authn:
       providers: {}
       accountLinking: { strategy: explicit }
     authz:
-      resign_token:
+      resign:
         enabled: true
-        ttl: 60s
-        private_key_file: /etc/authguard/secrets/resign-jwt-private-key.pem
+        max_ttl: 60s
+        private_key_b64: "${AUTHGUARD__AUTHZ__RESIGN__PRIVATE_KEY_B64}"
 ```
 
 ## Keycloak
