@@ -74,7 +74,7 @@ spec:
           from: All
     {{- if and .Values.authguard.authn.enabled $ext.authnRoute.enabled }}
     # AuthN authorize/callback traffic still enters through Envoy, but must be
-    # reachable before a canonical session exists.
+    # reachable before a canonical token exists.
     - name: authn
       protocol: HTTP
       port: {{ $ext.authnRoute.listenerPort }}

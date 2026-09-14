@@ -188,6 +188,7 @@ class InfrastructureVerifier(BaseVerifier):
             self.workload_service(component) for component in WORKLOAD_IMAGES
         }
         expected_routes.add("e2e-authguard-customer-growth-authn")
+        expected_routes.add(self.customer_growth_ui_service)
         last_state = "Gateway API status was not observed"
         while time.monotonic() < deadline:
             resources = json.loads(
@@ -239,7 +240,7 @@ class InfrastructureVerifier(BaseVerifier):
                     raise RuntimeError("accepted SecurityPolicy payload is unavailable")
                 self._verify_security_policy_contract(accepted_policy)
                 self.details.append(
-                    "Gateway, five protected business routes, public AuthN route, and "
+                    "Gateway, five protected business routes, public AuthN/UI routes, and "
                     "listener-scoped SecurityPolicy are accepted"
                 )
                 return

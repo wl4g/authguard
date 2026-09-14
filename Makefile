@@ -1,10 +1,11 @@
-.PHONY: help build build-image fmt fmt-rust lint lint-rust lint-helm test test-rust test-go test-python test-java test-helm e2e e2e-k3s package-chart release release-push release-verify clean
+.PHONY: help build build-web build-customer-growth-ui build-image build-runtime-image build-web-image build-customer-growth-ui-image fmt fmt-rust lint lint-rust lint-web lint-helm test test-rust test-web test-go test-python test-java test-helm e2e e2e-k3s package-chart release release-push release-verify clean
 
 CARGO ?= cargo
 GO ?= go
 PYTHON ?= python3
 MAVEN ?= mvn
 MAVEN_FLAGS ?= -q
+NPM ?= npm
 GOPROXY ?= https://goproxy.cn,direct
 CONTAINER_CLI ?= docker
 CONTAINER_BUILD_FLAGS ?=
@@ -12,10 +13,18 @@ VERSION ?= $(shell sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
 VERSION := $(if $(VERSION),$(VERSION),0.1.0)
 GHCR_IMAGE ?= ghcr.io/wl4g/authguard
 ALIYUN_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/authguard
+GHCR_WEB_IMAGE ?= ghcr.io/wl4g/authguard-web
+ALIYUN_WEB_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-web
+AUTHGUARD_CARGO_FEATURES ?= web3
+VITE_AUTHN_BASE_URL ?=
+VITE_AUTHZ_BASE_URL ?=
+VITE_REOWN_PROJECT_ID ?=
 HELM_OCI_REGISTRY ?= oci://ghcr.io/wl4g/charts
 RELEASE_DIR ?= dist
 USE_CASE_DIR := use-cases/customer-growth-job-service
 E2E_DEPLOY_DIR := $(USE_CASE_DIR)/e2e/deploy
+WEB_DIR := web
+CUSTOMER_GROWTH_UI_DIR := $(E2E_DEPLOY_DIR)/customer-growth-ui-service
 
 ifeq ($(IN_CN_GFW),true)
 HTTPS_PROXY ?= http://127.0.0.1:8800
@@ -38,8 +47,9 @@ help:
 	@echo "Authguard -- Makefile"
 	@echo ""
 	@echo "  Build:"
-	@echo "    make build         Build Rust workspace and Java reactor without tests."
-	@echo "    make build-image   Build the single Authguard runtime image."
+	@echo "    make build         Build backend, AuthGuard Web, use-case UI, and Java modules."
+	@echo "    make build-web     Build the AuthGuard React control-plane UI."
+	@echo "    make build-image   Build AuthGuard runtime + AuthGuard Web release images."
 	@echo ""
 	@echo "  Quality:"
 	@echo "    make fmt           Check Rust formatting."
@@ -60,38 +70,68 @@ help:
 	@echo "  Utils:"
 	@echo "    make clean         Remove local build artifacts."
 
-build:
+build: build-web build-customer-growth-ui
 	$(CARGO) build --workspace
 	$(MAVEN) $(MAVEN_FLAGS) -f src/adapters/java/pom.xml -DskipTests install
 	$(MAVEN) $(MAVEN_FLAGS) -f $(E2E_DEPLOY_DIR)/springboot-jdbc-service/pom.xml -DskipTests package
 	$(MAVEN) $(MAVEN_FLAGS) -f $(E2E_DEPLOY_DIR)/springboot-jpa-service/pom.xml -DskipTests package
 
-build-image:
+build-web:
+	cd $(WEB_DIR) && $(NPM) ci && $(NPM) run build
+
+build-customer-growth-ui:
+	cd $(CUSTOMER_GROWTH_UI_DIR) && $(NPM) ci && $(NPM) run build
+
+build-image: build-runtime-image build-web-image
+
+build-runtime-image:
 	@size_kb=$$(du -sk target 2>/dev/null | cut -f1); \
 	  if [ "$${size_kb:-0}" -gt 10485760 ]; then \
 	    echo "target/ exceeds 10 GiB; cleaning before the Rust image build"; \
 	    $(CARGO) clean; \
 	  fi
 	$(CONTAINER_CLI) build $(CONTAINER_BUILD_FLAGS) -f deploy/docker/Dockerfile \
+		--build-arg AUTHGUARD_CARGO_FEATURES="$(AUTHGUARD_CARGO_FEATURES)" \
 		-t $(GHCR_IMAGE):$(VERSION) -t $(GHCR_IMAGE):latest \
 		-t $(ALIYUN_IMAGE):$(VERSION) -t $(ALIYUN_IMAGE):latest .
+
+build-web-image:
+	$(CONTAINER_CLI) build $(CONTAINER_BUILD_FLAGS) -f $(WEB_DIR)/Dockerfile \
+		--build-arg VITE_AUTHN_BASE_URL="$(VITE_AUTHN_BASE_URL)" \
+		--build-arg VITE_AUTHZ_BASE_URL="$(VITE_AUTHZ_BASE_URL)" \
+		--build-arg VITE_REOWN_PROJECT_ID="$(VITE_REOWN_PROJECT_ID)" \
+		-t $(GHCR_WEB_IMAGE):$(VERSION) -t $(GHCR_WEB_IMAGE):latest \
+		-t $(ALIYUN_WEB_IMAGE):$(VERSION) -t $(ALIYUN_WEB_IMAGE):latest $(WEB_DIR)
+
+build-customer-growth-ui-image:
+	$(CONTAINER_CLI) build $(CONTAINER_BUILD_FLAGS) -f $(CUSTOMER_GROWTH_UI_DIR)/Dockerfile \
+		--build-arg VITE_REOWN_PROJECT_ID="$(VITE_REOWN_PROJECT_ID)" \
+		-t customer-growth-ui-service:$(VERSION) $(CUSTOMER_GROWTH_UI_DIR)
 
 fmt: fmt-rust
 
 fmt-rust:
 	$(CARGO) fmt --all --check
 
-lint: lint-rust
+lint: lint-rust lint-web
 
 lint-rust:
 	$(CARGO) clippy --workspace --all-targets -- -D warnings
 
+lint-web:
+	cd $(WEB_DIR) && $(NPM) ci && $(NPM) run typecheck
+	cd $(CUSTOMER_GROWTH_UI_DIR) && $(NPM) ci && $(NPM) run build
+
 lint-helm: test-helm
 
-test: fmt lint test-rust test-go test-python test-java test-helm
+test: fmt lint test-rust test-web test-go test-python test-java test-helm
 
 test-rust:
 	$(CARGO) test --workspace
+
+test-web:
+	cd $(WEB_DIR) && $(NPM) run build
+	cd $(CUSTOMER_GROWTH_UI_DIR) && $(NPM) run build
 
 test-go:
 	cd src/adapters/golang && $(GO_NETWORK_ENV) $(GO) test ./...
@@ -131,6 +171,10 @@ release-push:
 	$(CONTAINER_CLI) push $(GHCR_IMAGE):latest
 	$(CONTAINER_CLI) push $(ALIYUN_IMAGE):$(VERSION)
 	$(CONTAINER_CLI) push $(ALIYUN_IMAGE):latest
+	$(CONTAINER_CLI) push $(GHCR_WEB_IMAGE):$(VERSION)
+	$(CONTAINER_CLI) push $(GHCR_WEB_IMAGE):latest
+	$(CONTAINER_CLI) push $(ALIYUN_WEB_IMAGE):$(VERSION)
+	$(CONTAINER_CLI) push $(ALIYUN_WEB_IMAGE):latest
 	helm push $(RELEASE_DIR)/authguard-$(VERSION).tgz $(HELM_OCI_REGISTRY)
 
 release-verify:
@@ -143,3 +187,4 @@ release-verify:
 
 clean:
 	find . -type d \( -name target -o -name __pycache__ -o -name .pytest_cache -o -name .mypy_cache -o -name .ruff_cache \) -prune -exec sh -c 'find "$$1" -depth -delete' sh {} \;
+	find $(WEB_DIR) $(CUSTOMER_GROWTH_UI_DIR) -type d \( -name node_modules -o -name dist \) -prune -exec sh -c 'find "$$1" -depth -delete' sh {} \;

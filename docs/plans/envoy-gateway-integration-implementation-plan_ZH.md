@@ -44,12 +44,15 @@ Administrator
 
 ```text
 src/common/src/config/config.rs  统一强类型配置、简单 Provider 与集中式 Account Linking 模型
-src/authn/src/provider/       配置化 Provider engine 与最小特殊协议 SPI
+src/authn/src/provider/base/  OAuth2-like normalization 与基础 adapter
+src/authn/src/provider/standalone/ Password/TOTP/WebAuthn 协议实现
+src/authn/src/provider/wallet/ CAIP/SIWX 与链 verifier
 src/authn/src/principal/jit.rs identity binding、JIT 与 canonical Principal 解析
 src/common/src/model/identity.rs ExternalIdentity 与 canonical authentication context
 src/common/src            AuthN/AuthZ/SDK 共享的稳定模型、配置、协议、存储连接与 telemetry
 src/authz/src/route       Envoy gRPC 与 management HTTP 协议适配
-src/authz/src/handler/policy.rs         授权目录编译、CRUD、ACL 求值与管理面授权用例
+src/authz/src/handler/policy/mod.rs     授权目录编译与不可变 ACL 求值 runtime
+src/authz/src/handler/policy/policy.rs  授权目录 CRUD 与管理面授权用例
 src/authz/src/handler/authorization.rs  Envoy ext_authz 请求鉴权与访问上下文下发
 src/authz/src/handler/principal.rs  Principal 投影/discovery 用例
 src/common/src/route/management.rs   health、readiness、metrics 与运行时诊断入口

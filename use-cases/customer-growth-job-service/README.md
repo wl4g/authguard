@@ -25,6 +25,9 @@ against SQLite or H2. Deployment mode starts the complete request path on k3s:
 Keycloak as an E2E-only external IdP, Envoy Gateway, `authguard-authn`, one
 `authguard-authz` replica, Redis Cluster, one shared
 PostgreSQL instance, an LDAP directory, Jaeger, and all five HTTP microservices.
+It also deploys the independent `customer-growth-ui-service` React application
+on the AuthN listener for GitHub, Google, WeChat, QQ, password/TOTP, and CAIP
+wallet UI automation.
 It additionally proves the Envoy Gateway JWT public-key requirement with a
 deterministic realm key, the workload OAuth2 client_credentials flow, and the
 resign-JWT Authguard-origin boundary inside a business microservice.
@@ -41,6 +44,7 @@ customer-growth-job-service/
       e2e-jwt-keys/                  fixed realm-signing and resign-JWT keys
     common/                            process, project lifecycle, and reports
     deploy/
+      customer-growth-ui-service/      React AuthN UI automation fixture
       golang-sqlx-service/             Go + sqlx + SQLite/PostgreSQL
       rust-sqlx-service/               Rust + sqlx + SQLite/PostgreSQL
       python-sqlalchemy-service/       Python + SQLAlchemy + SQLite/PostgreSQL
@@ -90,7 +94,7 @@ Run repeated clean rebuilds or one verifier directly:
 python3 use-cases/customer-growth-job-service/e2e/runner.py --rounds 3
 python3 use-cases/customer-growth-job-service/e2e/runner.py --scenario 12
 python3 use-cases/customer-growth-job-service/e2e/runner.py --list
-python3 use-cases/customer-growth-job-service/e2e/runner.py --scenario 00,15,16,17,21 --cleanup-after-run
+python3 use-cases/customer-growth-job-service/e2e/runner.py --scenario 00,15,16,17,19,21 --cleanup-after-run
 ```
 
 By default, every round removes project-local generated artifacts and performs
@@ -112,7 +116,7 @@ Authguard first starts with the Action/Role catalog and no RoleBinding. A mock
 external social IdP then drives the real browser protocol through Envoy's
 public AuthN listener: authorize redirect, callback, POST token exchange,
 userinfo lookup, `ExternalIdentity` normalization, durable account linking,
-and canonical-session issuance. AuthN and AuthZ share one PostgreSQL IAM schema,
+and canonical-token issuance. AuthN and AuthZ share one PostgreSQL IAM schema,
 so AuthZ sees the resulting internal Principal without learning the provider
 subject. The administrator binds those Principal IDs in one revision-checked
 policy replacement. A second login must resolve to the same IDs before any

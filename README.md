@@ -15,7 +15,7 @@ flowchart LR
         Envoy[Envoy Gateway<br/>TLS · routing · jwt_authn · ext_authz]
     end
 
-    subgraph Guard[AuthGuard — one image, two runtime services]
+    subgraph Guard[AuthGuard — runtime + web images]
         AuthN[authguard-authn<br/>OIDC / OAuth-like token exchange<br/>identity normalization · account linking<br/>sign canonical principal_id JWT]
         AuthZ[authguard-authz<br/>policy lookup by principal_id<br/>ALLOW / DENY · scope · JWT re-sign]
         IAM[(Shared IAM database<br/>Principal · Identity Binding<br/>Role · Action · RoleBinding)]
@@ -56,14 +56,16 @@ requesters; only their authentication grants differ. Keycloak/LDAP pull discover
 and SCIM push provisioning are complementary optional integrations, never runtime
 dependencies.
 
-- One `authguard` binary and image: `authn`, `authz`, and `console` subcommands.
+- One `authguard` runtime binary (`authn`, `authz`, and `console` subcommands) plus one
+  static `authguard-web` image; there is still only one backend token pipeline.
 - One shared `authguard.yaml`; Provider configuration describes protocol only, while account-linking policy owns account governance.
 - GitHub is OAuth2, not OIDC; ID Token and UserInfo are different artifacts. Provider-specific IDs and tokens never enter AuthZ.
 - Keycloak, Entra, LDAP, SCIM, DSP, and social IdPs are integrations—never runtime dependencies.
 - No AuthGuard CRD/controller, no Lua/Wasm OAuth implementation, and no email-based automatic linking.
 
 The converged OAuth, standalone Password/TOTP/WebAuthn, and CAIP/SIWX wallet
-architecture is documented in [统一认证架构](docs/architecture/authentication_ZH.md).
+architecture is documented in the [authentication whitepaper](docs/architecture/iam-authentication-whitepaper.md)
+([中文](docs/architecture/iam-authentication-whitepaper_ZH.md)).
 
 ## 1. Build and run
 
@@ -86,7 +88,10 @@ AUTHGUARD_CONSOLE_TOKEN='<control-plane-secret>' \
   ./target/debug/authguard console --endpoint http://127.0.0.1:9091
 ```
 
-`make test` runs Rust, adapter, use-case, and Helm checks. `make release` builds the release binary inside the image builder, publishes `ghcr.io/wl4g/authguard` plus the Aliyun mirror, publishes the chart to `oci://ghcr.io/wl4g/charts/authguard`, and pull-verifies it.
+`make test` runs Rust, React, adapter, use-case, and Helm checks. `make release`
+publishes exactly two product images, `ghcr.io/wl4g/authguard` and
+`ghcr.io/wl4g/authguard-web` (plus their Aliyun mirrors), then publishes and
+pull-verifies the chart at `oci://ghcr.io/wl4g/charts/authguard`.
 
 ## 2. Deploy with Helm
 
@@ -98,6 +103,7 @@ helm upgrade --install authguard oci://ghcr.io/wl4g/charts/authguard \
   --namespace authguard --create-namespace \
   --set authguard.authn.image.repository=ghcr.io/wl4g/authguard \
   --set authguard.authz.image.repository=ghcr.io/wl4g/authguard \
+  --set authguard.web.image.repository=ghcr.io/wl4g/authguard-web \
   --set secrets.kubernetes.existingSecret=authguard-runtime
 ```
 

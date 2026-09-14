@@ -39,7 +39,7 @@ AuthGuard also does not replace Envoy Gateway or copy business resources into it
 
 Envoy Gateway owns the common entry point for Biz UI login requests, callbacks, and business traffic. It owns TLS, routing, traffic policy, canonical JWT verification, and the hot-path `jwt_authn -> ext_authz(authguard-authz)` chain.
 
-For requests carrying an AuthN-issued canonical session/token, Envoy verifies signature, issuer, audience, and lifetime before forwarding the trusted token to AuthZ. AuthZ does not implement OAuth protocols or repeat provider authentication.
+For requests carrying an AuthN-issued canonical token, Envoy verifies signature, issuer, audience, and lifetime before forwarding the trusted token to AuthZ. AuthZ does not implement OAuth protocols or repeat provider authentication.
 
 Standard OIDC authorization redirects, callbacks, discovery, token exchange, ID Token verification, and optional UserInfo run in AuthN, exactly like OAuth2-like and proprietary Provider flows. Envoy never receives provider authorization codes or provider tokens; it verifies only AuthN-issued canonical JWTs on business routes.
 
@@ -81,7 +81,7 @@ AuthZ owns only authorization concerns:
 - Authorization Scope and trusted workload access context;
 - optional control-plane Principal federation/discovery integrations.
 
-AuthZ never processes OAuth callbacks, passwords, LDAP login binds, GitHub `/user`, WeChat userinfo, DSP tokens, provider access tokens, authorization codes, login sessions, or account linking.
+AuthZ never processes OAuth callbacks, passwords, LDAP login binds, GitHub `/user`, WeChat userinfo, DSP tokens, provider access tokens, authorization codes, authentication tokens, or account linking.
 
 LDAP, Keycloak, and custom directory connectors pull candidates when an administrator pre-authorizes a Principal; SCIM complements them by pushing later employee and group lifecycle changes through `/scim/v2/Users` and `/scim/v2/Groups` into the same canonical Principal projection. Neither direction participates in the AuthZ hot path. SCIM is HTTP provisioning, not a WebSocket or long-poll channel; an upstream that cannot push must use an external reconciliation connector rather than an AuthZ refresh scheduler.
 
@@ -318,7 +318,7 @@ Enterprise OIDC / Keycloak / Entra
   -> Envoy Gateway -> authguard-authn authorize/callback
   -> OIDC discovery / code exchange / ID Token verification / optional UserInfo
   -> ExternalIdentity -> binding lookup
-  -> canonical session/token
+  -> canonical token
   -> Envoy jwt_authn
   -> authguard-authz ext_authz
   -> Biz Service
@@ -385,10 +385,15 @@ Existing Keycloak Principal discovery/federation remains an optional management-
 
 ```text
 src/authn                       authguard-authn crate
-  provider/                     configurable adapter and minimal SPI
-  principal/jit.rs              policy-gated account linking/JIT materialization
-  route/authentication.rs       OAuth/OAuth-like HTTP entry points
-  handler/authentication.rs     authentication flow orchestration
+  authentication/{mod,challenge,token}.rs
+                                protocol-neutral cache challenges and unified JWT
+  provider/base/                OAuth2-like normalization and base adapter
+  provider/standalone/          Password/TOTP/WebAuthn protocol implementations
+  provider/wallet/              feature-gated CAIP/SIWX and chain verifiers
+  route/{authentication,standalone,wallet,meta}.rs
+                                protocol routes and public capability discovery
+  handler/                      HTTP orchestration, repositories, and runtime
+  principal/                    JIT, identity linking, and canonical Principal resolution
   server.rs                     process initialization and listener lifecycle
 
 src/common                      authguard-common crate
@@ -399,8 +404,8 @@ src/common                      authguard-common crate
                                 entity-neutral pools and schema initialization
   storage/principal_{sqlite,postgres}.rs
                                 shared canonical Principal and identity binding persistence
-  storage/authn/flow_{sqlite,postgres}.rs
-                                AuthN flow repositories
+  storage/authn/credential_{sqlite,postgres}.rs
+                                sole standalone credential persistence
   storage/authz/role_{sqlite,postgres}.rs
                                 AuthZ role and authorization catalog repositories
   principal/{mod,custom}.rs     common discovery contract and custom HTTP connector
@@ -414,7 +419,8 @@ src/authz                        authguard-authz crate
   handler/{authorization,principal}.rs
                                 authorization catalog and Principal use cases
   handler/authorization.rs      ext_authz evaluation and scope delivery
-  handler/policy.rs             authorization catalog CRUD and compilation
+  handler/policy/{mod,policy}.rs
+                                immutable evaluation runtime and catalog CRUD
   principal/{ldap,keycloak,scim}/
                                 optional 2B control-plane federation connectors
   server.rs                     process initialization and listener lifecycle

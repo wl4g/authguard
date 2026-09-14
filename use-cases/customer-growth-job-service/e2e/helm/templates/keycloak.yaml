@@ -35,7 +35,7 @@ stringData:
   AUTHGUARD_SCIM_API_PASSWORD: {{ required "authguard.apiToken is required" .Values.authguard.apiToken | quote }}
   AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY: {{ .Values.authguard.accessContext.signingKey | quote }}
   # AuthN signs canonical sessions; Envoy receives only the paired public JWKS.
-  AUTHGUARD_AUTHN_SESSION_PRIVATE_KEY: |
+  AUTHGUARD_AUTHN_TOKEN_PRIVATE_KEY: |
 {{ required "keycloak.realmSigningPrivateKey must contain the AuthN test signing key" .Values.keycloak.realmSigningPrivateKey | indent 4 }}
   # Base64 PKCS#8 PEM is consumed directly by authz.resign.private_key_b64.
   AUTHGUARD__AUTHZ__RESIGN__PRIVATE_KEY_B64: {{ required "keycloak.resignJwtPrivateKey must contain the resign JWT private key" .Values.keycloak.resignJwtPrivateKey | b64enc | quote }}

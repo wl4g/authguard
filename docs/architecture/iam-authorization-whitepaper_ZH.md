@@ -47,7 +47,7 @@ Envoy Gateway 负责：
 - 热路径中的 `jwt_authn → ext_authz(authguard-authz)`；
 - 删除客户端伪造的 AuthGuard 内部身份头。
 
-对于已经由 AuthN 签发 canonical session/token 的请求，Envoy 验证签名、issuer、audience 与有效期，再把受信 token 交给 AuthZ。AuthZ 不重复实现 OAuth 或 Provider 协议。
+对于已经由 AuthN 签发 canonical token 的请求，Envoy 验证签名、issuer、audience 与有效期，再把受信 token 交给 AuthZ。AuthZ 不重复实现 OAuth 或 Provider 协议。
 
 标准 OIDC 的 discovery、授权重定向、callback、code exchange、ID Token 验签和可选 UserInfo 全部由 AuthN 处理，与 GitHub、WeChat、DSP 等 OAuth2-like/专有协议保持同一模块边界。Envoy 不接收 Provider authorization code 或 access token；业务热路径只验证 AuthN 签发的 canonical JWT。
 
@@ -359,7 +359,7 @@ Enterprise OIDC / Keycloak / Entra
   -> Envoy Gateway -> authguard-authn authorize/callback
   -> OIDC discovery / code exchange / ID Token verification / optional UserInfo
   -> ExternalIdentity -> identity binding lookup
-  -> canonical session/token
+  -> canonical token
   -> Envoy jwt_authn
   -> authguard-authz ext_authz
   -> Biz Service
@@ -436,10 +436,15 @@ Keycloak 是可选 external enterprise IdP integration，不是 AuthGuard runtim
 
 ```text
 src/authn                       authguard-authn crate
-  provider/                     configurable adapter + minimal SPI
-  principal/jit.rs              linking policy 门控的账号绑定/JIT materialization
-  route/authentication.rs       OAuth/OAuth-like HTTP 入口
-  handler/authentication.rs     认证流程编排
+  authentication/{mod,challenge,token}.rs
+                                协议无关 cache challenge 与统一 JWT
+  provider/base/                OAuth2-like normalization 与基础 adapter
+  provider/standalone/          Password/TOTP/WebAuthn 协议实现
+  provider/wallet/              feature-gated CAIP/SIWX 与链 verifier
+  route/{authentication,standalone,wallet,meta}.rs
+                                协议入口与公开能力发现
+  handler/                      HTTP 编排、repository 与 runtime
+  principal/                    JIT、identity linking 与 canonical Principal 解析
   server.rs                     进程初始化与 listener 生命周期
 
 src/common                      authguard-common crate
@@ -450,8 +455,8 @@ src/common                      authguard-common crate
                                 实体无关连接池与 schema 初始化
   storage/principal_{sqlite,postgres}.rs
                                 共用 canonical Principal 与 identity binding 持久化
-  storage/authn/flow_{sqlite,postgres}.rs
-                                AuthN flow 持久化
+  storage/authn/credential_{sqlite,postgres}.rs
+                                唯一 standalone credential 持久化
   storage/authz/role_{sqlite,postgres}.rs
                                 AuthZ role 与授权目录持久化
   principal/{mod,custom}.rs     公共 discovery 契约与自定义 HTTP 目录连接器
@@ -465,7 +470,8 @@ src/authz                        authguard-authz crate
   handler/{authorization,principal}.rs
                                 授权目录与 Principal 管理用例
   handler/authorization.rs      ext_authz 请求鉴权与 scope 下发
-  handler/policy.rs             授权目录 CRUD 与编译
+  handler/policy/{mod,policy}.rs
+                                不可变求值 runtime 与授权目录 CRUD
   principal/{ldap,keycloak,scim}/
                                 可选 2B 控制面 federation connectors
   server.rs                     进程初始化与 listener 生命周期

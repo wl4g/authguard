@@ -179,6 +179,10 @@ OPTIONAL_SCENARIOS = {
         "Core 3/3: OIDC user/workload, Envoy, AuthZ, and Biz CRUD",
         "verifier.s17_gateway_authorization_verifier",
     ),
+    "19": (
+        "Customer Growth UI: deployed assets and dynamic AuthN capabilities",
+        "verifier.s19_customer_growth_ui_verifier",
+    ),
     "21": (
         "Observability: PostgreSQL, logs, metrics, Jaeger, and runtime health",
         "verifier.s21_runtime_evidence_verifier",

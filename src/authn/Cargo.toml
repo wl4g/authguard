@@ -9,6 +9,7 @@ rust-version.workspace = true
 default = []
 web3 = [
   "dep:bitcoin",
+  "dep:bip322",
   "dep:bs58",
   "dep:hex",
   "dep:siwx",
@@ -22,16 +23,16 @@ aes-gcm.workspace = true
 anyhow.workspace = true
 argon2.workspace = true
 async-trait.workspace = true
-authguard-common.workspace = true
+authguard-common = { workspace = true, features = ["redis-cache"] }
 axum.workspace = true
 base64.workspace = true
 bitcoin = { workspace = true, optional = true }
+bip322 = { workspace = true, optional = true }
 bs58 = { workspace = true, optional = true }
 chrono.workspace = true
 hex = { workspace = true, optional = true }
 openidconnect.workspace = true
 rand.workspace = true
-redis.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

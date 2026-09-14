@@ -3,7 +3,7 @@
 use axum::routing::post;
 use axum::Router;
 
-use crate::wallet::{challenge, link, verify, WalletHandler};
+use crate::handler::wallet::{challenge, link, verify, WalletHandler};
 
 pub(crate) fn router(handler: WalletHandler) -> Router {
     Router::new()

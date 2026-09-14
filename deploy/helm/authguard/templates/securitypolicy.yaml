@@ -16,7 +16,7 @@ spec:
       kind: Gateway
       name: {{ $ext.gateway.name }}
       sectionName: protected
-  # Envoy verifies only AuthN's canonical session JWT, then asks AuthZ for the
+  # Envoy verifies only AuthN's canonical JWT, then asks AuthZ for the
   # resource decision. External IdP protocols never execute at the edge.
   jwt:
     optional: false

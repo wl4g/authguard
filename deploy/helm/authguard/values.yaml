@@ -63,7 +63,7 @@ envoy_gateway:
 # AuthN and AuthZ deployment knobs share one product root. Runtime settings
 # remain in the single authguard-config payload below.
 authguard:
-  # AuthN owns provider callbacks, normalization, sessions, and account linking.
+  # AuthN owns provider callbacks, normalization, token issuance, and account linking.
   authn:
     enabled: true
     replicaCount: 2
@@ -73,7 +73,7 @@ authguard:
       pullPolicy: IfNotPresent
     service:
       port: 8082
-    # Envoy verifies only AuthN-issued canonical session JWTs. External OIDC
+    # Envoy verifies only AuthN-issued canonical JWTs. External OIDC
     # discovery, callback, token exchange and ID-token validation stay in AuthN.
     canonical_jwt:
       issuer: authguard-authn
@@ -90,6 +90,27 @@ authguard:
     disruptionBudget:
       enabled: true
       minAvailable: 1
+
+  # Static React control plane. The public Gateway still routes authentication
+  # proofs to AuthN and management calls to AuthZ; this container serves assets only.
+  web:
+    enabled: true
+    replicaCount: 2
+    image:
+      repository: ghcr.io/wl4g/authguard-web
+      tag: "latest"
+      pullPolicy: IfNotPresent
+    service:
+      port: 8080
+    route:
+      enabled: true
+      name: authguard-web
+      # Empty inherits envoy_gateway.ext_authz.authnRoute.hostnames so OAuth
+      # callbacks and the UI remain same-origin.
+      hostnames: []
+    resources:
+      requests: { cpu: 10m, memory: 16Mi }
+      limits: { cpu: 100m, memory: 64Mi }
 
   # ───────────────────────────────────────────────────────────────────
   # Authguard AuthZ — deployment parameters plus the COMPLETE shared
@@ -234,7 +255,7 @@ authguard:
         strategy: explicit
         authoritativeProviders: []
         allowLink: {}
-      session:
+      token:
         issuer: authguard-authn
         audience: authguard
         ttl: 5m
@@ -353,7 +374,7 @@ authguard:
       # needed. Business workloads hold only the paired public key.
       resign:
         enabled: false
-        # Never extend the incoming AuthN session: effective TTL is
+        # Never extend the incoming AuthN token: effective TTL is
         # min(max_ttl, source JWT remaining lifetime).
         max_ttl: 60s
         private_key_b64: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD__AUTHZ__RESIGN__PRIVATE_KEY_B64}"{{ end }}
@@ -449,7 +470,7 @@ redis_cluster:
 # AuthGuard also needs product-owned cryptographic material. These are not
 # external connection passwords and therefore are intentionally not counted
 # as another integration class:
-#   AUTHGUARD_AUTHN_SESSION_PRIVATE_KEY  (AuthN canonical JWT signing key)
+#   AUTHGUARD_AUTHN_TOKEN_PRIVATE_KEY  (AuthN canonical JWT signing key)
 #   AUTHGUARD__AUTHZ__RESIGN__PRIVATE_KEY_B64 (base64 PKCS#8 PEM when
 #                                               authz.resign.enabled=true)
 #   AUTHGUARD__AUTHZ__API_TOKEN          (required for /api/v1 control-plane API)

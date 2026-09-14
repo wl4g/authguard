@@ -33,6 +33,11 @@ app.kubernetes.io/component: authz
 app.kubernetes.io/component: authn
 {{- end -}}
 
+{{- define "authguard.webSelectorLabels" -}}
+{{ include "authguard.selectorLabels" . }}
+app.kubernetes.io/component: web
+{{- end -}}
+
 {{- define "authguard.serviceAccountName" -}}
 {{- if .Values.authguard.authz.serviceAccount.create -}}
 {{- default (include "authguard.fullname" .) .Values.authguard.authz.serviceAccount.name -}}

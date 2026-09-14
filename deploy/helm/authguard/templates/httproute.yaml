@@ -45,6 +45,9 @@ spec:
         - path:
             type: PathPrefix
             value: /auth/
+        - path:
+            type: Exact
+            value: /.well-known/authn.json
       backendRefs:
         - name: {{ include "authguard.fullname" . }}-authn
           port: {{ .Values.authguard.authn.service.port }}

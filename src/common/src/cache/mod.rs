@@ -15,6 +15,17 @@ pub use memory::MemoryAuthorizationCache;
 pub use redis::RedisAuthorizationCache;
 
 #[async_trait]
+pub trait ICache: Send + Sync {
+    /// Stores a value only when the key does not already exist.
+    async fn put_if_absent(&self, key: &str, value: &[u8], ttl: Duration) -> anyhow::Result<bool>;
+
+    /// Atomically returns and removes a value.
+    async fn take(&self, key: &str) -> anyhow::Result<Option<Vec<u8>>>;
+
+    async fn ping(&self) -> anyhow::Result<()>;
+}
+
+#[async_trait]
 pub trait IAuthorizationCache: Send + Sync {
     async fn store_scope(
         &self,
@@ -51,5 +62,33 @@ pub async fn open() -> anyhow::Result<Arc<dyn IAuthorizationCache>> {
             }
         }
         provider => anyhow::bail!("unsupported authorization cache provider `{provider}`"),
+    }
+}
+
+/// Opens the configured cache through the protocol-neutral cache interface.
+///
+/// # Errors
+///
+/// Returns an error when the provider is unsupported or cannot be initialized.
+pub async fn open_cache() -> anyhow::Result<Arc<dyn ICache>> {
+    let app_config = AppConfig::get();
+    let config = app_config.get_cache();
+    match config.provider.to_ascii_lowercase().as_str() {
+        "memory" => Ok(Arc::new(MemoryAuthorizationCache::new(&config.memory))),
+        "redis" | "redis_cluster" => {
+            #[cfg(feature = "redis-cache")]
+            {
+                Ok(Arc::new(
+                    RedisAuthorizationCache::connect(&config.redis)
+                        .await
+                        .context("open Redis Cluster cache")?,
+                ))
+            }
+            #[cfg(not(feature = "redis-cache"))]
+            {
+                anyhow::bail!("Redis cache support is not enabled in this service build")
+            }
+        }
+        provider => anyhow::bail!("unsupported cache provider `{provider}`"),
     }
 }

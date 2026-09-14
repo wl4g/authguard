@@ -63,7 +63,7 @@ REQUIRED_PATHS = {
     ),
 }
 
-SUPPORT_PROJECTS = {"mocksvc-idp-service"}
+SUPPORT_PROJECTS = {"customer-growth-ui-service", "mocksvc-idp-service"}
 
 AUTHGUARD_REQUIRED_PATHS = (
     "src/common/src/route/management.rs",
@@ -73,8 +73,8 @@ AUTHGUARD_REQUIRED_PATHS = (
     "src/common/src/apm/metrics.rs",
     "src/common/src/storage/base_sqlite.rs",
     "src/common/src/storage/base_postgres.rs",
-    "src/common/src/storage/authn/flow_sqlite.rs",
-    "src/common/src/storage/authn/flow_postgres.rs",
+    "src/common/src/storage/authn/credential_sqlite.rs",
+    "src/common/src/storage/authn/credential_postgres.rs",
     "src/common/src/storage/principal_sqlite.rs",
     "src/common/src/storage/principal_postgres.rs",
     "src/common/src/storage/authz/role_sqlite.rs",
@@ -90,21 +90,33 @@ AUTHGUARD_REQUIRED_PATHS = (
     "src/authn/src/server.rs",
     "src/authn/src/route/authentication.rs",
     "src/authn/src/handler/authentication.rs",
+    "src/authn/src/principal/mod.rs",
+    "src/authn/src/principal/jit.rs",
+    "src/authn/src/handler/oauth2.rs",
+    "src/authn/src/handler/standalone.rs",
+    "src/authn/src/handler/webauthn.rs",
+    "src/authn/src/handler/wallet.rs",
     "src/authn/src/provider/mod.rs",
-    "src/authn/src/provider/oauth_like.rs",
+    "src/authn/src/provider/base/normalization.rs",
+    "src/authn/src/provider/base/oauth2_like.rs",
+    "src/authn/src/provider/standalone/password.rs",
+    "src/authn/src/provider/standalone/totp.rs",
+    "src/authn/src/provider/standalone/webauthn.rs",
+    "src/authn/src/provider/wallet/caip.rs",
+    "src/authn/src/provider/wallet/evm.rs",
+    "src/authn/src/provider/wallet/bitcoin.rs",
     "src/authn/src/provider/github.rs",
     "src/authn/src/provider/google.rs",
     "src/authn/src/provider/oidc.rs",
     "src/authn/src/provider/qq.rs",
     "src/authn/src/provider/wechat.rs",
-    "src/authn/src/principal/jit.rs",
     "src/authz/src/server.rs",
     "src/authz/src/route/authorization.rs",
     "src/authz/src/route/policy.rs",
     "src/authz/src/route/principal.rs",
     "src/authz/src/route/scim.rs",
-    "src/authz/src/handler/policy.rs",
-    "src/authz/src/handler/policy/runtime.rs",
+    "src/authz/src/handler/policy/mod.rs",
+    "src/authz/src/handler/policy/policy.rs",
     "src/authz/src/handler/authorization.rs",
     "src/authz/src/handler/principal.rs",
     "src/authz/src/handler/scim.rs",
@@ -136,6 +148,9 @@ AUTHGUARD_FORBIDDEN_PATHS = (
     "src/authn/src/apm",
     "src/authn/src/config",
     "src/authn/src/main.rs",
+    "src/authn/src/standalone",
+    "src/authn/src/wallet",
+    "src/authn/src/handler/account_linking.rs",
     "src/authz/src/apm",
     "src/authz/src/config",
     "src/authz/src/model",
@@ -155,6 +170,7 @@ REAL_E2E_VERIFIERS = (
     "s15_principal_preauthorization_verifier.py",
     "s16_authentication_verifier.py",
     "s17_gateway_authorization_verifier.py",
+    "s19_customer_growth_ui_verifier.py",
     "s20_observability_contract.py",
     "s21_runtime_evidence_verifier.py",
 )
@@ -321,12 +337,12 @@ def _verify(_context: RunContext) -> VerificationResult:
 
     details = [
         "One use-case root",
-        f"Five business projects plus one realistic mock IdP: {', '.join(sorted(expected_projects))}",
+        f"Five business projects plus UI and mock IdP support: {', '.join(sorted(expected_projects))}",
         "Each project keeps authorization, controller, DTO, entity, repository, service, and E2E test boundaries",
         "AuthGuard common/AuthN/AuthZ source boundaries match the converged module contract",
         f"Deployed resources use {E2E_RESOURCE_PREFIX} / {E2E_SQL_PREFIX}; host forwards use 288xx",
         "Real k3s phases are ordered 00 deployment -> 15 pre-authorization -> "
-        "16 AuthN -> 17 Envoy/AuthZ/Biz -> 21 runtime evidence; phase 20 is their "
+        "16 AuthN -> 17 Envoy/AuthZ/Biz -> 19 UI -> 21 runtime evidence; phase 20 is their "
         "shared fail-closed observability contract",
         "Runner supports opt-in cleanup of all Helm releases and the isolated namespace",
     ]

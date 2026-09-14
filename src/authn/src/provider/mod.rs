@@ -1,10 +1,12 @@
+mod base;
 mod github;
 mod google;
-mod normalization;
-mod oauth_like;
 mod oidc;
 mod qq;
+pub(crate) mod standalone;
 mod transport;
+#[cfg(feature = "web3")]
+pub(crate) mod wallet;
 mod wechat;
 
 use async_trait::async_trait;
@@ -112,9 +114,9 @@ impl ProviderError {
     }
 }
 
+pub use base::OAuthLikeProvider;
 pub use github::GithubOauth2Provider;
 pub use google::GoogleOauth2Provider;
-pub use oauth_like::OAuthLikeProvider;
 pub use oidc::OidcProvider;
 pub use qq::QqOauth2Provider;
 pub use transport::{ProviderTransport, ReqwestProviderTransport};

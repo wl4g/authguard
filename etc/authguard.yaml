@@ -48,7 +48,7 @@ mgmt:
 # Each process resolves only its owned authn/authz secrets.
 authn:
   # OAuth state, TOTP enrollment, WebAuthn ceremonies and SIWX nonces all use
-  # the same Redis-backed one-time challenge store.
+  # the same ICache-backed one-time challenge store (Redis in production).
   challengeTtl: 5m
   # Standard OIDC example. Browser login uses Authorization Code + PKCE and
   # nonce-bound ID Token verification. Optional RFC 7662 introspection is the
@@ -116,11 +116,11 @@ authn:
     strategy: explicit
     authoritativeProviders: []
     allowLink: {}
-  session:
+  token:
     issuer: authguard-authn
     audience: authguard
     ttl: 5m
-    # Set from AUTHGUARD__AUTHN__SESSION__PRIVATE_KEY or mount privateKeyFile.
+    # Set from AUTHGUARD__AUTHN__TOKEN__PRIVATE_KEY or mount privateKeyFile.
     privateKey: ""
     privateKeyFile: ""
 

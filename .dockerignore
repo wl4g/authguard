@@ -2,6 +2,8 @@
 .gitignore
 target
 **/target
+web
+use-cases/customer-growth-job-service/e2e/deploy/customer-growth-ui-service
 **/__pycache__
 **/.pytest_cache
 **/.mypy_cache

@@ -3,7 +3,7 @@
 use axum::routing::post;
 use axum::Router;
 
-use crate::standalone::{
+use crate::handler::standalone::{
     login, register, totp_enrollment_challenge, totp_enrollment_verify,
     webauthn_authentication_challenge, webauthn_authentication_verify,
     webauthn_registration_challenge, webauthn_registration_verify, StandaloneHandler,

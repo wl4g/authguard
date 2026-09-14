@@ -3,7 +3,7 @@
 //! Startup precedence is Spring Boot-like and uses schema-agnostic YAML traversal:
 //! built-in defaults < authguard.yaml < AUTHGUARD__... environment values.
 //! Double underscores address arbitrary nested properties, for example
-//! `AUTHGUARD__AUTHN__SESSION__AUDIENCE` and
+//! `AUTHGUARD__AUTHN__TOKEN__AUDIENCE` and
 //! `AUTHGUARD__STORAGE__POSTGRES__MAX_CONNECTIONS`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -202,7 +202,7 @@ pub struct AuthnProperties {
     pub wallet: WalletAuthnProperties,
     #[serde(rename = "accountLinking")]
     pub account_linking: AccountLinkingProperties,
-    pub session: SessionProperties,
+    pub token: TokenProperties,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -350,7 +350,7 @@ pub struct CustomProviderProperties {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct SessionProperties {
+pub struct TokenProperties {
     pub issuer: String,
     pub audience: String,
     #[serde(with = "humantime_serde")]
@@ -821,7 +821,7 @@ impl Default for AuthnProperties {
             standalone: StandaloneAuthnProperties::default(),
             wallet: WalletAuthnProperties::default(),
             account_linking: AccountLinkingProperties::default(),
-            session: SessionProperties::default(),
+            token: TokenProperties::default(),
         }
     }
 }
@@ -881,7 +881,7 @@ impl Default for WalletAuthnProperties {
     }
 }
 
-impl Default for SessionProperties {
+impl Default for TokenProperties {
     fn default() -> Self {
         Self {
             issuer: "authguard-authn".to_string(),
@@ -1984,7 +1984,7 @@ mod tests {
     fn arbitrary_nested_environment_values_override_yaml() {
         let _guard = ENV_LOCK.lock().unwrap();
         let cleanup = EnvCleanup(vec![
-            "AUTHGUARD__AUTHN__SESSION__AUDIENCE",
+            "AUTHGUARD__AUTHN__TOKEN__AUDIENCE",
             "AUTHGUARD__AUTHN__CHALLENGE_TTL",
             "AUTHGUARD__STORAGE__POSTGRES__MAX_CONNECTIONS",
             "AUTHGUARD__MGMT__OTEL__ENABLED",
@@ -1998,7 +1998,7 @@ mod tests {
             r"
 authn:
   challengeTtl: 1m
-  session:
+  token:
     audience: yaml-audience
 storage:
   provider: SQLite
@@ -2012,7 +2012,7 @@ mgmt:
 ",
         )
         .unwrap();
-        std::env::set_var("AUTHGUARD__AUTHN__SESSION__AUDIENCE", "env-audience");
+        std::env::set_var("AUTHGUARD__AUTHN__TOKEN__AUDIENCE", "env-audience");
         std::env::set_var("AUTHGUARD__AUTHN__CHALLENGE_TTL", "3m");
         std::env::set_var("AUTHGUARD__STORAGE__POSTGRES__MAX_CONNECTIONS", "17");
         std::env::set_var("AUTHGUARD__MGMT__OTEL__ENABLED", "true");
@@ -2021,7 +2021,7 @@ mgmt:
         std::fs::remove_dir_all(&directory).ok();
         drop(cleanup);
 
-        assert_eq!(config.authn.session.audience, "env-audience");
+        assert_eq!(config.authn.token.audience, "env-audience");
         assert_eq!(config.authn.challenge_ttl, Duration::from_secs(180));
         assert_eq!(config.storage.postgres.max_connections, 17);
         assert!(config.mgmt.otel.enabled);
@@ -2032,7 +2032,7 @@ mgmt:
         let mut authorization_view = serde_yaml::from_str::<serde_yaml::Value>(
             r"
 authn:
-  session:
+  token:
     privateKey: ${AUTHN_ONLY_KEY}
 authz:
   api_token: resolved-authz-secret
@@ -2041,7 +2041,7 @@ authz:
         .unwrap();
         expand_authz_owned_env_refs(&mut authorization_view, &HashMap::new()).unwrap();
         assert_eq!(
-            authorization_view["authn"]["session"]["privateKey"].as_str(),
+            authorization_view["authn"]["token"]["privateKey"].as_str(),
             Some("${AUTHN_ONLY_KEY}")
         );
 

@@ -1,13 +1,22 @@
 pub mod authentication;
 mod error;
+pub(crate) mod oauth2;
+pub(crate) mod standalone;
+#[cfg(feature = "web3")]
+pub(crate) mod wallet;
+mod webauthn;
 
 use authguard_common::model::AuthenticatedPrincipalContext;
 use serde::Serialize;
 
-pub(crate) use authentication::AuthenticationHandler;
+pub(crate) use authentication::{
+    AuthenticationPipeline, AuthenticationPipelineError, AuthnRuntime, IssuedAuthentication,
+};
 pub(crate) use error::ApiError;
-
-use crate::pipeline::AuthenticatedSession;
+pub(crate) use oauth2::OAuth2Handler;
+pub(crate) use standalone::StandaloneHandler;
+#[cfg(feature = "web3")]
+pub(crate) use wallet::WalletHandler;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,13 +29,13 @@ pub(crate) struct LoginResponse {
 }
 
 impl LoginResponse {
-    pub(crate) fn new(session: AuthenticatedSession, return_uri: String) -> Self {
+    pub(crate) fn new(issued: IssuedAuthentication, return_uri: String) -> Self {
         Self {
-            access_token: session.access_token,
+            access_token: issued.access_token,
             token_type: "Bearer",
-            expires_in: session.expires_in,
+            expires_in: issued.expires_in,
             return_uri,
-            principal: session.principal,
+            principal: issued.principal,
         }
     }
 }

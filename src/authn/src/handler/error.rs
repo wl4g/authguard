@@ -4,9 +4,9 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::json;
 
-use crate::challenge::ChallengeStoreError;
-use crate::pipeline::AuthenticationPipelineError;
-use crate::session::SessionError;
+use crate::authentication::challenge::ChallengeError;
+use crate::authentication::TokenError;
+use crate::handler::AuthenticationPipelineError;
 
 #[derive(Debug)]
 pub(crate) struct ApiError {
@@ -40,11 +40,11 @@ impl ApiError {
         Self { status: StatusCode::INTERNAL_SERVER_ERROR, code: "internal_error", message }
     }
 
-    pub(crate) fn challenge(error: ChallengeStoreError) -> Self {
+    pub(crate) fn challenge(error: ChallengeError) -> Self {
         tracing::error!(error = %error, "authentication challenge operation failed");
         match error {
-            ChallengeStoreError::InvalidState => Self::bad_request("invalid or expired challenge"),
-            ChallengeStoreError::Backend => {
+            ChallengeError::InvalidState => Self::bad_request("invalid or expired challenge"),
+            ChallengeError::Backend => {
                 Self::unavailable("authentication challenge service is unavailable")
             }
         }
@@ -66,18 +66,18 @@ impl ApiError {
                 }
                 _ => Self::unavailable("account linking is unavailable"),
             },
-            AuthenticationPipelineError::Session(_) => {
-                Self::internal("canonical session token could not be issued")
+            AuthenticationPipelineError::Token(_) => {
+                Self::internal("canonical token could not be issued")
             }
         }
     }
 
-    pub(crate) fn session(error: SessionError) -> Self {
-        tracing::warn!(error = %error, "canonical AuthGuard session rejected");
+    pub(crate) fn token(error: TokenError) -> Self {
+        tracing::warn!(error = %error, "canonical AuthGuard token rejected");
         match error {
-            SessionError::InvalidToken => Self::unauthorized("valid AuthGuard session required"),
-            SessionError::SigningUnavailable => {
-                Self::internal("canonical session verification is unavailable")
+            TokenError::InvalidToken => Self::unauthorized("valid AuthGuard token required"),
+            TokenError::SigningUnavailable => {
+                Self::internal("canonical token verification is unavailable")
             }
         }
     }

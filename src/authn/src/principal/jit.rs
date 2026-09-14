@@ -1,3 +1,5 @@
+//! JIT Principal resolution and protocol-independent external-identity linking.
+
 use std::collections::BTreeMap;
 
 use authguard_common::storage::{IdentityBindingRepository, IdentityRepositoryError};

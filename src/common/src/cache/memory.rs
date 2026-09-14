@@ -4,12 +4,13 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use super::IAuthorizationCache;
+use super::{IAuthorizationCache, ICache};
 use crate::config::MemoryCacheProperties;
 use crate::epoch_seconds;
 
 pub struct MemoryAuthorizationCache {
     scopes: Mutex<MemoryScopes>,
+    values: Mutex<HashMap<String, MemoryValue>>,
     max_capacity: usize,
     default_ttl: Duration,
 }
@@ -25,6 +26,11 @@ struct MemoryScope {
     last_access_sequence: u64,
 }
 
+struct MemoryValue {
+    value: Vec<u8>,
+    expires_at_epoch_seconds: u64,
+}
+
 impl MemoryAuthorizationCache {
     #[must_use]
     pub fn new(config: &MemoryCacheProperties) -> Self {
@@ -33,6 +39,7 @@ impl MemoryAuthorizationCache {
                 entries: HashMap::with_capacity(config.initial_capacity.min(config.max_capacity)),
                 next_access_sequence: 0,
             }),
+            values: Mutex::new(HashMap::new()),
             max_capacity: config.max_capacity,
             default_ttl: config.ttl,
         }
@@ -41,6 +48,34 @@ impl MemoryAuthorizationCache {
     fn expires_at(&self, ttl: Duration) -> u64 {
         let effective_ttl = ttl.min(self.default_ttl).as_secs().max(1);
         epoch_seconds().saturating_add(effective_ttl)
+    }
+}
+
+#[async_trait]
+impl ICache for MemoryAuthorizationCache {
+    async fn put_if_absent(&self, key: &str, value: &[u8], ttl: Duration) -> anyhow::Result<bool> {
+        let now = epoch_seconds();
+        let mut values = self.values.lock().await;
+        values.retain(|_, value| value.expires_at_epoch_seconds > now);
+        if values.contains_key(key) {
+            return Ok(false);
+        }
+        values.insert(
+            key.to_string(),
+            MemoryValue { value: value.to_vec(), expires_at_epoch_seconds: self.expires_at(ttl) },
+        );
+        Ok(true)
+    }
+
+    async fn take(&self, key: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        let now = epoch_seconds();
+        let mut values = self.values.lock().await;
+        values.retain(|_, value| value.expires_at_epoch_seconds > now);
+        Ok(values.remove(key).map(|value| value.value))
+    }
+
+    async fn ping(&self) -> anyhow::Result<()> {
+        Ok(())
     }
 }
 

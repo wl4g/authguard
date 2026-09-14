@@ -43,6 +43,10 @@ E2E_KEYS_DIR = CONFIG_DIR / "e2e-jwt-keys"
 MOCK_IDP_IMAGE = (
     "registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-mock-idp:e2e-local"
 )
+CUSTOMER_GROWTH_UI_IMAGE = (
+    "registry.cn-shenzhen.aliyuncs.com/wl4g/"
+    "e2e-authguard-customer-growth-ui:e2e-local"
+)
 WORKLOAD_IMAGES = {
     "go-sqlx": "registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-go-sqlx:e2e-local",
     "rust-sqlx": "registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-rust-sqlx:e2e-local",
@@ -126,6 +130,10 @@ class KubernetesE2E:
     @property
     def mock_idp_service(self) -> str:
         return f"{self.support_release}-mock-idp"
+
+    @property
+    def customer_growth_ui_service(self) -> str:
+        return f"{self.support_release}-customer-growth-ui"
 
     def workload_service(self, component: str) -> str:
         return f"{self.support_release}-{component}"
@@ -251,9 +259,30 @@ class KubernetesE2E:
                 *build_args,
                 "-f",
                 str(PROJECT_ROOT / "deploy" / "docker" / "Dockerfile"),
+                "--build-arg",
+                "AUTHGUARD_CARGO_FEATURES=web3",
                 "-t",
                 AUTHGUARD_IMAGE,
                 ".",
+            ),
+            cwd=PROJECT_ROOT,
+        )
+        ui_dir = self.deploy_dir / "customer-growth-ui-service"
+        reown_project_id = os.getenv("VITE_REOWN_PROJECT_ID", "")
+        self._run(
+            (
+                "docker",
+                "build",
+                "--network=host",
+                "--pull=false",
+                *build_args,
+                "-f",
+                str(ui_dir / "Dockerfile"),
+                "--build-arg",
+                f"VITE_REOWN_PROJECT_ID={reown_project_id}",
+                "-t",
+                CUSTOMER_GROWTH_UI_IMAGE,
+                str(ui_dir),
             ),
             cwd=PROJECT_ROOT,
         )
@@ -322,12 +351,12 @@ class KubernetesE2E:
         # e2e-local tags are intentionally mutable. Import them immediately before
         # creating their Pods so k3s image GC cannot collect an unreferenced image
         # while an earlier Helm release is still becoming ready.
-        for image in (*WORKLOAD_IMAGES.values(), MOCK_IDP_IMAGE):
+        for image in (*WORKLOAD_IMAGES.values(), MOCK_IDP_IMAGE, CUSTOMER_GROWTH_UI_IMAGE):
             self._import_image(image)
 
     def _remove_mutable_cluster_images(self) -> None:
         """Prevent a recreated Pod from starting an obsolete mutable E2E image tag."""
-        for image in (*WORKLOAD_IMAGES.values(), MOCK_IDP_IMAGE):
+        for image in (*WORKLOAD_IMAGES.values(), MOCK_IDP_IMAGE, CUSTOMER_GROWTH_UI_IMAGE):
             self._run(
                 (*self._k3s_command(), "ctr", "-n", "k8s.io", "images", "remove", image),
                 allowed_codes={0, 1},
@@ -435,6 +464,7 @@ class KubernetesE2E:
             self.jaeger_service,
             self.postgresql_service,
             self.mock_idp_service,
+            self.customer_growth_ui_service,
             *[self.workload_service(component) for component in WORKLOAD_IMAGES],
         ):
             self._run(
@@ -547,6 +577,7 @@ class KubernetesE2E:
                         "remote_jwks": {"uri": "", "backend_refs": []},
                     },
                 },
+                "web": {"enabled": False},
                 "authz": {
                     "replicaCount": 1,
                     "image": {
@@ -695,16 +726,37 @@ class KubernetesE2E:
                 "      identity:",
                 f"        endpoint: {mock_idp_url + '/qq/oauth2.0/me?fmt=json'!r}",
                 "        subject: $.openid",
+                "  standalone:",
+                "    enabled: true",
+                "    issuer: urn:authguard:e2e:standalone",
+                "    password:",
+                "      minLength: 12",
+                "    totp:",
+                "      enabled: false",
+                "    webauthn:",
+                "      enabled: false",
+                "  wallet:",
+                "    enabled: true",
+                f"    domain: {AUTHN_HOST + ':8082'!r}",
+                f"    uri: {'http://' + AUTHN_HOST + ':8082'!r}",
+                "    statement: Sign in to Customer Growth",
+                "    rpcTimeout: 2s",
+                "    chains:",
+                "      eip155:",
+                "        '1':",
+                "          rpc: http://ethereum-rpc.invalid",
+                "      solana: []",
+                "      bip122: {}",
                 "  accountLinking:",
                 "    strategy: first-login",
                 "    authoritativeProviders: []",
                 "    allowLink: {}",
                 "  challengeTtl: 2m",
-                "  session:",
+                "  token:",
                 f"    issuer: {self.authn_issuer!r}",
                 "    audience: customer-growth-job-service",
                 "    ttl: 5m",
-                '    privateKey: "${AUTHGUARD_AUTHN_SESSION_PRIVATE_KEY}"',
+                '    privateKey: "${AUTHGUARD_AUTHN_TOKEN_PRIVATE_KEY}"',
                 "server:",
                 "  service_name: authguard-authz",
                 "  host: 0.0.0.0",

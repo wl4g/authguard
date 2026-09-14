@@ -10,7 +10,7 @@ use openidconnect::{
 use serde::{Deserialize, Serialize};
 use tracing::Instrument as _;
 
-use super::normalization::normalize_identity;
+use super::base::normalization::normalize_identity;
 use super::{IProviderAdapter, OAuthLikeCallback, ProviderAuthorization, ProviderError};
 use crate::config::OidcProviderProperties;
 use crate::model::ExternalIdentity;

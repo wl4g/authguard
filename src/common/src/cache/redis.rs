@@ -7,7 +7,7 @@ use redis::AsyncCommands as _;
 use sha2::{Digest as _, Sha256};
 use tokio::time::sleep;
 
-use super::IAuthorizationCache;
+use super::{IAuthorizationCache, ICache};
 use crate::config::RedisClusterProperties;
 
 #[derive(Clone)]
@@ -70,6 +70,10 @@ impl RedisAuthorizationCache {
     fn scope_key(&self, token: &str) -> String {
         scope_key(&self.key_prefix, token)
     }
+
+    fn cache_key(&self, key: &str) -> String {
+        format!("{}:{}", self.key_prefix, key.trim_start_matches(':'))
+    }
 }
 
 fn scope_key(key_prefix: &str, token: &str) -> String {
@@ -107,6 +111,33 @@ impl IAuthorizationCache for RedisAuthorizationCache {
     async fn load_scope(&self, token: &str) -> anyhow::Result<Option<String>> {
         let mut connection = self.connection.clone();
         Ok(connection.get(self.scope_key(token)).await?)
+    }
+
+    async fn ping(&self) -> anyhow::Result<()> {
+        let mut connection = self.connection.clone();
+        redis::cmd("PING").query_async::<String>(&mut connection).await?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ICache for RedisAuthorizationCache {
+    async fn put_if_absent(&self, key: &str, value: &[u8], ttl: Duration) -> anyhow::Result<bool> {
+        let mut connection = self.connection.clone();
+        let response = redis::cmd("SET")
+            .arg(self.cache_key(key))
+            .arg(value)
+            .arg("NX")
+            .arg("EX")
+            .arg(ttl.as_secs().max(1))
+            .query_async::<Option<String>>(&mut connection)
+            .await?;
+        Ok(response.is_some())
+    }
+
+    async fn take(&self, key: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        let mut connection = self.connection.clone();
+        Ok(redis::cmd("GETDEL").arg(self.cache_key(key)).query_async(&mut connection).await?)
     }
 
     async fn ping(&self) -> anyhow::Result<()> {

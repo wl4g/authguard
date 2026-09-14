@@ -285,7 +285,7 @@ pub struct ExternalIdentity {
 ///
 /// [`ExternalIdentity`] identifies the subject; this value records how and
 /// when that subject proved control. It is never persisted and is the sole
-/// convergence point consumed by account linking and session issuance.
+/// convergence point consumed by account linking and token issuance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthenticationResult {

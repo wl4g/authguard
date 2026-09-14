@@ -1,0 +1,98 @@
+{{- $web := .Values.authguard.web -}}
+{{- if $web.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "authguard.fullname" . }}-web
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  selector:
+    {{- include "authguard.webSelectorLabels" . | nindent 4 }}
+  ports:
+    - { name: http, port: {{ $web.service.port }}, targetPort: http }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "authguard.fullname" . }}-web
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  replicas: {{ $web.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector:
+    matchLabels:
+      {{- include "authguard.webSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "authguard.webSelectorLabels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: authguard-web
+          image: "{{ $web.image.repository }}:{{ $web.image.tag }}"
+          imagePullPolicy: {{ $web.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          ports:
+            - { name: http, containerPort: {{ $web.service.port }} }
+          livenessProbe:
+            httpGet: { path: /, port: http }
+          readinessProbe:
+            httpGet: { path: /, port: http }
+          resources:
+            {{- toYaml $web.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: nginx-cache, mountPath: /var/cache/nginx }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: nginx-cache
+          emptyDir: {}
+{{- $ext := .Values.envoy_gateway.ext_authz -}}
+{{- if and $web.route.enabled .Values.authguard.authn.enabled $ext.gateway.create $ext.authnRoute.enabled }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $web.route.name }}
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $ext.gateway.name }}
+      sectionName: authn
+  {{- $hostnames := default $ext.authnRoute.hostnames $web.route.hostnames }}
+  {{- with $hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- if and .Values.authguard.authz.enabled .Values.authguard.authz.mgmt.enabled }}
+    - matches:
+        - path: { type: PathPrefix, value: /api/ }
+      backendRefs:
+        - name: {{ include "authguard.fullname" . }}
+          port: {{ .Values.authguard.authz.service.mgmtPort }}
+    {{- end }}
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - name: {{ include "authguard.fullname" . }}-web
+          port: {{ $web.service.port }}
+{{- end }}
+{{- end }}

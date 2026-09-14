@@ -7,19 +7,17 @@ use anyhow::Context as _;
 use async_trait::async_trait;
 use authguard_common::apm::propagate_http_trace_context;
 use authguard_common::apm::{init_telemetry, AuthnMetrics, TelemetryConfig};
+use authguard_common::cache::ICache;
 use authguard_common::config::AppConfig;
 use authguard_common::route::management::{self, ManagementState, ReadinessProbe};
 use axum::middleware;
-use axum::Router;
 
-use crate::handler::AuthenticationHandler;
-use crate::runtime::AuthnRuntime;
-use crate::standalone::StandaloneHandler;
 #[cfg(feature = "web3")]
-use crate::wallet::WalletHandler;
+use crate::handler::WalletHandler;
+use crate::handler::{AuthnRuntime, OAuth2Handler, StandaloneHandler};
 
 struct AuthnReadiness {
-    challenges: Option<Arc<dyn crate::challenge::ChallengeStore>>,
+    challenges: Option<Arc<dyn ICache>>,
 }
 
 #[async_trait]
@@ -51,7 +49,7 @@ pub async fn run() -> anyhow::Result<()> {
         anyhow::bail!("authn.wallet.enabled=true requires the AuthN `web3` build feature");
     }
     let runtime = AuthnRuntime::open().await?;
-    let oauth = AuthenticationHandler::open(metrics.clone(), &runtime).await?;
+    let oauth = OAuth2Handler::open(metrics.clone(), &runtime).await?;
     let standalone = StandaloneHandler::open(&runtime)?;
     #[cfg(feature = "web3")]
     let wallet = WalletHandler::open(&runtime)?;
@@ -62,7 +60,7 @@ pub async fn run() -> anyhow::Result<()> {
             Arc::new(AuthnReadiness { challenges: runtime.challenges.clone() }),
         ),
     );
-    let mut app = Router::new();
+    let mut app = crate::route::meta::router();
     if let Some(handler) = oauth {
         app = app.merge(crate::route::authentication::router(handler));
     }

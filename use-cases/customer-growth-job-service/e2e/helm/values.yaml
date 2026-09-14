@@ -71,6 +71,15 @@ authguard:
     key: hmac-key
     signingKey: e2e-authguard-access-context-hmac-key
 
+customerGrowthUi:
+  enabled: true
+  host: e2e-authguard-authn.customer-growth.local
+  image: registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-ui:e2e-local
+  pullPolicy: Never
+  resources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { cpu: 100m, memory: 64Mi }
+
 workloads:
   go-sqlx:
     host: e2e-authguard-go-sqlx.customer-growth.local

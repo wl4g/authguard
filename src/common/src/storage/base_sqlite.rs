@@ -1,10 +1,12 @@
 use std::str::FromStr as _;
+use std::time::Instant;
 
 use anyhow::Context as _;
 use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
 };
 use sqlx::Sqlite;
+use tokio::time::sleep;
 
 use super::{IAM_BOOTSTRAP_DML, IAM_SCHEMA_DDL};
 use crate::config::SqliteProperties;
@@ -82,12 +84,7 @@ impl SqliteRepository {
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
             .busy_timeout(config.connect_timeout);
-        let pool = SqlitePoolOptions::new()
-            .max_connections(config.max_connections)
-            .acquire_timeout(config.connect_timeout)
-            .connect_with(options)
-            .await
-            .context("connect to SQLite IAM database")?;
+        let pool = connect_pool(config, options).await.context("connect to SQLite IAM database")?;
         let mut initialization = pool
             .begin_with("BEGIN IMMEDIATE")
             .await
@@ -103,6 +100,34 @@ impl SqliteRepository {
         initialization.commit().await.context("commit SQLite IAM initialization")?;
         Ok(Self { pool })
     }
+}
+
+async fn connect_pool(
+    config: &SqliteProperties,
+    options: SqliteConnectOptions,
+) -> Result<SqlitePool, sqlx::Error> {
+    let deadline = Instant::now() + config.connect_timeout;
+    loop {
+        let result = SqlitePoolOptions::new()
+            .max_connections(config.max_connections)
+            .acquire_timeout(config.connect_timeout)
+            .connect_with(options.clone())
+            .await;
+        match result {
+            Err(error) if sqlite_busy(&error) && Instant::now() < deadline => {
+                sleep(std::time::Duration::from_millis(10)).await;
+            }
+            result => return result,
+        }
+    }
+}
+
+fn sqlite_busy(error: &sqlx::Error) -> bool {
+    matches!(
+        error,
+        sqlx::Error::Database(error)
+            if error.code().as_deref() == Some("5") || error.message().contains("locked")
+    )
 }
 
 impl super::IAsyncRepository for SqliteRepository {

@@ -6,6 +6,7 @@ This chart is the Kubernetes installation entry point for the default AuthGuard 
 Envoy Gateway
 authguard-authn
 authguard-authz
+authguard-web
 ```
 
 It does not deploy Keycloak and introduces no AuthGuard CRD or Controller. Disable the vendored Envoy Gateway only when the cluster already operates a compatible installation.
@@ -23,6 +24,7 @@ Default component settings:
 
 - `envoy_gateway.enabled=true`;
 - `authguard.authn.enabled=true`, two replicas;
+- `authguard.web.enabled=true`, two static-asset replicas;
 - `authguard.authz.replicaCount=1` for the SQLite AuthZ default;
 - Redis Cluster enabled for shared opaque scope-token contexts.
 
@@ -38,6 +40,7 @@ envoy_gateway:
 
 authguard:
   authn: {}
+  web: {}
   authz: {}
   authguard-config: |-
     # One shared authguard.yaml
@@ -81,7 +84,7 @@ Provider entries describe protocol mechanics only. `authoritativeProviders` and 
 
 `accountLinking.strategy` supports two modes:
 
-- `explicit` (default): only an authoritative Provider can create a Principal; another identity is linked from an already authenticated Principal session according to `allowLink`.
+- `explicit` (default): only an authoritative Provider can create a Principal; another identity is linked with an already authenticated Principal token according to `allowLink`.
 - `first-login`: any previously unbound Provider identity creates a Principal and its identity binding, which is useful for 2C signup.
 
 `first-login` reuses an existing binding only for the same `(provider, issuer, subject)`. It never merges identities from different Providers by matching email; users link additional login methods through the authenticated explicit-link flow.
@@ -96,7 +99,7 @@ the request hot path is `jwt_authn -> ext_authz(authguard-authz)`.
 The managed Gateway uses a `protected` listener for business routes and a
 separate `authn` listener for `/auth/` authorize/callback routes. The
 SecurityPolicy targets only `sectionName: protected`, so a user can establish a
-session while every business request still requires canonical JWT verification
+token while every business request still requires canonical JWT verification
 and AuthZ. External IdP issuers are deliberately absent from this SecurityPolicy.
 
 The AuthN Service is `<release>-authguard-authn:8082`. The AuthZ Service exposes:
@@ -123,7 +126,7 @@ Common environment keys include:
 |---|---|---|
 | Redis scope cache | AuthZ cache | `AUTHGUARD__CACHE__REDIS__PASSWORD` (Kubernetes) or `AUTHGUARD_REDIS_PASSWORD` (env-file reference) |
 | PostgreSQL | shared IAM storage | `AUTHGUARD__STORAGE__POSTGRES__URL`, `AUTHGUARD__STORAGE__POSTGRES__USERNAME`, `AUTHGUARD__STORAGE__POSTGRES__PASSWORD` |
-| AuthN canonical-session key | AuthN | `AUTHGUARD_AUTHN_SESSION_PRIVATE_KEY` when referenced by `authn.session.privateKey` |
+| AuthN canonical-token key | AuthN | `AUTHGUARD_AUTHN_TOKEN_PRIVATE_KEY` when referenced by `authn.token.privateKey` |
 | Provider credentials | AuthN | deployment-defined keys referenced by `${...}` in the Provider entry |
 | Keycloak discovery service account | optional AuthZ integration | `AUTHGUARD_KEYCLOAK_CLIENT_SECRET` |
 | LDAP discovery bind | optional AuthZ integration | `AUTHGUARD_LDAP_BIND_PASSWORD` |
