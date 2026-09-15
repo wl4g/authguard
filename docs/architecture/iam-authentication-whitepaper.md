@@ -100,6 +100,14 @@ it never exposes secrets or RPC URLs. WalletConnect/Reown is browser-side discov
 transport, and signing UX. The server stores no vendor session, relay metadata, or wallet
 brand and never trusts client-side `signatureValid`.
 
+An EVM challenge returns `verificationMethods`. `/verify` accepts an optional
+`verificationMethod=auto|eoa|erc1271|erc6492` routing hint; the hint never proves identity.
+A valid EIP-191 proof is always verified locally. ERC-6492 is recognized by its magic suffix.
+Plain ERC-1271 is not self-describing, so an informed wallet client should send `erc1271` when
+the chain advertises it. A recognizable/requested contract proof without configured RPC returns
+`501 contract_wallet_not_supported`; a configured but unavailable RPC returns `503`, and an
+invalid or ambiguous proof remains `401`.
+
 ## 6. Configuration
 
 ```yaml
@@ -126,7 +134,8 @@ authn:
     uri: https://auth.example.com
     chains:
       eip155:
-        "1": { rpc: "${ETH_RPC}" }
+        "1": {} # offline EOA verification; no node dependency
+        "31337": { rpc: "${EVM_CONTRACT_RPC}" } # contract wallets only
       solana: [mainnet]
       bip122:
         000000000019d6689c085ae165831e93: { network: bitcoin-mainnet }
@@ -137,9 +146,10 @@ cache:
     nodes: [redis://redis-0:6379]
 ```
 
-Only server-trusted RPC mappings are used. Wallet code and dependencies are behind the Cargo
-`web3` feature; default builds exclude all Web3 crates. Enabling wallet configuration in a
-binary built without `web3` fails during startup.
+EOA, Solana, and Bitcoin signatures verify locally without a node. Only ERC-1271 and future
+ERC-6492 contract verification uses a server-trusted RPC mapping. Wallet code and dependencies
+are behind the Cargo `web3` feature; default builds exclude all Web3 crates. Enabling wallet
+configuration in a binary built without `web3` fails during startup.
 
 ## 7. Module boundaries and extension
 

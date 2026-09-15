@@ -108,6 +108,34 @@ where
         .await
         .expect("list TOTP credentials");
     assert_eq!(totp[0].credential_data, Some(json!({"lastCounter": 41})));
+
+    repository
+        .create_credential(&IamStandaloneCredential {
+            id: "webauthn-storage-contract".to_string(),
+            identity: key,
+            kind: StandaloneCredentialKind::Webauthn,
+            credential_key: Some("credential-id".to_string()),
+            secret_data: None,
+            credential_data: Some(json!({"cred": {"counter": 1}})),
+        })
+        .await
+        .expect("persist WebAuthn credential");
+    assert!(repository
+        .compare_and_swap_credential_data(
+            "webauthn-storage-contract",
+            &json!({"cred": {"counter": 1}}),
+            &json!({"cred": {"counter": 3}}),
+        )
+        .await
+        .expect("advance WebAuthn credential state"));
+    assert!(!repository
+        .compare_and_swap_credential_data(
+            "webauthn-storage-contract",
+            &json!({"cred": {"counter": 1}}),
+            &json!({"cred": {"counter": 2}}),
+        )
+        .await
+        .expect("reject stale WebAuthn credential state"));
 }
 
 async fn assert_identity_binding_contract<R>(repository: &R)

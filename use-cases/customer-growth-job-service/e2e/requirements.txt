@@ -1,0 +1,4 @@
+cryptography==41.0.7
+fido2==1.2.0
+pyotp==2.9.0
+playwright==1.62.0

@@ -243,9 +243,14 @@ pub(crate) async fn webauthn_authentication_verify(
         .finish_authentication(&request.credential, &challenge.state, &credentials)
         .map_err(webauthn_error)?;
     if let Some(data) = credential_data {
+        let current_data = credentials
+            .iter()
+            .find(|credential| credential.id == credential_id)
+            .and_then(|credential| credential.credential_data.as_ref())
+            .ok_or_else(|| ApiError::unauthorized("WebAuthn authentication failed"))?;
         if !handler
             .credentials
-            .update_credential_data(&credential_id, &data)
+            .compare_and_swap_credential_data(&credential_id, current_data, &data)
             .await
             .map_err(ApiError::credential)?
         {

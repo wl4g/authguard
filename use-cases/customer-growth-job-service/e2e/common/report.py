@@ -42,6 +42,14 @@ def write_round_report(round_number: int, result: VerificationResult) -> Path:
         f"- Duration: {result.duration_seconds:.2f}s",
     ]
     lines.extend(f"- {detail}" for detail in result.details)
+    if result.evidence:
+        lines.extend(["", "## Evidence", ""])
+        for artifact in result.evidence:
+            relative = artifact.path.relative_to(round_dir)
+            lines.append(
+                f"- [{artifact.case_id} — {artifact.title}]({relative.as_posix()}) "
+                f"(`{artifact.kind}`)"
+            )
     for command in result.commands:
         lines.extend(
             [

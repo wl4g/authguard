@@ -16,16 +16,16 @@ export function Layout() {
       <div className="brand"><span><Fingerprint/></span><div><b>{t('product')}</b><small>{t('tagline')}</small></div></div>
       <nav>
         <NavLink to="/" end><Gauge/>{t('overview')}</NavLink>
-        <NavLink to="/policy"><ShieldCheck/>{t('policy')}</NavLink>
-        <NavLink to="/principals"><UsersRound/>{t('principals')}</NavLink>
+        <NavLink data-testid="nav-policy" to="/policy"><ShieldCheck/>{t('policy')}</NavLink>
+        <NavLink data-testid="nav-principals" to="/principals"><UsersRound/>{t('principals')}</NavLink>
       </nav>
       <div className="boundary-card"><KeyRound/><b>{t('secureBoundary')}</b><p>{t('securityCopy')}</p></div>
     </aside>
     <main>
       <header className="topbar">
-        <div className="control-token"><input type="password" value={draft} onChange={event => setDraft(event.target.value)} placeholder={t('controlToken')}/><button onClick={() => setToken(draft)}>{t('saveToken')}</button></div>
+        <div className="control-token"><input data-testid="control-token" type="password" value={draft} onChange={event => setDraft(event.target.value)} placeholder={t('controlToken')}/><button data-testid="control-token-submit" onClick={() => setToken(draft)}>{t('saveToken')}</button></div>
         <Preferences/>
-        <div className="profile"><span>{authentication?.principal.principalId}</span><button title={t('signOut')} onClick={signOut}><LogOut size={17}/></button></div>
+        <div className="profile"><span data-testid="authenticated-principal">{authentication?.principal.principalId}</span><button data-testid="sign-out" title={t('signOut')} onClick={signOut}><LogOut size={17}/></button></div>
       </header>
       <div className="page"><Outlet/></div>
     </main>

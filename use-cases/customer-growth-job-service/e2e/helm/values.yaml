@@ -62,6 +62,30 @@ mockIdp:
     requests: { cpu: 10m, memory: 32Mi }
     limits: { cpu: 250m, memory: 128Mi }
 
+# Disposable local chains keep wallet E2E deterministic and gas-free. AuthGuard
+# reaches Anvil for ERC-1271; Solana possession remains offline but its CAIP
+# reference and funded test account are validated against this real validator.
+anvil:
+  enabled: true
+  image: registry.cn-shenzhen.aliyuncs.com/wl4g/foundry_anvil:1.7.1
+  pullPolicy: Never
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
+solana:
+  enabled: true
+  image: registry.cn-shenzhen.aliyuncs.com/wl4g/anza_solana:3.1.14
+  pullPolicy: Never
+  # Preserve the validator identity/genesis while replicas are scaled to zero,
+  # so the configured CAIP-2 reference remains stable between E2E runs.
+  persistence:
+    size: 1Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: 50m, memory: 512Mi }
+    limits: { cpu: 250m, memory: 1536Mi }
+
 authguard:
   grpcTarget: ""
   grpcTLS: false
@@ -70,15 +94,6 @@ authguard:
     secretName: ""
     key: hmac-key
     signingKey: e2e-authguard-access-context-hmac-key
-
-customerGrowthUi:
-  enabled: true
-  host: e2e-authguard-authn.customer-growth.local
-  image: registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-ui:e2e-local
-  pullPolicy: Never
-  resources:
-    requests: { cpu: 10m, memory: 16Mi }
-    limits: { cpu: 100m, memory: 64Mi }
 
 workloads:
   go-sqlx:

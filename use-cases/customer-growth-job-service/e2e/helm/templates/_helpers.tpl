@@ -34,6 +34,14 @@
 {{- printf "%s-mock-idp" (include "customer-growth-e2e.name" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "customer-growth-e2e.anvilName" -}}
+{{- printf "%s-anvil" (include "customer-growth-e2e.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "customer-growth-e2e.solanaName" -}}
+{{- printf "%s-solana" (include "customer-growth-e2e.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
 {{- define "customer-growth-e2e.accessContextSecretName" -}}
 {{- default (printf "%s-access-context" (include "customer-growth-e2e.name" .)) .Values.authguard.accessContext.secretName | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

@@ -107,6 +107,9 @@ impl WebauthnProvider {
         for credential in credentials {
             let mut passkey = parse_passkey(credential)?;
             if let Some(changed) = passkey.update_credential(&verified) {
+                if verified.needs_update() && !changed {
+                    return Err(WebauthnProviderError::CredentialNotMatched);
+                }
                 return Ok((
                     credential.id.clone(),
                     changed

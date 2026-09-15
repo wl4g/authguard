@@ -8,6 +8,7 @@ rust-version.workspace = true
 [features]
 default = []
 web3 = [
+  "dep:alloy",
   "dep:bitcoin",
   "dep:bip322",
   "dep:bs58",
@@ -20,6 +21,7 @@ web3 = [
 
 [dependencies]
 aes-gcm.workspace = true
+alloy = { workspace = true, optional = true, features = ["reqwest-rustls-tls"] }
 anyhow.workspace = true
 argon2.workspace = true
 async-trait.workspace = true

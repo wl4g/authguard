@@ -22,6 +22,33 @@ export function requestOptions(input: { publicKey: PublicKeyCredentialRequestOpt
   }
 }
 
+export function creationOptions(input: { publicKey: PublicKeyCredentialCreationOptionsJSON }): CredentialCreationOptions {
+  const options = input.publicKey
+  return {
+    publicKey: {
+      ...options,
+      challenge: decode(options.challenge),
+      user: { ...options.user, id: decode(options.user.id) },
+      excludeCredentials: options.excludeCredentials?.map(item => ({ ...item, id: decode(item.id) })),
+    } as PublicKeyCredentialCreationOptions,
+  }
+}
+
+export function serializeRegistration(credential: PublicKeyCredential) {
+  const response = credential.response as AuthenticatorAttestationResponse
+  return {
+    id: credential.id,
+    rawId: encode(credential.rawId),
+    type: credential.type,
+    response: {
+      attestationObject: encode(response.attestationObject),
+      clientDataJSON: encode(response.clientDataJSON),
+      transports: response.getTransports?.() || [],
+    },
+    clientExtensionResults: credential.getClientExtensionResults(),
+  }
+}
+
 export function serializeAssertion(credential: PublicKeyCredential) {
   const response = credential.response as AuthenticatorAssertionResponse
   return {
@@ -41,4 +68,10 @@ export function serializeAssertion(credential: PublicKeyCredential) {
 type PublicKeyCredentialRequestOptionsJSON = Omit<PublicKeyCredentialRequestOptions, 'challenge' | 'allowCredentials'> & {
   challenge: string
   allowCredentials?: Array<Omit<PublicKeyCredentialDescriptor, 'id'> & { id: string }>
+}
+
+type PublicKeyCredentialCreationOptionsJSON = Omit<PublicKeyCredentialCreationOptions, 'challenge' | 'user' | 'excludeCredentials'> & {
+  challenge: string
+  user: Omit<PublicKeyCredentialUserEntity, 'id'> & { id: string }
+  excludeCredentials?: Array<Omit<PublicKeyCredentialDescriptor, 'id'> & { id: string }>
 }

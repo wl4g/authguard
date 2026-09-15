@@ -167,7 +167,7 @@ def main() -> int:
                 results.append(matrix)
                 write_round_report(round_number, matrix)
                 status = "PASS" if matrix.passed else "FAIL"
-                print(f"  [18] {matrix.title} ... {status}")
+                print(f"  [{matrix.scenario_id}] {matrix.title} ... {status}")
             all_rounds.append(results)
 
         summary = write_summary(all_rounds)

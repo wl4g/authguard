@@ -222,6 +222,8 @@ pub(crate) async fn register(
     })?;
     let authentication =
         AuthenticationResult::new(identity.clone(), vec!["pwd".to_string()], None, Utc::now());
+    let identity_key =
+        identity.key().map_err(|_| ApiError::internal("standalone identity is invalid"))?;
     let issued = if headers.contains_key(axum::http::header::AUTHORIZATION) {
         let principal_id = state.pipeline.authenticate_token(&headers).map_err(ApiError::token)?;
         state.pipeline.link(&principal_id, authentication).await
@@ -229,20 +231,28 @@ pub(crate) async fn register(
         state.pipeline.login(authentication, PrincipalKind::User).await
     }
     .map_err(ApiError::pipeline)?;
-    state
+    if let Err(error) = state
         .credentials
         .create_credential(&IamStandaloneCredential {
             id: format!("pwd_{}", random_id()),
-            identity: identity
-                .key()
-                .map_err(|_| ApiError::internal("standalone identity is invalid"))?,
+            identity: identity_key.clone(),
             kind: StandaloneCredentialKind::Password,
             credential_key: Some(login),
             secret_data: Some(password_hash),
             credential_data: None,
         })
         .await
-        .map_err(ApiError::credential)?;
+    {
+        if let Err(rollback) = state
+            .pipeline
+            .rollback_identity_binding(&issued.principal.principal_id, &identity_key)
+            .await
+        {
+            tracing::error!(%rollback, "failed to roll back incomplete standalone registration");
+            return Err(ApiError::internal("standalone registration rollback failed"));
+        }
+        return Err(ApiError::credential(error));
+    }
     Ok(Json(LoginResponse::new(issued, String::new())))
 }
 

@@ -20,9 +20,10 @@ export type AuthMetadata = {
   standalone: {
     enabled: boolean; password: boolean; totp: boolean; webauthn: boolean
     loginEndpoint: string; registrationEndpoint: string
+    webauthnRegistrationChallengeEndpoint: string; webauthnRegistrationVerifyEndpoint: string
     webauthnAuthenticationChallengeEndpoint: string; webauthnAuthenticationVerifyEndpoint: string
   }
-  wallet: { enabled: boolean; chains: string[]; challengeEndpoint: string; verifyEndpoint: string; linkEndpoint: string }
+  wallet: { enabled: boolean; chains: string[]; contractVerificationChains: string[]; challengeEndpoint: string; verifyEndpoint: string; linkEndpoint: string }
 }
 
 const authnBase = (import.meta.env.VITE_AUTHN_BASE_URL || '').replace(/\/$/, '')

@@ -1,11 +1,16 @@
 //! Protocol-neutral authentication convergence and runtime composition.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use authguard_common::cache::ICache;
 use authguard_common::config::AppConfig;
-use authguard_common::model::{AuthenticatedPrincipalContext, AuthenticationResult, PrincipalKind};
+use authguard_common::model::{
+    AuthenticatedPrincipalContext, AuthenticationResult, ExternalIdentityKey, PrincipalKind,
+};
 use authguard_common::storage::{IdentityBindingRepository, StandaloneCredentialRepository};
+use authguard_common::utils::validate_canonical;
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::authentication::{TokenError, TokenIssuer};
@@ -71,11 +76,21 @@ impl AuthenticationPipeline {
         self.tokens.authenticate_bearer(headers)
     }
 
+    pub(crate) async fn rollback_identity_binding(
+        &self,
+        principal_id: &str,
+        identity: &ExternalIdentityKey,
+    ) -> Result<(), AuthenticationPipelineError> {
+        self.linking.rollback_identity_binding(principal_id, identity).await?;
+        Ok(())
+    }
+
     fn issue(
         &self,
         authentication: &AuthenticationResult,
-        principal: AuthenticatedPrincipalContext,
+        mut principal: AuthenticatedPrincipalContext,
     ) -> Result<IssuedAuthentication, AuthenticationPipelineError> {
+        project_authorization_context(&mut principal, authentication);
         let access_token = self.tokens.issue(&principal, authentication)?;
         Ok(IssuedAuthentication {
             access_token,
@@ -83,6 +98,101 @@ impl AuthenticationPipeline {
             principal,
         })
     }
+}
+
+/// Projects only bounded, provider-approved context into the canonical token.
+/// Profile data and protocol material remain on the authentication side of the
+/// boundary. Account linking therefore stays unaware of claims and protocols.
+fn project_authorization_context(
+    principal: &mut AuthenticatedPrincipalContext,
+    authentication: &AuthenticationResult,
+) {
+    const MAX_GROUPS: usize = 128;
+    const MAX_GROUP_BYTES: usize = 16 * 1_024;
+    const MAX_CONTEXT_BYTES: usize = 64 * 1_024;
+
+    let claims = &authentication.external_identity.claims;
+    principal.stable_group_ids = claims
+        .get("authguard_group_ids")
+        .and_then(group_values)
+        .filter(|groups| {
+            groups.len() <= MAX_GROUPS
+                && groups.iter().map(String::len).sum::<usize>() <= MAX_GROUP_BYTES
+                && groups
+                    .iter()
+                    .all(|group| validate_canonical(group, "authguard_group_ids").is_ok())
+        })
+        .map(|mut groups| {
+            groups.sort();
+            groups.dedup();
+            groups
+        })
+        .unwrap_or_default();
+
+    let mut context = HashMap::new();
+    let mut context_bytes = 0_usize;
+    for (name, value) in claims {
+        if is_private_or_reserved_claim(name) {
+            continue;
+        }
+        let Some(value) = scalar_claim(value) else {
+            continue;
+        };
+        let size = name.len().saturating_add(value.len());
+        if validate_canonical(name, "trusted_claim").is_err()
+            || context_bytes.saturating_add(size) > MAX_CONTEXT_BYTES
+        {
+            continue;
+        }
+        context_bytes += size;
+        context.insert(name.clone(), value);
+    }
+    principal.trusted_claims = context;
+}
+
+fn group_values(value: &Value) -> Option<Vec<String>> {
+    match value {
+        Value::String(value) => Some(vec![value.clone()]),
+        Value::Array(values) => {
+            values.iter().map(|value| value.as_str().map(str::to_string)).collect()
+        }
+        _ => None,
+    }
+}
+
+fn scalar_claim(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Bool(value) => Some(value.to_string()),
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn is_private_or_reserved_claim(name: &str) -> bool {
+    matches!(
+        name,
+        "username"
+            | "email"
+            | "display_name"
+            | "iss"
+            | "sub"
+            | "aud"
+            | "iat"
+            | "exp"
+            | "nbf"
+            | "jti"
+            | "provider"
+            | "access_token"
+            | "refresh_token"
+            | "authorization_code"
+            | "principal_id"
+            | "principal_kind"
+            | "authguard_group_ids"
+            | "acr"
+            | "amr"
+            | "authguardOrigin"
+    )
 }
 
 /// Shared runtime dependencies; protocol implementations only borrow what they own.
@@ -135,5 +245,56 @@ impl AuthnRuntime {
             tokens,
         ));
         Ok(Self { pipeline, credentials, challenges })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use authguard_common::model::{ExternalIdentity, PrincipalKind};
+    use chrono::Utc;
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn projects_only_protocol_neutral_authorization_context() {
+        let authentication = AuthenticationResult::new(
+            ExternalIdentity {
+                provider: "corporate".to_string(),
+                issuer: "https://id.example".to_string(),
+                subject: "employee-123".to_string(),
+                claims: BTreeMap::from([
+                    ("username".to_string(), json!("alice")),
+                    ("email".to_string(), json!("alice@example.com")),
+                    ("tenant_id".to_string(), json!("example-corp")),
+                    (
+                        "authguard_group_ids".to_string(),
+                        json!(["principal-team-b", "principal-team-a", "principal-team-a"]),
+                    ),
+                    ("access_token".to_string(), json!("must-not-leak")),
+                ]),
+            },
+            ["oidc"],
+            None,
+            Utc::now(),
+        );
+        let mut principal = AuthenticatedPrincipalContext {
+            principal_id: "principal-alice".to_string(),
+            kind: PrincipalKind::User,
+            stable_group_ids: Vec::new(),
+            trusted_claims: HashMap::new(),
+            acr: None,
+            amr: Vec::new(),
+        };
+
+        project_authorization_context(&mut principal, &authentication);
+
+        assert_eq!(principal.stable_group_ids, ["principal-team-a", "principal-team-b"]);
+        assert_eq!(
+            principal.trusted_claims,
+            HashMap::from([("tenant_id".to_string(), "example-corp".to_string())])
+        );
     }
 }

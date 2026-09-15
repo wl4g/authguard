@@ -27,6 +27,14 @@ class RunContext:
     build_images: bool = True
 
 
+@dataclass(frozen=True)
+class EvidenceArtifact:
+    case_id: str
+    title: str
+    kind: str
+    path: Path
+
+
 @dataclass
 class VerificationResult:
     scenario_id: str
@@ -35,4 +43,5 @@ class VerificationResult:
     duration_seconds: float
     details: list[str] = field(default_factory=list)
     commands: list[CommandResult] = field(default_factory=list)
+    evidence: list[EvidenceArtifact] = field(default_factory=list)
     case_executions: tuple[str, ...] = ()

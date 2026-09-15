@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 import time
 from typing import Iterator
-from urllib import parse
+from urllib import parse, request
 
 from .config import CONFIG_DIR, E2E_DIR, PROJECT_ROOT
 from .model import CommandResult, RunContext
@@ -37,15 +37,14 @@ ALIYUN_JAEGER_IMAGE = (
 ALIYUN_POSTGRES_IMAGE = (
     "registry.cn-shenzhen.aliyuncs.com/wl4g/bitnami_postgresql:18.3"
 )
+ALIYUN_ANVIL_IMAGE = "registry.cn-shenzhen.aliyuncs.com/wl4g/foundry_anvil:1.7.1"
+ALIYUN_SOLANA_IMAGE = "registry.cn-shenzhen.aliyuncs.com/wl4g/anza_solana:3.1.14"
 AUTHGUARD_IMAGE = "registry.cn-shenzhen.aliyuncs.com/wl4g/authguard:e2e-local"
+AUTHGUARD_WEB_IMAGE = "registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-web:e2e-local"
 AUTHGUARD_API_TOKEN = "e2e-authguard-api-token"
 E2E_KEYS_DIR = CONFIG_DIR / "e2e-jwt-keys"
 MOCK_IDP_IMAGE = (
     "registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-mock-idp:e2e-local"
-)
-CUSTOMER_GROWTH_UI_IMAGE = (
-    "registry.cn-shenzhen.aliyuncs.com/wl4g/"
-    "e2e-authguard-customer-growth-ui:e2e-local"
 )
 WORKLOAD_IMAGES = {
     "go-sqlx": "registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-go-sqlx:e2e-local",
@@ -66,6 +65,10 @@ WORKLOAD_HOSTS = {
     for component in WORKLOAD_IMAGES
 }
 AUTHN_HOST = "e2e-authguard-authn.customer-growth.local"
+# WebAuthn is available only in a trustworthy browser context. Chromium treats
+# HTTP localhost as trustworthy, so browser ceremonies use this additional
+# route host while protocol/API scenarios retain the descriptive AuthN host.
+AUTHN_BROWSER_HOST = "localhost"
 LOCAL_PORT_RANGE = range(28800, 28900)
 GROUP_EXTERNAL_IDS = {
     "direct-readers": "group:11111111-1111-4111-8111-111111111111",
@@ -132,8 +135,20 @@ class KubernetesE2E:
         return f"{self.support_release}-mock-idp"
 
     @property
-    def customer_growth_ui_service(self) -> str:
-        return f"{self.support_release}-customer-growth-ui"
+    def anvil_service(self) -> str:
+        return f"{self.support_release}-anvil"
+
+    @property
+    def solana_service(self) -> str:
+        return f"{self.support_release}-solana"
+
+    @property
+    def authguard_web_service(self) -> str:
+        return f"{self.authguard_release}-web"
+
+    @property
+    def authguard_web_route(self) -> str:
+        return "e2e-authguard-customer-growth-web"
 
     def workload_service(self, component: str) -> str:
         return f"{self.support_release}-{component}"
@@ -267,7 +282,7 @@ class KubernetesE2E:
             ),
             cwd=PROJECT_ROOT,
         )
-        ui_dir = self.deploy_dir / "customer-growth-ui-service"
+        ui_dir = PROJECT_ROOT / "web"
         reown_project_id = os.getenv("VITE_REOWN_PROJECT_ID", "")
         self._run(
             (
@@ -281,7 +296,7 @@ class KubernetesE2E:
                 "--build-arg",
                 f"VITE_REOWN_PROJECT_ID={reown_project_id}",
                 "-t",
-                CUSTOMER_GROWTH_UI_IMAGE,
+                AUTHGUARD_WEB_IMAGE,
                 str(ui_dir),
             ),
             cwd=PROJECT_ROOT,
@@ -328,6 +343,8 @@ class KubernetesE2E:
             ALIYUN_LDAP_IMAGE,
             ALIYUN_JAEGER_IMAGE,
             ALIYUN_POSTGRES_IMAGE,
+            ALIYUN_ANVIL_IMAGE,
+            ALIYUN_SOLANA_IMAGE,
         )
         cluster_images = set(
             self._run(
@@ -351,12 +368,12 @@ class KubernetesE2E:
         # e2e-local tags are intentionally mutable. Import them immediately before
         # creating their Pods so k3s image GC cannot collect an unreferenced image
         # while an earlier Helm release is still becoming ready.
-        for image in (*WORKLOAD_IMAGES.values(), MOCK_IDP_IMAGE, CUSTOMER_GROWTH_UI_IMAGE):
+        for image in (*WORKLOAD_IMAGES.values(), MOCK_IDP_IMAGE, AUTHGUARD_WEB_IMAGE):
             self._import_image(image)
 
     def _remove_mutable_cluster_images(self) -> None:
         """Prevent a recreated Pod from starting an obsolete mutable E2E image tag."""
-        for image in (*WORKLOAD_IMAGES.values(), MOCK_IDP_IMAGE, CUSTOMER_GROWTH_UI_IMAGE):
+        for image in (*WORKLOAD_IMAGES.values(), MOCK_IDP_IMAGE, AUTHGUARD_WEB_IMAGE):
             self._run(
                 (*self._k3s_command(), "ctr", "-n", "k8s.io", "images", "remove", image),
                 allowed_codes={0, 1},
@@ -384,19 +401,28 @@ class KubernetesE2E:
             # images are safe to re-pull; mutable e2e-local images must have
             # been built explicitly and still fail closed above.
             self._run(("docker", "pull", image))
-        with tempfile.NamedTemporaryFile(suffix=".tar") as archive:
-            self._run(("docker", "save", "-o", archive.name, image))
-            self._run(
-                (
-                    *self._k3s_command(),
-                    "ctr",
-                    "-n",
-                    "k8s.io",
-                    "images",
-                    "import",
-                    archive.name,
-                )
+        # Stream instead of materializing a second, multi-gigabyte image tar on
+        # the node filesystem. This keeps large local-validator imports below
+        # kubelet's ephemeral-storage eviction threshold.
+        exporter = ("docker", "save", image)
+        importer = (
+            *self._k3s_command(),
+            "ctr",
+            "-n",
+            "k8s.io",
+            "images",
+            "import",
+            "-",
+        )
+        self._run(
+            (
+                "bash",
+                "-o",
+                "pipefail",
+                "-c",
+                f"{shlex.join(exporter)} | {shlex.join(importer)}",
             )
+        )
 
     def _install_envoy_gateway(self) -> None:
         chart_archives = sorted((self.helm_chart / "charts").glob("gateway-helm-*.tgz"))
@@ -464,7 +490,8 @@ class KubernetesE2E:
             self.jaeger_service,
             self.postgresql_service,
             self.mock_idp_service,
-            self.customer_growth_ui_service,
+            self.anvil_service,
+            self.solana_service,
             *[self.workload_service(component) for component in WORKLOAD_IMAGES],
         ):
             self._run(
@@ -526,7 +553,7 @@ class KubernetesE2E:
                         "enabled": True,
                         "name": "e2e-authguard-customer-growth-authn",
                         "listenerPort": 8082,
-                        "hostnames": [AUTHN_HOST],
+                        "hostnames": [AUTHN_HOST, AUTHN_BROWSER_HOST],
                     },
                     "tracing": {
                         "enabled": True,
@@ -559,6 +586,12 @@ class KubernetesE2E:
                 "authn": {
                     "enabled": True,
                     "replicaCount": 1,
+                    # Four concurrent Argon2id registrations are an intentional
+                    # security/concurrency assertion, not a lightweight smoke test.
+                    "resources": {
+                        "requests": {"cpu": "100m", "memory": "128Mi"},
+                        "limits": {"cpu": "1000m", "memory": "768Mi"},
+                    },
                     "image": {
                         "repository": AUTHGUARD_IMAGE.rsplit(":", 1)[0],
                         "tag": AUTHGUARD_IMAGE.rsplit(":", 1)[1],
@@ -577,7 +610,20 @@ class KubernetesE2E:
                         "remote_jwks": {"uri": "", "backend_refs": []},
                     },
                 },
-                "web": {"enabled": False},
+                "web": {
+                    "enabled": True,
+                    "replicaCount": 1,
+                    "image": {
+                        "repository": AUTHGUARD_WEB_IMAGE.rsplit(":", 1)[0],
+                        "tag": AUTHGUARD_WEB_IMAGE.rsplit(":", 1)[1],
+                        "pullPolicy": "Never",
+                    },
+                    "route": {
+                        "enabled": True,
+                        "name": self.authguard_web_route,
+                        "hostnames": [AUTHN_HOST, AUTHN_BROWSER_HOST],
+                    },
+                },
                 "authz": {
                     "replicaCount": 1,
                     "image": {
@@ -616,6 +662,10 @@ class KubernetesE2E:
         mock_idp_url = (
             f"http://{self.mock_idp_service}.{self.namespace}.svc.cluster.local:8080"
         )
+        anvil_rpc_url = (
+            f"http://{self.anvil_service}.{self.namespace}.svc.cluster.local:8545"
+        )
+        solana_reference = self.solana_chain_reference()
         redis_node = (
             f"redis://{self.authguard_release}-redis-cluster."
             f"{self.namespace}.svc.cluster.local:6379"
@@ -634,7 +684,7 @@ class KubernetesE2E:
                 "      issuer: https://github.com",
                 "      clientId: e2e-authguard-github-client",
                 '      clientSecret: "${AUTHGUARD_GITHUB_CLIENT_SECRET}"',
-                f"      callbackUrl: http://{AUTHN_HOST}:8082/auth/oauth2/github/callback",
+                f"      callbackUrl: http://{AUTHN_BROWSER_HOST}:8082/auth/oauth2/github/callback",
                 "      authorization:",
                 f"        endpoint: {mock_idp_url + '/github/login/oauth/authorize'!r}",
                 "        scopes: [read:user, user:email]",
@@ -653,7 +703,7 @@ class KubernetesE2E:
                 "      issuer: https://accounts.google.com",
                 "      clientId: e2e-authguard-google-client",
                 '      clientSecret: "${AUTHGUARD_GOOGLE_CLIENT_SECRET}"',
-                f"      callbackUrl: http://{AUTHN_HOST}:8082/auth/oauth2/google/callback",
+                f"      callbackUrl: http://{AUTHN_BROWSER_HOST}:8082/auth/oauth2/google/callback",
                 "      authorization:",
                 f"        endpoint: {mock_idp_url + '/google/o/oauth2/v2/auth'!r}",
                 "        scopes: [profile, email]",
@@ -670,7 +720,7 @@ class KubernetesE2E:
                 f"      issuer: {keycloak_base + '/realms/example-corp'!r}",
                 "      clientId: e2e-authguard-principal-discovery",
                 '      clientSecret: "${AUTHGUARD_KEYCLOAK_CLIENT_SECRET}"',
-                f"      callbackUrl: http://{AUTHN_HOST}:8082/auth/oauth2/e2e-authguard-keycloak/callback",
+                f"      callbackUrl: http://{AUTHN_BROWSER_HOST}:8082/auth/oauth2/e2e-authguard-keycloak/callback",
                 "      scopes: [openid, profile, email]",
                 "      userinfo: true",
                 "      tokenIntrospection:",
@@ -682,12 +732,13 @@ class KubernetesE2E:
                 "        email: $.email",
                 "        trustedClaims:",
                 "          tenant_id: $.tenant_id",
+                "          authguard_group_ids: $.authguard_group_ids",
                 "    wechat:",
                 "      type: oauth2-like",
                 "      issuer: https://open.weixin.qq.com",
                 "      clientId: e2e-authguard-wechat-app",
                 '      clientSecret: "${AUTHGUARD_WECHAT_CLIENT_SECRET}"',
-                f"      callbackUrl: http://{AUTHN_HOST}:8082/auth/oauth2/wechat/callback",
+                f"      callbackUrl: http://{AUTHN_BROWSER_HOST}:8082/auth/oauth2/wechat/callback",
                 "      authorization:",
                 f"        endpoint: {mock_idp_url + '/wechat/connect/qrconnect'!r}",
                 "        scopes: [snsapi_login]",
@@ -708,7 +759,7 @@ class KubernetesE2E:
                 "      issuer: https://graph.qq.com",
                 "      clientId: e2e-authguard-qq-app",
                 '      clientSecret: "${AUTHGUARD_QQ_CLIENT_SECRET}"',
-                f"      callbackUrl: http://{AUTHN_HOST}:8082/auth/oauth2/qq/callback",
+                f"      callbackUrl: http://{AUTHN_BROWSER_HOST}:8082/auth/oauth2/qq/callback",
                 "      authorization:",
                 f"        endpoint: {mock_idp_url + '/qq/oauth2.0/authorize'!r}",
                 "        scopes: [get_user_info, get_vip_info]",
@@ -729,12 +780,20 @@ class KubernetesE2E:
                 "  standalone:",
                 "    enabled: true",
                 "    issuer: urn:authguard:e2e:standalone",
+                '    credentialEncryptionKey: "${AUTHGUARD_STANDALONE_CREDENTIAL_KEY}"',
                 "    password:",
                 "      minLength: 12",
                 "    totp:",
-                "      enabled: false",
+                "      enabled: true",
+                "      issuer: AuthGuard E2E",
+                "      digits: 6",
+                "      stepSeconds: 30",
+                "      skew: 1",
                 "    webauthn:",
-                "      enabled: false",
+                "      enabled: true",
+                f"      rpId: {AUTHN_BROWSER_HOST!r}",
+                f"      rpOrigin: {'http://' + AUTHN_BROWSER_HOST + ':8082'!r}",
+                "      rpName: AuthGuard Customer Growth E2E",
                 "  wallet:",
                 "    enabled: true",
                 f"    domain: {AUTHN_HOST + ':8082'!r}",
@@ -743,14 +802,23 @@ class KubernetesE2E:
                 "    rpcTimeout: 2s",
                 "    chains:",
                 "      eip155:",
-                "        '1':",
-                "          rpc: http://ethereum-rpc.invalid",
-                "      solana: []",
-                "      bip122: {}",
+                # EOA verification must remain fully offline. RPC is present only
+                # on the independent contract-wallet and fault-injection chains.
+                "        '31336': {}",
+                "        '31337':",
+                f"          rpc: {anvil_rpc_url!r}",
+                "        '31338':",
+                f"          rpc: {mock_idp_url + '/fault/ethereum/31338/timeout'!r}",
+                f"      solana: [{solana_reference}]",
+                "      bip122:",
+                "        000000000019d6689c085ae165831e93:",
+                "          network: bitcoin-mainnet",
                 "  accountLinking:",
                 "    strategy: first-login",
                 "    authoritativeProviders: []",
-                "    allowLink: {}",
+                "    allowLink:",
+                "      github: [standalone, wallet]",
+                "      standalone: [wallet]",
                 "  challengeTtl: 2m",
                 "  token:",
                 f"    issuer: {self.authn_issuer!r}",
@@ -890,6 +958,36 @@ class KubernetesE2E:
             ]
         )
 
+    def solana_chain_reference(self) -> str:
+        """Derive the CAIP-2 reference from the live local validator genesis."""
+        genesis_hash = self.json_rpc(self.solana_service, 8899, "getGenesisHash")
+        if not isinstance(genesis_hash, str) or len(genesis_hash) < 32:
+            raise RuntimeError(f"local Solana validator returned invalid genesis: {genesis_hash!r}")
+        return genesis_hash[:32]
+
+    def json_rpc(
+        self,
+        service: str,
+        remote_port: int,
+        method: str,
+        params: list[object] | None = None,
+    ) -> object:
+        """Call a real in-cluster JSON-RPC service through an ephemeral tunnel."""
+        payload = json.dumps(
+            {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []}
+        ).encode()
+        with self._forward_service(service, remote_port) as port:
+            outgoing = request.Request(
+                f"http://127.0.0.1:{port}",
+                data=payload,
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with request.urlopen(outgoing, timeout=15) as response:
+                result = json.loads(response.read())
+        if "error" in result or "result" not in result:
+            raise RuntimeError(f"{service} JSON-RPC {method} failed: {result}")
+        return result["result"]
 
     def _wait_for_resources(self) -> None:
         for deployment in (
@@ -898,9 +996,13 @@ class KubernetesE2E:
             self.ldap_service,
             self.jaeger_service,
             self.postgresql_service,
+            self.mock_idp_service,
+            self.anvil_service,
+            self.solana_service,
             *[self.workload_service(component) for component in WORKLOAD_IMAGES],
             self.authguard_release,
             f"{self.authguard_release}-authn",
+            self.authguard_web_service,
         ):
             self._run(
                 (
@@ -926,43 +1028,6 @@ class KubernetesE2E:
                 f"--timeout={self.context.timeout_seconds}s",
             )
         )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
     def _envoy_proxy_service(self) -> str:
@@ -1022,13 +1087,19 @@ class KubernetesE2E:
             yield port
 
     @contextmanager
-    def _forward_service(self, service: str, remote_port: int) -> Iterator[int]:
-        with self._forward_resource(f"service/{service}", remote_port) as port:
+    def _forward_service(
+        self, service: str, remote_port: int, *, local_port: int | None = None
+    ) -> Iterator[int]:
+        with self._forward_resource(
+            f"service/{service}", remote_port, local_port=local_port
+        ) as port:
             yield port
 
     @contextmanager
-    def _forward_resource(self, resource: str, remote_port: int) -> Iterator[int]:
-        local_port = _free_port()
+    def _forward_resource(
+        self, resource: str, remote_port: int, *, local_port: int | None = None
+    ) -> Iterator[int]:
+        local_port = _free_port() if local_port is None else _require_free_port(local_port)
         process = subprocess.Popen(
             (
                 "kubectl",
@@ -1100,6 +1171,15 @@ def _free_port() -> int:
                 continue
             return port
     raise RuntimeError("no free E2E host port remains in 28800-28899")
+
+
+def _require_free_port(port: int) -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        try:
+            listener.bind(("127.0.0.1", port))
+        except OSError as error:
+            raise RuntimeError(f"required E2E host port is unavailable: {port}") from error
+    return port
 
 
 def _has_true_condition(conditions: list[dict], condition_type: str) -> bool:

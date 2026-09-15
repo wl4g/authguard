@@ -36,6 +36,10 @@ impl ApiError {
         Self { status: StatusCode::SERVICE_UNAVAILABLE, code: "service_unavailable", message }
     }
 
+    pub(crate) const fn not_implemented(code: &'static str, message: &'static str) -> Self {
+        Self { status: StatusCode::NOT_IMPLEMENTED, code, message }
+    }
+
     pub(crate) const fn internal(message: &'static str) -> Self {
         Self { status: StatusCode::INTERNAL_SERVER_ERROR, code: "internal_error", message }
     }
@@ -101,6 +105,7 @@ impl ApiError {
             StatusCode::BAD_REQUEST | StatusCode::NOT_FOUND => "invalid_request",
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => "rejected",
             StatusCode::CONFLICT => "conflict",
+            StatusCode::NOT_IMPLEMENTED => "unsupported",
             StatusCode::SERVICE_UNAVAILABLE => "unavailable",
             _ => "error",
         }

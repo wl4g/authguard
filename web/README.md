@@ -18,6 +18,9 @@ separate origins.
 Wallet discovery is implemented with Reown AppKit as a client-only connection
 and signing transport. Set `VITE_REOWN_PROJECT_ID`; AuthGuard remains the SIWX
 challenge authority and signature verifier.
+For extension-managed browsers and deterministic E2E, the same component also
+accepts a standard injected EIP-1193 provider; no wallet vendor state crosses
+the AuthN API boundary.
 
 OAuth popups must return through the same public origin as this UI so the
 opener can consume AuthGuard's JSON callback result. Provider `callbackUrl`

@@ -94,6 +94,13 @@ GET  /.well-known/authn.json
 RPC URL。WalletConnect/Reown 仅用于浏览器 discovery/transport/signing UX；服务端不保存
 其 session、relay 或 wallet brand，也不信任客户端 `signatureValid`。
 
+EVM challenge 返回 `verificationMethods`；`/verify` 接受可选的
+`verificationMethod=auto|eoa|erc1271|erc6492` 路由提示，但该提示绝不作为身份证明。
+有效 EIP-191 始终本地验签；ERC-6492 可通过 magic suffix 离线识别；普通 ERC-1271
+proof 不具备自描述性，已知账号类型的钱包客户端应在 chain 宣告支持时提交 `erc1271`。
+可识别/显式请求的合约 proof 若未配置 RPC 返回 `501 contract_wallet_not_supported`；
+已配置但不可用返回 `503`；无效或无法分类的 proof 仍返回 `401`。
+
 ## 6. 配置
 
 ```yaml
@@ -120,7 +127,8 @@ authn:
     uri: https://auth.example.com
     chains:
       eip155:
-        "1": { rpc: "${ETH_RPC}" }
+        "1": {} # EOA 本地验签，无节点依赖
+        "31337": { rpc: "${EVM_CONTRACT_RPC}" } # 仅合约钱包
       solana: [mainnet]
       bip122:
         000000000019d6689c085ae165831e93: { network: bitcoin-mainnet }
@@ -131,7 +139,8 @@ cache:
     nodes: [redis://redis-0:6379]
 ```
 
-服务器只使用受信 RPC mapping。Wallet 及其依赖位于 Cargo `web3` feature；默认构建完全
+EOA、Solana、Bitcoin 均本地验签且不连接节点；只有 ERC-1271/后续 ERC-6492 合约验证
+使用服务器受信 RPC mapping。Wallet 及其依赖位于 Cargo `web3` feature；默认构建完全
 排除 Web3 crates，配置启用 wallet 但二进制未编译 `web3` 时启动失败。
 
 ## 7. 模块边界与扩展

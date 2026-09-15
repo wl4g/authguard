@@ -57,6 +57,13 @@ spec:
             - name: AUTHGUARD_ENV_FILE
               value: /vault/secrets/env
             {{- end }}
+            {{- if and .Values.redis_cluster.enabled .Values.redis_cluster.usePassword }}
+            - name: AUTHGUARD__CACHE__REDIS__PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "authguard.redisSecretName" . }}
+                  key: {{ include "authguard.redisPasswordKey" . }}
+            {{- end }}
           {{- if and (eq $provider "kubernetes") .Values.secrets.kubernetes.existingSecret }}
           envFrom:
             - secretRef:

@@ -1,0 +1,24 @@
+services:
+  solana:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/anza_solana:3.1.14
+    ports: ["8899:8899", "8900:8900"]
+    volumes: ["solana-ledger:/tmp/solana-ledger"]
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        exec solana-test-validator --bind-address="$$(hostname -i | cut -d' ' -f1)"
+        --rpc-port=8899 --faucet-port=8900 --ledger=/tmp/solana-ledger
+        --reset --quiet --limit-ledger-size=1000 --faucet-sol=10
+        --rpc-pubsub-max-active-subscriptions=16
+        --rpc-pubsub-notification-threads=0
+        --rpc-pubsub-worker-threads=1
+        --rpc-pubsub-queue-capacity-items=32
+        --rpc-pubsub-queue-capacity-bytes=1048576
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-X", "POST", "-H", "Content-Type: application/json", "-d", '{"jsonrpc":"2.0","id":1,"method":"getHealth"}', "http://localhost:8899"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  solana-ledger: {}

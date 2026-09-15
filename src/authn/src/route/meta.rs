@@ -39,6 +39,8 @@ struct StandaloneMetadata {
     webauthn: bool,
     login_endpoint: &'static str,
     registration_endpoint: &'static str,
+    webauthn_registration_challenge_endpoint: &'static str,
+    webauthn_registration_verify_endpoint: &'static str,
     webauthn_authentication_challenge_endpoint: &'static str,
     webauthn_authentication_verify_endpoint: &'static str,
 }
@@ -48,6 +50,7 @@ struct StandaloneMetadata {
 struct WalletMetadata {
     enabled: bool,
     chains: Vec<String>,
+    contract_verification_chains: Vec<String>,
     challenge_endpoint: &'static str,
     verify_endpoint: &'static str,
     link_endpoint: &'static str,
@@ -90,6 +93,14 @@ fn build_metadata(config: &AuthnProperties) -> AuthenticationMetadata {
         .chain(config.wallet.chains.bip122.keys().map(|reference| format!("bip122:{reference}")))
         .collect::<Vec<_>>();
     chains.sort();
+    let contract_verification_chains = config
+        .wallet
+        .chains
+        .eip155
+        .iter()
+        .filter(|(_, chain)| chain.rpc.is_some())
+        .map(|(reference, _)| format!("eip155:{reference}"))
+        .collect();
     AuthenticationMetadata {
         version: "1",
         oauth2: OAuth2Metadata { providers },
@@ -100,6 +111,9 @@ fn build_metadata(config: &AuthnProperties) -> AuthenticationMetadata {
             webauthn: config.standalone.enabled && config.standalone.webauthn.enabled,
             login_endpoint: "/auth/standalone/login",
             registration_endpoint: "/auth/standalone/register",
+            webauthn_registration_challenge_endpoint:
+                "/auth/standalone/webauthn/register/challenge",
+            webauthn_registration_verify_endpoint: "/auth/standalone/webauthn/register/verify",
             webauthn_authentication_challenge_endpoint:
                 "/auth/standalone/webauthn/authenticate/challenge",
             webauthn_authentication_verify_endpoint:
@@ -108,6 +122,7 @@ fn build_metadata(config: &AuthnProperties) -> AuthenticationMetadata {
         wallet: WalletMetadata {
             enabled: config.wallet.enabled && cfg!(feature = "web3"),
             chains,
+            contract_verification_chains,
             challenge_endpoint: "/auth/wallet/challenge",
             verify_endpoint: "/auth/wallet/verify",
             link_endpoint: "/auth/wallet/link",
@@ -138,13 +153,14 @@ mod tests {
         config.wallet.enabled = true;
         config.wallet.chains.eip155 = BTreeMap::from([(
             "1".to_string(),
-            EvmWalletChainProperties { rpc: "https://secret-rpc.example".to_string() },
+            EvmWalletChainProperties { rpc: Some("https://secret-rpc.example".to_string()) },
         )]);
 
         let value = serde_json::to_value(build_metadata(&config)).expect("metadata JSON");
         assert_eq!(value["oauth2"]["providers"][0]["id"], "corporate");
         assert_eq!(value["standalone"]["webauthn"], true);
         assert_eq!(value["wallet"]["chains"], json!(["eip155:1"]));
+        assert_eq!(value["wallet"]["contractVerificationChains"], json!(["eip155:1"]));
         let rendered = value.to_string();
         assert!(!rendered.contains("must-not-leak"));
         assert!(!rendered.contains("secret-rpc"));

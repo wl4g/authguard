@@ -153,6 +153,35 @@ impl IdentityBindingRepository for AuthnSqliteRepository {
         .map_err(map_identity_error)?;
         Ok(exists != 0)
     }
+
+    async fn rollback_identity_binding(
+        &self,
+        principal_id: &str,
+        identity: &ExternalIdentityKey,
+    ) -> Result<(), IdentityRepositoryError> {
+        let mut transaction = self.pool.begin().await.map_err(map_identity_error)?;
+        sqlx::query(
+            "DELETE FROM iam_principal_identity \
+             WHERE principal_id = ? AND provider = ? AND issuer = ? AND subject = ?",
+        )
+        .bind(principal_id)
+        .bind(&identity.provider)
+        .bind(&identity.issuer)
+        .bind(&identity.subject)
+        .execute(&mut *transaction)
+        .await
+        .map_err(map_identity_error)?;
+        sqlx::query(
+            "DELETE FROM iam_principal WHERE id = ? \
+             AND NOT EXISTS (SELECT 1 FROM iam_principal_identity WHERE principal_id = ?)",
+        )
+        .bind(principal_id)
+        .bind(principal_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(map_identity_error)?;
+        transaction.commit().await.map_err(map_identity_error)
+    }
 }
 
 #[async_trait]

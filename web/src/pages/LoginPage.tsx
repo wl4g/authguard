@@ -1,11 +1,11 @@
-import { Fingerprint, Github, KeyRound, MessageCircle, ScanFace, Shield, Sparkles } from 'lucide-react'
+import { Fingerprint, Github, KeyRound, MessageCircle, ScanFace, Shield, Sparkles, UserPlus } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../features/auth/AuthContext'
 import { WalletLogin } from '../features/auth/WalletLogin'
 import { authn, authnUrl, metadata as loadMetadata, type AuthMetadata, type LoginResponse } from '../lib/api'
 import { useI18n } from '../lib/i18n'
-import { requestOptions, serializeAssertion } from '../lib/webauthn'
+import { creationOptions, requestOptions, serializeAssertion, serializeRegistration } from '../lib/webauthn'
 import { Preferences } from '../components/Preferences'
 
 const providerMark: Record<string, React.ReactNode> = {
@@ -54,6 +54,22 @@ export function LoginPage() {
     finally { setBusy('') }
   }
 
+  async function registerPasskey() {
+    if (!meta || !login || !password) return
+    setBusy('webauthn-registration'); setError('')
+    try {
+      const challenge = await authn<{ challengeId: string; options: { publicKey: PublicKeyCredentialCreationOptionsJSON } }>(meta.standalone.webauthnRegistrationChallengeEndpoint, {
+        method: 'POST', body: JSON.stringify({ login, password, totp: totp || null, displayName: login }),
+      })
+      const credential = await navigator.credentials.create(creationOptions(challenge.options)) as PublicKeyCredential | null
+      if (!credential) throw new Error('No WebAuthn credential returned')
+      authenticated(await authn<LoginResponse>(meta.standalone.webauthnRegistrationVerifyEndpoint, {
+        method: 'POST', body: JSON.stringify({ challengeId: challenge.challengeId, credential: serializeRegistration(credential) }),
+      }))
+    } catch (cause) { setError(cause instanceof Error ? cause.message : t('apiError')) }
+    finally { setBusy('') }
+  }
+
   function oauthLogin(provider: AuthMetadata['oauth2']['providers'][number]) {
     setError('')
     const returnUri = `${window.location.origin}/login`
@@ -90,14 +106,14 @@ export function LoginPage() {
         <div className="mobile-brand"><Fingerprint/><b>{t('product')}</b></div>
         <h2>{t('login')}</h2><p>{t('authenticatedAs')} <code>canonical principal</code></p>
         <form onSubmit={passwordLogin}>
-          <label>{t('loginId')}<input autoComplete="username" value={login} onChange={event => setLogin(event.target.value)} required /></label>
-          <label>{t('password')}<input type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required /></label>
-          {meta?.standalone.totp && <label>{t('totp')}<input inputMode="numeric" autoComplete="one-time-code" value={totp} onChange={event => setTotp(event.target.value)} /></label>}
-          <button className="primary" disabled={busy !== '' || !meta?.standalone.password}><KeyRound size={18}/>{busy === 'password' ? t('connecting') : t('login')}</button>
+          <label>{t('loginId')}<input data-testid="login-id" autoComplete="username" value={login} onChange={event => setLogin(event.target.value)} required /></label>
+          <label>{t('password')}<input data-testid="login-password" type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required /></label>
+          {meta?.standalone.totp && <label>{t('totp')}<input data-testid="login-totp" inputMode="numeric" autoComplete="one-time-code" value={totp} onChange={event => setTotp(event.target.value)} /></label>}
+          <button data-testid="login-password-submit" className="primary" disabled={busy !== '' || !meta?.standalone.password}><KeyRound size={18}/>{busy === 'password' ? t('connecting') : t('login')}</button>
         </form>
-        {meta?.standalone.webauthn && <button className="auth-method" disabled={busy !== '' || !login} onClick={passkeyLogin}><ScanFace size={19}/><span>{t('passkey')}</span><i>FIDO2</i></button>}
+        {meta?.standalone.webauthn && <><button data-testid="login-webauthn" className="auth-method" disabled={busy !== '' || !login} onClick={passkeyLogin}><ScanFace size={19}/><span>{t('passkey')}</span><i>FIDO2</i></button><button data-testid="register-webauthn" className="auth-method" disabled={busy !== '' || !login || !password} onClick={registerPasskey}><UserPlus size={19}/><span>{t('registerPasskey')}</span><i>FIDO2</i></button></>}
         {meta && <WalletLogin metadata={meta} onAuthenticated={authenticated}/>}
-        {!!meta?.oauth2.providers.length && <><div className="divider"><span>{t('orFederated')}</span></div><div className="provider-grid">{meta.oauth2.providers.map(provider => <button key={provider.id} disabled={busy !== ''} onClick={() => oauthLogin(provider)}>{providerMark[provider.id.toLowerCase()] || <Shield/>}<span>{provider.id}</span></button>)}</div></>}
+        {!!meta?.oauth2.providers.length && <><div className="divider"><span>{t('orFederated')}</span></div><div className="provider-grid">{meta.oauth2.providers.map(provider => <button data-testid={`login-provider-${provider.id.toLowerCase()}`} key={provider.id} disabled={busy !== ''} onClick={() => oauthLogin(provider)}>{providerMark[provider.id.toLowerCase()] || <Shield/>}<span>{provider.id}</span></button>)}</div></>}
         {error && <div className="error-banner">{error}</div>}
         <div className="proof-line"><span/><small>Authentication ≠ Identity ≠ Principal ≠ Authorization</small></div>
       </div>
@@ -108,4 +124,10 @@ export function LoginPage() {
 type PublicKeyCredentialRequestOptionsJSON = Omit<PublicKeyCredentialRequestOptions, 'challenge' | 'allowCredentials'> & {
   challenge: string
   allowCredentials?: Array<Omit<PublicKeyCredentialDescriptor, 'id'> & { id: string }>
+}
+
+type PublicKeyCredentialCreationOptionsJSON = Omit<PublicKeyCredentialCreationOptions, 'challenge' | 'user' | 'excludeCredentials'> & {
+  challenge: string
+  user: Omit<PublicKeyCredentialUserEntity, 'id'> & { id: string }
+  excludeCredentials?: Array<Omit<PublicKeyCredentialDescriptor, 'id'> & { id: string }>
 }

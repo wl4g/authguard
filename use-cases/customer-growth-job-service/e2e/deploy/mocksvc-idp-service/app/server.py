@@ -12,7 +12,8 @@ import hashlib
 import json
 import os
 import secrets
-from urllib.parse import urlencode
+import time
+from urllib.parse import urlencode, urlsplit
 
 from flask import Flask, Response, jsonify, redirect, request
 
@@ -67,6 +68,18 @@ def healthz():
     ready = all(client["secret"] for client in CLIENTS.values())
     status = 200 if ready else 503
     return jsonify(status="ok" if ready else "degraded", providers=sorted(_providers())), status
+
+
+@app.post("/fault/ethereum/<chain_id>/timeout")
+def ethereum_rpc_timeout(chain_id: str):
+    """RPC fault injection only; successful wallet cases use the real local Anvil."""
+    time.sleep(3)
+    payload = request.get_json(silent=True) or {}
+    return jsonify(
+        jsonrpc="2.0",
+        id=payload.get("id"),
+        error={"code": -32000, "message": f"simulated chain {chain_id} timeout"},
+    )
 
 
 # GitHub OAuth web flow:
@@ -217,14 +230,16 @@ def _authorize(provider: str, client_parameter: str):
     redirect_uri = request.args.get("redirect_uri", "")
     state = request.args.get("state", "")
     client = CLIENTS.get(client_id)
+    redirect_target = urlsplit(redirect_uri)
     if (
         request.args.get("response_type") != "code"
         or client is None
         or client["provider"] != provider
-        or not redirect_uri.startswith(
-            "http://e2e-authguard-authn.customer-growth.local"
-        )
-        or f"/auth/oauth2/{provider}/callback" not in redirect_uri
+        or redirect_target.scheme != "http"
+        or redirect_target.hostname
+        not in {"e2e-authguard-authn.customer-growth.local", "localhost"}
+        or redirect_target.port != 8082
+        or redirect_target.path != f"/auth/oauth2/{provider}/callback"
         or not state
         or request.args.get("scope") != EXPECTED_SCOPES[provider]
     ):

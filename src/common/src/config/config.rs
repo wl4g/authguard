@@ -270,7 +270,9 @@ pub struct WalletChainsProperties {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct EvmWalletChainProperties {
-    pub rpc: String,
+    /// Trusted server-side RPC used only for contract-wallet verification.
+    /// EOA authentication is intentionally available without any node dependency.
+    pub rpc: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1529,9 +1531,12 @@ fn validate_authn(authn: &AuthnProperties, cache: &CacheProperties) -> anyhow::R
             let canonical = chain_id == "0" || !chain_id.starts_with('0');
             if !canonical
                 || chain_id.parse::<u64>().is_err()
-                || !chain.rpc.starts_with("http://") && !chain.rpc.starts_with("https://")
+                || chain
+                    .rpc
+                    .as_ref()
+                    .is_some_and(|rpc| !rpc.starts_with("http://") && !rpc.starts_with("https://"))
             {
-                bail!("each authn.wallet.chains.eip155 entry requires a decimal chain id and server RPC URL");
+                bail!("each authn.wallet.chains.eip155 entry requires a decimal chain id and an optional server RPC URL");
             }
         }
         for reference in &wallet.chains.solana {
@@ -2164,6 +2169,31 @@ providers:
         validate_caip_reference("mainnet", "solana").expect("valid reference");
         assert!(validate_caip_reference(&"a".repeat(33), "solana").is_err());
         assert!(validate_caip_reference("contains:colon", "bip122").is_err());
+    }
+
+    #[test]
+    fn evm_eoa_chain_does_not_require_contract_rpc() {
+        let authn: AuthnProperties = serde_yaml::from_str(
+            r"
+wallet:
+  enabled: true
+  domain: auth.example.com
+  uri: https://auth.example.com
+  chains:
+    eip155:
+      '1': {}
+      '31337':
+        rpc: http://anvil:8545
+",
+        )
+        .expect("wallet configuration");
+        let mut cache = CacheProperties::default();
+        cache.provider = "Redis".to_string();
+        cache.redis.nodes = vec!["redis://127.0.0.1:6379".to_string()];
+
+        validate_authn(&authn, &cache).expect("offline EOA plus contract-wallet RPC");
+        assert_eq!(authn.wallet.chains.eip155["1"].rpc, None);
+        assert_eq!(authn.wallet.chains.eip155["31337"].rpc.as_deref(), Some("http://anvil:8545"));
     }
 
     #[test]

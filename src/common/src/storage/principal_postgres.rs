@@ -149,6 +149,34 @@ impl IdentityBindingRepository for AuthnPostgresRepository {
         .await
         .map_err(map_identity_error)
     }
+
+    async fn rollback_identity_binding(
+        &self,
+        principal_id: &str,
+        identity: &ExternalIdentityKey,
+    ) -> Result<(), IdentityRepositoryError> {
+        let mut transaction = self.pool.begin().await.map_err(map_identity_error)?;
+        sqlx::query(
+            "DELETE FROM iam_principal_identity \
+             WHERE principal_id = $1 AND provider = $2 AND issuer = $3 AND subject = $4",
+        )
+        .bind(principal_id)
+        .bind(&identity.provider)
+        .bind(&identity.issuer)
+        .bind(&identity.subject)
+        .execute(&mut *transaction)
+        .await
+        .map_err(map_identity_error)?;
+        sqlx::query(
+            "DELETE FROM iam_principal p WHERE p.id = $1 \
+             AND NOT EXISTS (SELECT 1 FROM iam_principal_identity i WHERE i.principal_id = p.id)",
+        )
+        .bind(principal_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(map_identity_error)?;
+        transaction.commit().await.map_err(map_identity_error)
+    }
 }
 
 #[async_trait]

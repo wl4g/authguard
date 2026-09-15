@@ -23,8 +23,10 @@
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.1.1",
-    "typescript": "6.0.2",
+    "typescript": "^5.9.3",
     "vite": "8.3.0"
   },
-  "overrides": { "axios": "1.18.0" }
+  "overrides": {
+    "axios": "1.18.0"
+  }
 }

@@ -303,6 +303,20 @@
       }
     },
     {
+      "id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "username": "ui-federated-reviewer",
+      "enabled": true,
+      "firstName": "UI Federated",
+      "lastName": "Reviewer",
+      "email": "ui-federated-reviewer@example-corp.example",
+      "emailVerified": true,
+      "requiredActions": [],
+      "attributes": {
+        "tenant_id": ["example-corp"],
+        "authguard_group_ids": []
+      }
+    },
+    {
       "id": "77777777-7777-4777-8777-777777777777",
       "username": "service-account-e2e-authguard-principal-discovery",
       "enabled": true,

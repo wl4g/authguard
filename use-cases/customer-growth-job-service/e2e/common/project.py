@@ -15,7 +15,7 @@ from .process import run_command
 
 
 CASE_MARKER = re.compile(r"AUTHGUARD_E2E_CASE id=([A-Za-z0-9_.-]+)")
-PROJECT_VERIFIERS = dict(zip(("10", "11", "12", "13", "14"), PROJECTS, strict=True))
+PROJECT_VERIFIERS = dict(zip(("21", "22", "23", "24", "25"), PROJECTS, strict=True))
 
 
 def verify_project(
@@ -108,7 +108,7 @@ def verify_scenario_matrix(results: list[VerificationResult]) -> VerificationRes
         for scenario_id, project_name in PROJECT_VERIFIERS.items()
     )
     return VerificationResult(
-        scenario_id="18",
+        scenario_id="29",
         title="Cross-service authorization scenario matrix",
         passed=complete and actual_total == expected_total,
         duration_seconds=0,

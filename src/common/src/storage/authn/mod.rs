@@ -54,9 +54,10 @@ pub trait StandaloneCredentialRepository: Send + Sync {
         credential: &IamStandaloneCredential,
     ) -> Result<(), CredentialRepositoryError>;
 
-    async fn update_credential_data(
+    async fn compare_and_swap_credential_data(
         &self,
         credential_id: &str,
+        current_data: &serde_json::Value,
         credential_data: &serde_json::Value,
     ) -> Result<bool, CredentialRepositoryError>;
 
@@ -88,6 +89,11 @@ pub trait IdentityBindingRepository: Send + Sync {
         principal_id: &str,
         provider: &str,
     ) -> Result<bool, IdentityRepositoryError>;
+    async fn rollback_identity_binding(
+        &self,
+        principal_id: &str,
+        identity: &ExternalIdentityKey,
+    ) -> Result<(), IdentityRepositoryError>;
 }
 
 #[async_trait]
@@ -119,6 +125,13 @@ impl<T: IdentityBindingRepository + ?Sized> IdentityBindingRepository for Arc<T>
     ) -> Result<bool, IdentityRepositoryError> {
         (**self).principal_has_provider(principal_id, provider).await
     }
+    async fn rollback_identity_binding(
+        &self,
+        principal_id: &str,
+        identity: &ExternalIdentityKey,
+    ) -> Result<(), IdentityRepositoryError> {
+        (**self).rollback_identity_binding(principal_id, identity).await
+    }
 }
 
 #[async_trait]
@@ -147,12 +160,15 @@ impl<T: StandaloneCredentialRepository + ?Sized> StandaloneCredentialRepository 
         (**self).create_credential(credential).await
     }
 
-    async fn update_credential_data(
+    async fn compare_and_swap_credential_data(
         &self,
         credential_id: &str,
+        current_data: &serde_json::Value,
         credential_data: &serde_json::Value,
     ) -> Result<bool, CredentialRepositoryError> {
-        (**self).update_credential_data(credential_id, credential_data).await
+        (**self)
+            .compare_and_swap_credential_data(credential_id, current_data, credential_data)
+            .await
     }
 
     async fn advance_totp_counter(

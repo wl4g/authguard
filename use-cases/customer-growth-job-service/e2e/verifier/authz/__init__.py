@@ -1,0 +1,1 @@
+"""Authorization verifier scenarios."""

@@ -172,6 +172,17 @@ where
         Ok(context)
     }
 
+    /// Removes a binding created for a registration whose credential write
+    /// failed, deleting the Principal only when it has no remaining identities.
+    pub(crate) async fn rollback_identity_binding(
+        &self,
+        principal_id: &str,
+        identity: &crate::model::ExternalIdentityKey,
+    ) -> Result<(), AccountLinkingError> {
+        self.repository.rollback_identity_binding(principal_id, identity).await?;
+        Ok(())
+    }
+
     fn context(
         principal: IamPrincipalInfo,
         authentication: &AuthenticationResult,
@@ -322,6 +333,21 @@ mod tests {
                 .providers
                 .get(principal_id)
                 .is_some_and(|providers| providers.contains(provider)))
+        }
+
+        async fn rollback_identity_binding(
+            &self,
+            principal_id: &str,
+            identity: &ExternalIdentityKey,
+        ) -> Result<(), IdentityRepositoryError> {
+            let mut state = self.state.lock().expect("state");
+            if state.bindings.get(identity).is_some_and(|value| value.id == principal_id) {
+                state.bindings.remove(identity);
+            }
+            if !state.bindings.values().any(|value| value.id == principal_id) {
+                state.providers.remove(principal_id);
+            }
+            Ok(())
         }
     }
 

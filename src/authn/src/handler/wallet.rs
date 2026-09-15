@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::authentication::challenge::{consume_json, put_json};
 use crate::authentication::random_id;
+use crate::provider::wallet::WalletVerificationMethod;
 use crate::provider::wallet::{WalletChallenge, WalletProvider, WalletProviderError};
 
 use super::{ApiError, AuthenticationPipeline, AuthnRuntime, LoginResponse};
@@ -37,6 +38,7 @@ pub(crate) struct WalletChallengeResponse {
     message: String,
     expires_at: String,
     signature_encoding: &'static str,
+    verification_methods: Vec<&'static str>,
 }
 
 #[derive(Deserialize)]
@@ -44,6 +46,8 @@ pub(crate) struct WalletChallengeResponse {
 pub(crate) struct WalletVerifyRequest {
     challenge_id: String,
     signature: String,
+    #[serde(default)]
+    verification_method: WalletVerificationMethod,
 }
 
 impl WalletHandler {
@@ -77,7 +81,12 @@ impl WalletHandler {
         .map_err(ApiError::challenge)?
         .ok_or_else(|| ApiError::bad_request("invalid or expired wallet challenge"))?;
         self.provider
-            .verify(challenge, &request.challenge_id, &request.signature)
+            .verify(
+                challenge,
+                &request.challenge_id,
+                &request.signature,
+                request.verification_method,
+            )
             .await
             .map_err(wallet_error)
     }
@@ -107,6 +116,7 @@ pub(crate) async fn challenge(
         message: prepared.message,
         expires_at: prepared.expires_at,
         signature_encoding: prepared.signature_encoding,
+        verification_methods: prepared.verification_methods,
     }))
 }
 
@@ -152,6 +162,13 @@ fn wallet_error(error: WalletProviderError) -> ApiError {
         }
         WalletProviderError::Backend => {
             ApiError::unavailable("wallet verification service is unavailable")
+        }
+        WalletProviderError::ContractVerificationNotConfigured => ApiError::not_implemented(
+            "contract_wallet_not_supported",
+            "contract-wallet verification is not configured for this chain",
+        ),
+        WalletProviderError::VerificationMethodMismatch => {
+            ApiError::unauthorized("wallet verification method does not match the proof")
         }
         WalletProviderError::Verification => {
             ApiError::unauthorized("wallet signature verification failed")

@@ -130,62 +130,62 @@ PROJECTS = {
 DEFAULT_SCENARIOS = {
     "01": (
         "Use-case structure and project boundaries",
-        "verifier.s01_structure_verifier",
+        "verifier.infra.s01_structure",
     ),
     "02": (
         "Shared SQL and authorization fixture consistency",
-        "verifier.s02_fixture_consistency_verifier",
+        "verifier.infra.s02_fixture_consistency",
     ),
     "03": (
         "Cross-language adapter contract parity",
-        "verifier.s03_adapter_contract_verifier",
+        "verifier.infra.s03_adapter_contract",
     ),
-    "10": (
+    "21": (
         PROJECTS["golang-sqlx-service"].title,
-        "verifier.s10_golang_sqlx_verifier",
+        "verifier.authz.sdk-golang.s21_sqlx",
     ),
-    "11": (
+    "22": (
         PROJECTS["rust-sqlx-service"].title,
-        "verifier.s11_rust_sqlx_verifier",
+        "verifier.authz.sdk-rust.s22_sqlx",
     ),
-    "12": (
+    "23": (
         PROJECTS["python-sqlalchemy-service"].title,
-        "verifier.s12_python_sqlalchemy_verifier",
+        "verifier.authz.sdk-python.s23_sqlalchemy",
     ),
-    "13": (
+    "24": (
         PROJECTS["springboot-jdbc-service"].title,
-        "verifier.s13_springboot_jdbc_verifier",
+        "verifier.authz.sdk-java.s24_springboot_jdbc",
     ),
-    "14": (
+    "25": (
         PROJECTS["springboot-jpa-service"].title,
-        "verifier.s14_springboot_jpa_verifier",
+        "verifier.authz.sdk-java.s25_springboot_jpa",
     ),
 }
 
 OPTIONAL_SCENARIOS = {
     "00": (
         "Infrastructure: Helm deployment and middleware initialization",
-        "verifier.s00_k3s_infrastructure_verifier",
+        "verifier.infra.s00_k3s_infrastructure",
     ),
-    "15": (
-        "Core 1/3: Keycloak/LDAP federation and administrator pre-authorization",
-        "verifier.s15_principal_preauthorization_verifier",
+    "10": (
+        "AuthN: unified OAuth/OIDC, standalone, WebAuthn, and CAIP/SIWX",
+        "verifier.authn.other.s10_authentication",
     ),
-    "16": (
-        "Core 2/3: AuthN callback, normalization, linking, and tracing",
-        "verifier.s16_authentication_verifier",
+    "20": (
+        "AuthZ: federation and administrator pre-authorization",
+        "verifier.authz.other.s20_principal_preauthorization",
     ),
-    "17": (
-        "Core 3/3: OIDC user/workload, Envoy, AuthZ, and Biz CRUD",
-        "verifier.s17_gateway_authorization_verifier",
+    "26": (
+        "AuthZ: OIDC user/workload, Envoy, PDP, and business CRUD",
+        "verifier.authz.other.s26_gateway_authorization",
     ),
-    "19": (
-        "Customer Growth UI: deployed assets and dynamic AuthN capabilities",
-        "verifier.s19_customer_growth_ui_verifier",
+    "30": (
+        "Web: real Chromium authentication and control-plane journeys",
+        "verifier.web.s30_authguard_ui",
     ),
-    "21": (
+    "40": (
         "Observability: PostgreSQL, logs, metrics, Jaeger, and runtime health",
-        "verifier.s21_runtime_evidence_verifier",
+        "verifier.jaeger.s40_runtime_evidence",
     ),
 }
 

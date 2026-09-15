@@ -25,9 +25,9 @@ against SQLite or H2. Deployment mode starts the complete request path on k3s:
 Keycloak as an E2E-only external IdP, Envoy Gateway, `authguard-authn`, one
 `authguard-authz` replica, Redis Cluster, one shared
 PostgreSQL instance, an LDAP directory, Jaeger, and all five HTTP microservices.
-It also deploys the independent `customer-growth-ui-service` React application
-on the AuthN listener for GitHub, Google, WeChat, QQ, password/TOTP, and CAIP
-wallet UI automation.
+It also deploys the repository's production `authguard-web` image on the AuthN
+listener. Playwright drives real headless Chromium journeys for GitHub, Google,
+WeChat, QQ, password, WebAuthn, CAIP wallet, Principal, and Policy controls.
 It additionally proves the Envoy Gateway JWT public-key requirement with a
 deterministic realm key, the workload OAuth2 client_credentials flow, and the
 resign-JWT Authguard-origin boundary inside a business microservice.
@@ -44,14 +44,20 @@ customer-growth-job-service/
       e2e-jwt-keys/                  fixed realm-signing and resign-JWT keys
     common/                            process, project lifecycle, and reports
     deploy/
-      customer-growth-ui-service/      React AuthN UI automation fixture
+      anvil/                            disposable real EVM node recipe
+      solana/                           disposable real Solana validator recipe
       golang-sqlx-service/             Go + sqlx + SQLite/PostgreSQL
       rust-sqlx-service/               Rust + sqlx + SQLite/PostgreSQL
       python-sqlalchemy-service/       Python + SQLAlchemy + SQLite/PostgreSQL
       springboot-jdbc-service/         Spring Boot + JDBC + SQLite/PostgreSQL
       springboot-jpa-service/          Spring Boot + JPA + H2/PostgreSQL
     helm/                              shared PostgreSQL and five workloads
-    verifier/                          independent sNN verifier groups
+    verifier/
+      infra/s0x_*                      infrastructure and structure
+      authn/**/s1x_*                   protocol-specific AuthN
+      authz/**/s2x_*                   PDP and SDK authorization
+      web/s3x_*                        Playwright/Chromium UI journeys
+      jaeger/s4x_*                     runtime observability
     reports/                           ignored execution evidence
     runner.py                          clean rebuild, rounds, selection, summary
 ```
@@ -91,10 +97,13 @@ make e2e
 Run repeated clean rebuilds or one verifier directly:
 
 ```bash
-python3 use-cases/customer-growth-job-service/e2e/runner.py --rounds 3
-python3 use-cases/customer-growth-job-service/e2e/runner.py --scenario 12
-python3 use-cases/customer-growth-job-service/e2e/runner.py --list
-python3 use-cases/customer-growth-job-service/e2e/runner.py --scenario 00,15,16,17,19,21 --cleanup-after-run
+python3 -m venv .venv
+.venv/bin/pip install -r use-cases/customer-growth-job-service/e2e/requirements.txt
+.venv/bin/playwright install chromium
+.venv/bin/python use-cases/customer-growth-job-service/e2e/runner.py --rounds 3
+.venv/bin/python use-cases/customer-growth-job-service/e2e/runner.py --scenario 23
+.venv/bin/python use-cases/customer-growth-job-service/e2e/runner.py --list
+.venv/bin/python use-cases/customer-growth-job-service/e2e/runner.py --scenario 00,20,10,26,30,40 --cleanup-after-run
 ```
 
 By default, every round removes project-local generated artifacts and performs
@@ -121,6 +130,13 @@ so AuthZ sees the resulting internal Principal without learning the provider
 subject. The administrator binds those Principal IDs in one revision-checked
 policy replacement. A second login must resolve to the same IDs before any
 business request is sent. Equal email values are never used for linking.
+
+Wallet success cases do not mock chain RPC. A disposable Anvil node validates
+ERC-1271 contract wallets, while a real local Solana validator anchors the test
+account and CAIP-2 genesis reference. EVM EOA, Solana Ed25519, and Bitcoin
+BIP-322 authentication requests are then verified entirely offline by AuthN;
+only contract-wallet chains receive a server-configured RPC. The mock IdP has
+one wallet endpoint solely for deterministic RPC-timeout fault injection.
 
 The same verifier exercises every supported Principal-discovery path with live
 dependencies. Repeated materialization proves canonical projection is idempotent.
@@ -191,11 +207,13 @@ ID and a local Jaeger UI command for independent review.
 
 All runtime and build images use `registry.cn-shenzhen.aliyuncs.com`. The E2E
 runtime pins Envoy `distroless-v1.36.4`, Envoy Gateway `v1.9.0`, Redis Cluster
-`7.0.14`, Keycloak `26.7.0`, GLAUTH `2.5.0`, Jaeger `1.76.0`, and PostgreSQL
-`18.3`.
+`7.0.14`, Keycloak `26.7.0`, GLAUTH `2.5.0`, Jaeger `1.76.0`, PostgreSQL
+`18.3`, Anvil `1.7.1`, and Agave/Solana `3.1.14`.
 
 Portable-mode prerequisites are the same local toolchains used by the
 repository: Rust/Cargo, Go, Python 3 with SQLAlchemy, Java 17/Maven, and their
 cached or reachable package repositories. Kubernetes mode additionally needs
-Docker, Helm, kubectl, and local k3s. The runner itself uses only the Python
-standard library.
+Docker, Helm, kubectl, and local k3s. The authentication verifiers use PyOTP as
+an RFC 6238 authenticator-app oracle, FIDO2 CBOR plus `cryptography` for a real
+virtual ES256 WebAuthn ceremony, and `viem` for browser-wallet-equivalent
+EIP-191 signing. AuthGuard still performs every server-side verification.

@@ -31,6 +31,8 @@ stringData:
   AUTHGUARD_GOOGLE_CLIENT_SECRET: "e2e-authguard-google-secret"
   AUTHGUARD_WECHAT_CLIENT_SECRET: "e2e-authguard-wechat-secret"
   AUTHGUARD_QQ_CLIENT_SECRET: "e2e-authguard-qq-secret"
+  # Fixed E2E-only AES-256 key. Production deployments inject their own secret.
+  AUTHGUARD_STANDALONE_CREDENTIAL_KEY: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
   AUTHGUARD__STORAGE__POSTGRES__PASSWORD: {{ .Values.postgresql.authguardPassword | quote }}
   AUTHGUARD_SCIM_API_PASSWORD: {{ required "authguard.apiToken is required" .Values.authguard.apiToken | quote }}
   AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY: {{ .Values.authguard.accessContext.signingKey | quote }}

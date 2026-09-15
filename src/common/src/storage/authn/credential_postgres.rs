@@ -82,17 +82,20 @@ impl StandaloneCredentialRepository for AuthnPostgresRepository {
         Ok(())
     }
 
-    async fn update_credential_data(
+    async fn compare_and_swap_credential_data(
         &self,
         credential_id: &str,
+        current_data: &serde_json::Value,
         credential_data: &serde_json::Value,
     ) -> Result<bool, CredentialRepositoryError> {
         let result = sqlx::query(
             "UPDATE iam_standalone_credential \
              SET credential_data = $1, updated_at = CURRENT_TIMESTAMP \
-             WHERE id = $2 AND revoked_at IS NULL",
+             WHERE id = $3 AND revoked_at IS NULL \
+               AND credential_data::jsonb = $2::jsonb",
         )
         .bind(credential_data)
+        .bind(current_data)
         .bind(credential_id)
         .execute(&self.pool)
         .await

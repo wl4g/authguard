@@ -1,4 +1,4 @@
-.PHONY: help build build-web build-customer-growth-ui build-image build-runtime-image build-web-image build-customer-growth-ui-image fmt fmt-rust lint lint-rust lint-web lint-helm test test-rust test-web test-go test-python test-java test-helm e2e e2e-k3s package-chart release release-push release-verify clean
+.PHONY: help build build-web build-image build-runtime-image build-web-image fmt fmt-rust lint lint-rust lint-web lint-helm test test-rust test-web test-go test-python test-java test-helm e2e e2e-k3s package-chart release release-push release-verify clean
 
 CARGO ?= cargo
 GO ?= go
@@ -24,7 +24,6 @@ RELEASE_DIR ?= dist
 USE_CASE_DIR := use-cases/customer-growth-job-service
 E2E_DEPLOY_DIR := $(USE_CASE_DIR)/e2e/deploy
 WEB_DIR := web
-CUSTOMER_GROWTH_UI_DIR := $(E2E_DEPLOY_DIR)/customer-growth-ui-service
 
 ifeq ($(IN_CN_GFW),true)
 HTTPS_PROXY ?= http://127.0.0.1:8800
@@ -47,7 +46,7 @@ help:
 	@echo "Authguard -- Makefile"
 	@echo ""
 	@echo "  Build:"
-	@echo "    make build         Build backend, AuthGuard Web, use-case UI, and Java modules."
+	@echo "    make build         Build backend, AuthGuard Web, and Java modules."
 	@echo "    make build-web     Build the AuthGuard React control-plane UI."
 	@echo "    make build-image   Build AuthGuard runtime + AuthGuard Web release images."
 	@echo ""
@@ -70,7 +69,7 @@ help:
 	@echo "  Utils:"
 	@echo "    make clean         Remove local build artifacts."
 
-build: build-web build-customer-growth-ui
+build: build-web
 	$(CARGO) build --workspace
 	$(MAVEN) $(MAVEN_FLAGS) -f src/adapters/java/pom.xml -DskipTests install
 	$(MAVEN) $(MAVEN_FLAGS) -f $(E2E_DEPLOY_DIR)/springboot-jdbc-service/pom.xml -DskipTests package
@@ -78,9 +77,6 @@ build: build-web build-customer-growth-ui
 
 build-web:
 	cd $(WEB_DIR) && $(NPM) ci && $(NPM) run build
-
-build-customer-growth-ui:
-	cd $(CUSTOMER_GROWTH_UI_DIR) && $(NPM) ci && $(NPM) run build
 
 build-image: build-runtime-image build-web-image
 
@@ -103,11 +99,6 @@ build-web-image:
 		-t $(GHCR_WEB_IMAGE):$(VERSION) -t $(GHCR_WEB_IMAGE):latest \
 		-t $(ALIYUN_WEB_IMAGE):$(VERSION) -t $(ALIYUN_WEB_IMAGE):latest $(WEB_DIR)
 
-build-customer-growth-ui-image:
-	$(CONTAINER_CLI) build $(CONTAINER_BUILD_FLAGS) -f $(CUSTOMER_GROWTH_UI_DIR)/Dockerfile \
-		--build-arg VITE_REOWN_PROJECT_ID="$(VITE_REOWN_PROJECT_ID)" \
-		-t customer-growth-ui-service:$(VERSION) $(CUSTOMER_GROWTH_UI_DIR)
-
 fmt: fmt-rust
 
 fmt-rust:
@@ -120,7 +111,6 @@ lint-rust:
 
 lint-web:
 	cd $(WEB_DIR) && $(NPM) ci && $(NPM) run typecheck
-	cd $(CUSTOMER_GROWTH_UI_DIR) && $(NPM) ci && $(NPM) run build
 
 lint-helm: test-helm
 
@@ -131,7 +121,6 @@ test-rust:
 
 test-web:
 	cd $(WEB_DIR) && $(NPM) run build
-	cd $(CUSTOMER_GROWTH_UI_DIR) && $(NPM) run build
 
 test-go:
 	cd src/adapters/golang && $(GO_NETWORK_ENV) $(GO) test ./...
@@ -187,4 +176,4 @@ release-verify:
 
 clean:
 	find . -type d \( -name target -o -name __pycache__ -o -name .pytest_cache -o -name .mypy_cache -o -name .ruff_cache \) -prune -exec sh -c 'find "$$1" -depth -delete' sh {} \;
-	find $(WEB_DIR) $(CUSTOMER_GROWTH_UI_DIR) -type d \( -name node_modules -o -name dist \) -prune -exec sh -c 'find "$$1" -depth -delete' sh {} \;
+	find $(WEB_DIR) -type d \( -name node_modules -o -name dist \) -prune -exec sh -c 'find "$$1" -depth -delete' sh {} \;

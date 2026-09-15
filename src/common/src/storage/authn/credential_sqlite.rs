@@ -89,20 +89,25 @@ impl StandaloneCredentialRepository for AuthnSqliteRepository {
         Ok(())
     }
 
-    async fn update_credential_data(
+    async fn compare_and_swap_credential_data(
         &self,
         credential_id: &str,
+        current_data: &serde_json::Value,
         credential_data: &serde_json::Value,
     ) -> Result<bool, CredentialRepositoryError> {
         let data = serde_json::to_string(credential_data)
             .map_err(|error| CredentialRepositoryError::Backend(error.to_string()))?;
+        let current = serde_json::to_string(current_data)
+            .map_err(|error| CredentialRepositoryError::Backend(error.to_string()))?;
         let result = sqlx::query(
             "UPDATE iam_standalone_credential \
              SET credential_data = JSON(?), updated_at = CURRENT_TIMESTAMP \
-             WHERE id = ? AND revoked_at IS NULL",
+             WHERE id = ? AND revoked_at IS NULL \
+               AND JSON(credential_data) = JSON(?)",
         )
         .bind(data)
         .bind(credential_id)
+        .bind(current)
         .execute(&self.pool)
         .await
         .map_err(map_error)?;
