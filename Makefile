@@ -168,8 +168,10 @@ release-push:
 	helm push $(RELEASE_DIR)/authguard-$(VERSION).tgz $(HELM_OCI_REGISTRY)
 
 release-verify:
-	$(CONTAINER_CLI) manifest inspect $(GHCR_IMAGE):$(VERSION) >/dev/null
-	$(CONTAINER_CLI) manifest inspect $(GHCR_WEB_IMAGE):$(VERSION) >/dev/null
+	$(CONTAINER_CLI) pull $(GHCR_IMAGE):$(VERSION) >/dev/null
+	$(CONTAINER_CLI) image inspect $(GHCR_IMAGE):$(VERSION) >/dev/null
+	$(CONTAINER_CLI) pull $(GHCR_WEB_IMAGE):$(VERSION) >/dev/null
+	$(CONTAINER_CLI) image inspect $(GHCR_WEB_IMAGE):$(VERSION) >/dev/null
 	@pull_dir=$$(mktemp -d); \
 	  trap 'rm -rf "$$pull_dir"' EXIT; \
 	  helm pull $(HELM_OCI_REGISTRY)/authguard --version $(VERSION) --destination "$$pull_dir"; \

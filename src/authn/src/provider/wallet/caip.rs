@@ -7,6 +7,8 @@ pub(super) struct CaipAccount {
     pub address: String,
 }
 
+// https://docs.reown.com/appkit/react/core/siwx
+// https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/caip-122.md
 impl CaipAccount {
     pub(super) fn parse(value: &str) -> Result<Self, WalletProviderError> {
         let mut components = value.split(':');
