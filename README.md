@@ -1,101 +1,200 @@
-# AuthGuard — one edge, one identity, one authorization decision
+# AuthGuard
 
-AuthGuard is a standalone, high-performance AuthN/AuthZ product for enterprise and internet applications. Envoy Gateway owns the edge and acts as the PEP; AuthGuard normalizes real-world OIDC/OAuth-like identities, links them to one stable Principal, and authorizes that Principal against resource-level policy.
+[![Build & Test](https://github.com/wl4g/authguard/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/wl4g/authguard/actions/workflows/ci.yml)
+[![Rust](https://img.shields.io/badge/rust-1.88%2B-000000?logo=rust)](https://www.rust-lang.org/)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
+[![OAuth 2.0](https://img.shields.io/badge/auth-OAuth%202.0-EB5424)](https://www.rfc-editor.org/rfc/rfc6749)
+[![OpenID Connect](https://img.shields.io/badge/auth-OpenID%20Connect-F78C40?logo=openid)](https://openid.net/specs/openid-connect-core-1_0.html)
+[![WebAuthn](https://img.shields.io/badge/auth-WebAuthn-2496ED)](https://www.w3.org/TR/webauthn-3/)
+[![CAIP](https://img.shields.io/badge/wallet-CAIP%20%2F%20SIWX-6C5CE7)](https://standards.chainagnostic.org/CAIPs/caip-122)
+[![Helm](https://img.shields.io/badge/deploy-Helm-0F1689?logo=helm)](https://helm.sh/)
+
+*One edge, one canonical identity, one authorization decision.*
+
+AuthGuard is a standalone AuthN/AuthZ platform for enterprise and internet
+applications. It converges OAuth/OIDC, standalone credentials, WebAuthn, and
+multi-chain wallet proofs into one protocol-independent Principal and one
+AuthGuard JWT. Envoy Gateway remains the request-path PEP; AuthGuard AuthZ is the
+PDP and never becomes a reverse proxy.
+
+## Features
+
+- **Unified authentication result** — OAuth/OIDC, Password/TOTP, WebAuthn, and
+  CAIP/SIWX providers all produce the same transient `AuthenticationResult`
+  before account linking and token issuance.
+- **Standalone credentials** — Argon2id password hashes, RFC 6238 TOTP with
+  encrypted secrets and replay counters, plus WebAuthn credentials for passkeys,
+  platform authenticators, and security keys.
+- **Chain-agnostic wallet authentication** — CAIP-2 chain IDs, CAIP-10 account
+  IDs, and CAIP-122/SIWX challenges for EVM, Solana, and Bitcoin. EOA, Solana,
+  and BIP-322 proofs verify offline; ERC-1271/6492 contract proofs use only
+  server-configured trusted RPC endpoints.
+- **Protocol-independent identity** — account linking uses
+  `(provider, issuer, subject)` and never merges by email, display name, ENS,
+  wallet metadata, or other profile attributes.
+- **One Principal and one token pipeline** — every successful login resolves a
+  canonical `principal_id`; JWTs consistently carry `sub`, `amr`, `acr`,
+  `auth_time`, `iat`, and `exp`.
+- **Envoy-native authorization** — Envoy Gateway performs `jwt_authn` and
+  `ext_authz`; AuthGuard evaluates `principal_id + resource + action + context`
+  and returns bounded resource scope.
+- **Enterprise identity lifecycle** — Keycloak, LDAP, custom HTTP discovery, and
+  SCIM provisioning support administrator pre-authorization without becoming
+  runtime dependencies.
+- **Control-plane UI and CLI** — a multilingual React UI and the `authguard
+  console` manage Principals and revisioned authorization policy.
+- **Production operations** — PostgreSQL/SQLite IAM storage, Redis-backed
+  one-time challenges and authorization scope, Prometheus metrics, structured
+  logs, OpenTelemetry traces, Docker images, and an OCI Helm chart.
+- **Real end-to-end verification** — disposable Keycloak, LDAP, PostgreSQL,
+  Redis, Envoy, Anvil, and Solana services; Chromium WebAuthn/CTAP2 and wallet
+  journeys; multi-language SDK integration; evidence-producing API/UI cases.
+
+## Architecture
 
 ```mermaid
 flowchart LR
-    subgraph Requesters[External requesters — same trust boundary]
+    subgraph Requesters["External requesters — same trust boundary"]
         Browser[Browser / human user]
-        Workload[Workload / external business system]
+        Workload[Workload / business system]
     end
+
     Admin[Enterprise administrator]
     EnterpriseIAM[Enterprise DSP / IAM platform]
+    IdP[OAuth / OIDC providers]
+    Authenticators[Password · TOTP · WebAuthn<br/>EVM · Solana · Bitcoin]
 
-    subgraph Edge[Edge / PEP(Policy Enforcement Point)]
+    subgraph Edge["Edge / PEP (Policy Enforcement Point)"]
         Envoy[Envoy Gateway<br/>TLS · routing · jwt_authn · ext_authz]
     end
 
-    subgraph Guard[AuthGuard — runtime + web images]
-        AuthN[authguard-authn<br/>OIDC / OAuth-like token exchange<br/>identity normalization · account linking<br/>sign canonical principal_id JWT]
-        AuthZ[authguard-authz<br/>policy lookup by principal_id<br/>ALLOW / DENY · scope · JWT re-sign]
-        IAM[(Shared IAM database<br/>Principal · Identity Binding<br/>Role · Action · RoleBinding)]
-        Cache[(Redis<br/>opaque authorization scopes)]
+    subgraph Guard["AuthGuard — runtime + web images"]
+        AuthN[authguard-authn<br/>proof verification · account linking<br/>canonical Principal JWT]
+        AuthZ[authguard-authz<br/>policy decision by principal_id<br/>ALLOW / DENY · bounded scope]
+        IAM[(Shared IAM database<br/>Principal · Identity · Credential · Policy)]
+        Cache[(Redis<br/>one-time challenges · opaque scopes)]
         AuthN <--> IAM
+        AuthN <--> Cache
         AuthZ <--> IAM
         AuthZ <--> Cache
     end
 
-    IdP[External IdPs<br/>Keycloak · Entra · GitHub<br/>Google · WeChat · Corporate DSP]
     Directory[Enterprise directories<br/>Keycloak Admin API · LDAP · Custom HTTP]
-    Biz[Biz microservices<br/>verify AuthGuard re-signed JWT<br/>apply SQL/resource scope]
+    Biz[Business services<br/>verify AuthGuard scope<br/>apply SQL / resource constraints]
 
-    Browser <-->|1a. authorization redirect| IdP
-    Workload <-->|1b. workload grant / proprietary login| IdP
-    Browser -->|2. authorize + callback through edge| Envoy
-    Workload -->|2. token exchange through edge| Envoy
-    Envoy -->|3. authentication routes| AuthN
-    AuthN <-->|4. code / token / ID Token / UserInfo| IdP
-    AuthN -->|5. canonical JWT response| Envoy
+    Browser <-->|OAuth redirect or local signing UX| IdP
+    Browser <-->|credential / wallet ceremony| Authenticators
+    Browser -->|login or protected request| Envoy
+    Workload -->|token exchange or protected request| Envoy
+    Envoy -->|authentication routes| AuthN
+    AuthN <-->|code · token · ID Token · UserInfo| IdP
+    AuthN -->|canonical JWT| Envoy
+    Envoy -->|ext_authz: principal_id + request| AuthZ
+    AuthZ -->|ALLOW / DENY + resource scope| Envoy
+    Envoy -->|authorized request| Biz
 
-    Browser -->|6. Biz request + canonical JWT| Envoy
-    Workload -->|6. Biz request + canonical JWT| Envoy
-    Envoy -->|7. ext_authz with principal_id| AuthZ
-    AuthZ -->|8. ALLOW / DENY + resource scope<br/>short-lived authguardOrigin JWT| Envoy
-    Envoy -->|9. authorized request| Biz
-
-    Admin -->|A. pre-authorize / CRUD| AuthZ
-    AuthZ -->|B. pull candidate search| Directory
-    EnterpriseIAM -->|C. SCIM push lifecycle changes<br/>/scim/v2/Users · /scim/v2/Groups| AuthZ
+    Admin -->|pre-authorize / CRUD| AuthZ
+    AuthZ -->|candidate discovery| Directory
+    EnterpriseIAM -->|SCIM lifecycle changes| AuthZ
 ```
 
-The model has four boundaries: external Providers prove an identity; AuthN
-normalizes it and resolves an identity binding; AuthZ sees only the internal
-stable `principal_id`; Biz services accept only requests that passed Envoy and
-apply the returned Resource URN scope. Browser and Workload are peer external
-requesters; only their authentication grants differ. Keycloak/LDAP pull discovery
-and SCIM push provisioning are complementary optional integrations, never runtime
-dependencies.
+Every protocol converges before identity governance:
 
-- One `authguard` runtime binary (`authn`, `authz`, and `console` subcommands) plus one
-  static `authguard-web` image; there is still only one backend token pipeline.
-- One shared `authguard.yaml`; Provider configuration describes protocol only, while account-linking policy owns account governance.
-- GitHub is OAuth2, not OIDC; ID Token and UserInfo are different artifacts. Provider-specific IDs and tokens never enter AuthZ.
-- Keycloak, Entra, LDAP, SCIM, DSP, and social IdPs are integrations—never runtime dependencies.
-- No AuthGuard CRD/controller, no Lua/Wasm OAuth implementation, and no email-based automatic linking.
+```text
+OAuth / OIDC ────────────────┐
+Password / TOTP / WebAuthn ──┼──> AuthenticationResult
+CAIP / SIWX Wallet ──────────┘              |
+                                               v
+                                      Account Linking
+                                               |
+                                               v
+                                      Canonical Principal
+                                               |
+                                               v
+                                      Unified AuthGuard JWT
+                                               |
+                                               v
+                                      Envoy PEP -> AuthZ PDP
+```
 
-The converged OAuth, standalone Password/TOTP/WebAuthn, and CAIP/SIWX wallet
-architecture is documented in the [authentication whitepaper](docs/architecture/iam-authentication-whitepaper.md)
-([中文](docs/architecture/iam-authentication-whitepaper_ZH.md)).
+The core boundary is deliberate:
 
-## 1. Build and run
+| Model | Responsibility | Must not contain |
+|---|---|---|
+| `AuthenticationResult` | How this request proved an identity: identity, `amr`, `acr`, and authentication time | Persistent authorization policy |
+| `ExternalIdentity` | Stable external identity: provider, issuer, and subject | Passwords, OTPs, private keys, or authorization decisions |
+| `Principal` | Protocol-independent internal identity referenced by `principal_id` | OAuth, wallet, CAIP, WebAuthn, or password semantics |
+| Authorization input | `principal_id`, resource, action, and bounded context | Provider tokens, wallet signatures, email login, or credentials |
 
-Requirements: Rust 1.88+, Go 1.24+, JDK 21, Python 3.12, Helm 3.17+, and a Docker-compatible builder. The optional `web3` feature currently requires Rust 1.91+.
+See the concise [authentication whitepaper](docs/architecture/iam-authentication-whitepaper.md)
+([中文](docs/architecture/iam-authentication-whitepaper_ZH.md)) and
+[authorization whitepaper](docs/architecture/iam-authorization-whitepaper.md)
+([中文](docs/architecture/iam-authorization-whitepaper_ZH.md)) for the complete
+trust and data-flow model.
+
+## Quick Start
+
+### Requirements
+
+- Rust 1.88+; the optional `web3` feature currently requires Rust 1.91+
+- Node.js 22+, Go 1.24+, JDK 21, and Python 3.12 for the complete test matrix
+- Helm 3.17+ and a Docker-compatible builder for deployment artifacts
+
+### Build and run
 
 ```bash
 git clone https://github.com/wl4g/authguard.git
 cd authguard
+
+# Build the backend, React UI, and language modules.
 make build
 
-# Opt in to CAIP/SIWX wallet authentication and its Web3 dependencies.
+# Opt in to CAIP/SIWX wallet verification and Web3 dependencies.
 cargo build -p authguard-cmd --features web3
 
-# Both services read the same file.
+# AuthN and AuthZ read the same configuration file.
 ./target/debug/authguard --config etc/authguard.yaml authn --bind 0.0.0.0:8082
 ./target/debug/authguard --config etc/authguard.yaml authz
-
-# Interactive control-plane console, or append a batch operation.
-AUTHGUARD_CONSOLE_TOKEN='<control-plane-secret>' \
-  ./target/debug/authguard console --endpoint http://127.0.0.1:9091
 ```
 
-`make test` runs Rust, React, adapter, use-case, and Helm checks. `make release`
-publishes exactly two product images, `ghcr.io/wl4g/authguard` and
-`ghcr.io/wl4g/authguard-web` (plus their Aliyun mirrors), then publishes and
-pull-verifies the chart at `oci://ghcr.io/wl4g/charts/authguard`.
+The unauthenticated metadata endpoint lets clients render only enabled login
+methods:
 
-## 2. Deploy with Helm
+```bash
+curl -fsS http://127.0.0.1:8082/.well-known/authn.json | jq
+```
 
-Create the referenced Secret through your secret manager, then install the immutable OCI chart:
+### Test
+
+```bash
+# Rust, React, SDK, use-case, and Helm checks.
+make test
+
+# Full disposable k3s matrix: infrastructure, AuthN, AuthZ, SDKs, Chromium UI,
+# PostgreSQL, logs, metrics, and Jaeger evidence.
+HTTPS_PROXY=http://127.0.0.1:8800 make e2e-k3s
+```
+
+The reproducible application and verifier suite lives in
+[`use-cases/customer-growth-job-service/e2e`](use-cases/customer-growth-job-service/e2e).
+
+## Deployment
+
+### Release artifacts
+
+| Artifact | OCI reference | Purpose |
+|---|---|---|
+| Runtime | `ghcr.io/wl4g/authguard:<version>` | `authn`, `authz`, and `console` commands |
+| Web UI | `ghcr.io/wl4g/authguard-web:<version>` | Static React control plane and login UI |
+| Helm chart | `oci://ghcr.io/wl4g/charts/authguard:<version>` | Envoy Gateway, AuthGuard, Redis, routes, and policies |
+
+`make release` builds and publishes exactly these two product images and the
+OCI chart, then pulls each artifact back for verification.
+
+### Install with Helm
+
+Create the referenced Secret through your secret manager, then install an
+immutable chart version:
 
 ```bash
 helm upgrade --install authguard oci://ghcr.io/wl4g/charts/authguard \
@@ -107,15 +206,15 @@ helm upgrade --install authguard oci://ghcr.io/wl4g/charts/authguard \
   --set secrets.kubernetes.existingSecret=authguard-runtime
 ```
 
-Choose the smallest topology that matches the product:
+Choose the smallest topology that matches the application:
 
 | Scenario | AuthN | AuthZ | Account-linking policy |
 |---|---:|---:|---|
 | 2B collaboration and administrator pre-authorization | on | on | `explicit`; corporate IdP is authoritative |
-| 2C with resource/tenant authorization | on | on | `first-login`; every new external identity may create a Principal |
-| 2C authentication-only application | on | off | application owns its own coarse access rules |
+| 2C with resource or tenant authorization | on | on | `first-login`; unbound identities may create a Principal |
+| 2C authentication-only application | on | off | application owns its coarse access rules |
 
-Authentication-only 2C deployment:
+Authentication-only deployment:
 
 ```bash
 helm upgrade --install authguard oci://ghcr.io/wl4g/charts/authguard \
@@ -124,28 +223,41 @@ helm upgrade --install authguard oci://ghcr.io/wl4g/charts/authguard \
   --set envoy_gateway.ext_authz.enabled=false
 ```
 
-When AuthZ is disabled, do not attach Envoy `ext_authz`; standard OIDC and OAuth-like login still go through AuthN, and Envoy accepts only the resulting canonical AuthN JWT. When AuthZ is enabled, an unknown or disabled `principal_id` always fails closed.
+When AuthZ is disabled, do not attach Envoy `ext_authz`; Envoy still accepts
+only the canonical AuthN JWT. When AuthZ is enabled, unknown or disabled
+Principals fail closed.
 
-Both Deployments mount the same `authguard.authguard-config`. Supply a complete production file with `--set-file authguard.authguard-config=authguard.yaml`; nested values can also be overridden by `AUTHGUARD__...` environment variables.
+### Configuration and secrets
 
-Enterprise federation uses renewable credentials, not pasted access tokens:
+Both services mount the same `authguard.authguard-config`. Supply a production
+file with `--set-file authguard.authguard-config=authguard.yaml`; nested values
+may also be overridden with `AUTHGUARD__...` environment variables.
 
-- Keycloak discovery stores a confidential service-account `client_id`/`client_secret`; AuthGuard performs `client_credentials` and refreshes the access token before Admin REST calls.
-- LDAP uses a least-privilege bind DN/password because LDAP bind does not issue JWTs.
-- SCIM is push provisioning. The enterprise provisioner obtains its own short-lived workload credential and calls the protected RFC 7644 `/scim/v2/Users` and `/scim/v2/Groups` resources; no SCIM access token is stored in `authguard.yaml`.
-- Secrets belong in Kubernetes Secret, Vault, AWS Secrets Manager, or GCP Secret Manager references. Keycloak remains optional and is never installed by this chart.
+- OAuth client secrets, signing keys, database passwords, TOTP encryption keys,
+  and RPC credentials belong in Kubernetes Secret or an external secret manager.
+- Keycloak discovery uses a renewable service-account credential; LDAP uses a
+  least-privilege bind credential; SCIM callers obtain their own workload token.
+- Wallet RPC URLs are server-configured per CAIP chain. Clients cannot submit an
+  RPC endpoint, and ordinary EOA/Solana/Bitcoin authentication requires no node.
+- Reown/WalletConnect is a browser-side discovery and signing transport only;
+  AuthGuard stores no wallet brand, relay metadata, or WalletConnect session.
 
-See [`deploy/helm/authguard/values.yaml`](deploy/helm/authguard/values.yaml) for connector examples and [`etc/authguard.yaml`](etc/authguard.yaml) for the complete shared schema.
+See [`deploy/helm/authguard/values.yaml`](deploy/helm/authguard/values.yaml) for
+deployment settings and [`etc/authguard.yaml`](etc/authguard.yaml) for the
+complete runtime schema.
 
-## 3. Pre-authorize with the console
+## Administration and Integration
 
-The console talks only to AuthZ `/api/v1`; it preserves validation, reference checks, cache invalidation, logs, metrics, and optimistic policy revision control.
+### Pre-authorize Principals and policy
+
+The CLI calls the AuthZ management API, preserving validation, reference checks,
+cache invalidation, audit logs, metrics, and optimistic policy revisions.
 
 ```bash
 export AUTHGUARD_CONSOLE_ENDPOINT=http://authguard.authguard.svc:9091
 export AUTHGUARD_CONSOLE_TOKEN='<control-plane-secret>'
 
-# Federated administrator flow: search, materialize, then bind a role.
+# Discover and materialize a federated identity before assigning policy.
 authguard console discover --file principal-search.json
 authguard console materialize --file principal-materialization.json
 authguard console create action --file action.json
@@ -157,26 +269,27 @@ authguard console policy get
 authguard console status
 ```
 
-## 4. Access a protected Biz service
+### Protect a business service
 
-Browser user through a social/OAuth-like Provider:
+Browser login through an OAuth-like provider:
 
 ```text
-Open https://app.example.com/auth/oauth2/github/authorize
-  → Envoy → AuthN authorize/callback/token exchange/UserInfo
-  → ExternalIdentity → identity binding → canonical principal_id
-  → Envoy jwt_authn → AuthZ ext_authz → Biz UI/API
+GET /auth/oauth2/github/authorize
+  -> Envoy -> AuthN authorize/callback/token exchange/UserInfo
+  -> AuthenticationResult -> identity binding -> canonical principal_id
+  -> unified JWT -> Envoy jwt_authn -> AuthZ ext_authz -> business service
 ```
 
-Workload through enterprise OAuth2 client credentials:
+Workload token exchange through an enterprise OAuth2 provider:
 
 ```bash
 EXTERNAL_TOKEN=$(curl -fsS https://idp.example.com/oauth2/token \
   -u "${CLIENT_ID}:${CLIENT_SECRET}" \
-  -d grant_type=client_credentials -d audience=customer-growth-job-service \
-  | jq -r .access_token)
+  -d grant_type=client_credentials \
+  -d audience=customer-growth-job-service | jq -r .access_token)
 
-WORKLOAD_TOKEN=$(curl -fsS https://app.example.com/auth/oauth2/corporate-oidc/token-exchange \
+WORKLOAD_TOKEN=$(curl -fsS \
+  https://app.example.com/auth/oauth2/corporate-oidc/token-exchange \
   -H 'content-type: application/json' \
   -d "{\"subjectToken\":\"${EXTERNAL_TOKEN}\",\"kind\":\"WORKLOAD\"}" \
   | jq -r .accessToken)
@@ -185,6 +298,72 @@ curl -fsS https://jobs.example.com/api/v1/customer-growth/jobs \
   -H "Authorization: Bearer ${WORKLOAD_TOKEN}"
 ```
 
-The hot path is `Envoy jwt_authn → AuthGuard ext_authz → Biz Service`. Business services see canonical identity and signed/opaque authorization scope only. The reproducible Helm-to-database/log/metric/Jaeger validation lives in [`use-cases/customer-growth-job-service/e2e`](use-cases/customer-growth-job-service/e2e).
+Business services see only canonical identity and signed or opaque authorization
+scope. Official adapters are available under [`src/adapters`](src/adapters) for
+Rust, Go, Java, and Python integrations.
 
-Architecture details: [`docs/architecture/iam-authorization-whitepaper.md`](docs/architecture/iam-authorization-whitepaper.md).
+## Documentation
+
+- [Architecture overview](docs/architecture/overview.md) · [中文](docs/architecture/overview_ZH.md)
+- [Authentication whitepaper](docs/architecture/iam-authentication-whitepaper.md) · [中文](docs/architecture/iam-authentication-whitepaper_ZH.md)
+- [Authorization whitepaper](docs/architecture/iam-authorization-whitepaper.md) · [中文](docs/architecture/iam-authorization-whitepaper_ZH.md)
+- [Customer Growth reference application](use-cases/customer-growth-job-service/README.md)
+- [Helm values and deployment contract](deploy/helm/authguard/values.yaml)
+
+## License
+
+AuthGuard is licensed under the [Apache License 2.0](LICENSE).
+
+## Contact
+
+For questions, proposals, and support:
+
+- **Issues:** [github.com/wl4g/authguard/issues](https://github.com/wl4g/authguard/issues)
+- **Discussions:** [github.com/wl4g/authguard/discussions](https://github.com/wl4g/authguard/discussions)
+- **Security reports:** [private vulnerability report](https://github.com/wl4g/authguard/security/advisories/new)
+- **Email:** <jameswong1376@gmail.com>
+
+## Acknowledgments
+
+AuthGuard builds on excellent open-source projects and standards communities:
+
+- [Envoy](https://www.envoyproxy.io/) and
+  [Envoy Gateway](https://gateway.envoyproxy.io/) — edge PEP, JWT verification,
+  routing, and `ext_authz` integration.
+- [Tokio](https://tokio.rs/) and [Axum](https://github.com/tokio-rs/axum) —
+  asynchronous Rust runtime and HTTP services.
+- [webauthn-rs](https://github.com/kanidm/webauthn-rs) — server-side WebAuthn
+  registration and assertion verification.
+- [Chain Agnostic Standards Alliance](https://chainagnostic.org/) and the SIWX
+  Rust ecosystem — CAIP identity and wallet authentication models.
+- [Alloy](https://github.com/alloy-rs/alloy) and
+  [rust-bitcoin](https://github.com/rust-bitcoin/rust-bitcoin) — EVM and Bitcoin
+  cryptographic primitives.
+- [SQLx](https://github.com/launchbadge/sqlx) and
+  [Redis](https://redis.io/) — durable IAM storage and atomic one-time state.
+- [React](https://react.dev/), [Vite](https://vite.dev/), and
+  [Reown AppKit](https://docs.reown.com/appkit/overview) — control-plane UI and
+  optional client-side wallet discovery/signing UX. Reown is not a server
+  dependency.
+- [OpenTelemetry](https://opentelemetry.io/) and
+  [Prometheus](https://prometheus.io/) — tracing, metrics, and operational
+  evidence.
+
+## References
+
+These are the primary protocol and interoperability specifications used by the
+architecture and implementation:
+
+| Area | Specifications |
+|---|---|
+| OAuth 2.0 | [RFC 6749](https://www.rfc-editor.org/rfc/rfc6749), [Bearer Tokens — RFC 6750](https://www.rfc-editor.org/rfc/rfc6750), [PKCE — RFC 7636](https://www.rfc-editor.org/rfc/rfc7636), [Token Exchange — RFC 8693](https://www.rfc-editor.org/rfc/rfc8693), [OAuth Security BCP — RFC 9700](https://www.rfc-editor.org/rfc/rfc9700) |
+| OpenID Connect and JWT | [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html), [JWK — RFC 7517](https://www.rfc-editor.org/rfc/rfc7517), [JWT — RFC 7519](https://www.rfc-editor.org/rfc/rfc7519), [JWT BCP — RFC 8725](https://www.rfc-editor.org/rfc/rfc8725) |
+| Password and OTP | [Argon2 — RFC 9106](https://www.rfc-editor.org/rfc/rfc9106), [HOTP — RFC 4226](https://www.rfc-editor.org/rfc/rfc4226), [TOTP — RFC 6238](https://www.rfc-editor.org/rfc/rfc6238), [Google Authenticator Key URI Format](https://github.com/google/google-authenticator/wiki/Key-Uri-Format) |
+| WebAuthn and passkeys | [Web Authentication Level 3](https://www.w3.org/TR/webauthn-3/), [FIDO2 and CTAP specifications](https://fidoalliance.org/specifications/download/) |
+| Chain-agnostic identity | [CAIP-2](https://standards.chainagnostic.org/CAIPs/caip-2), [CAIP-10](https://standards.chainagnostic.org/CAIPs/caip-10), [CAIP-122 / SIWX](https://standards.chainagnostic.org/CAIPs/caip-122) |
+| EVM authentication | [EIP-191](https://eips.ethereum.org/EIPS/eip-191), [ERC-4361 / SIWE](https://eips.ethereum.org/EIPS/eip-4361), [ERC-1271](https://eips.ethereum.org/EIPS/eip-1271), [ERC-6492](https://eips.ethereum.org/EIPS/eip-6492) |
+| Solana authentication | [EdDSA — RFC 8032](https://www.rfc-editor.org/rfc/rfc8032) |
+| Bitcoin authentication | [BIP-322 Generic Signed Message Format](https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki) |
+| Provisioning and directories | [SCIM Core Schema — RFC 7643](https://www.rfc-editor.org/rfc/rfc7643), [SCIM Protocol — RFC 7644](https://www.rfc-editor.org/rfc/rfc7644), [LDAP — RFC 4511](https://www.rfc-editor.org/rfc/rfc4511) |
+| Identifiers and time | [URI Syntax — RFC 3986](https://www.rfc-editor.org/rfc/rfc3986), [Date and Time — RFC 3339](https://www.rfc-editor.org/rfc/rfc3339) |
+| Observability | [W3C Trace Context](https://www.w3.org/TR/trace-context/), [OpenTelemetry specification](https://opentelemetry.io/docs/specs/otel/) |
