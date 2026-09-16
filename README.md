@@ -9,13 +9,15 @@
 [![CAIP](https://img.shields.io/badge/wallet-CAIP%20%2F%20SIWX-6C5CE7)](https://standards.chainagnostic.org/CAIPs/caip-122)
 [![Helm](https://img.shields.io/badge/deploy-Helm-0F1689?logo=helm)](https://helm.sh/)
 
-*One edge, one canonical identity, one authorization decision.*
+*A universal IAM authentication and resource-level authorization platform for
+microservices, written in Rust. It supports OAuth 2.0-like protocols, OpenID
+Connect (OIDC), password authentication with TOTP (RFC 6238;
+Google Authenticator-compatible), WebAuthn/FIDO2 (CTAP and passkeys), and wallet
+authentication (CAIP-122/SIWX, ERC-4361/SIWE, and more).*
 
-AuthGuard is a standalone AuthN/AuthZ platform for enterprise and internet
-applications. It converges OAuth/OIDC, standalone credentials, WebAuthn, and
-multi-chain wallet proofs into one protocol-independent Principal and one
-AuthGuard JWT. Envoy Gateway remains the request-path PEP; AuthGuard AuthZ is the
-PDP and never becomes a reverse proxy.
+All supported authentication methods converge into one protocol-independent
+Principal and one AuthGuard JWT. Envoy Gateway remains the request-path PEP;
+AuthGuard AuthZ is the PDP and never becomes a reverse proxy.
 
 ## Features
 
@@ -364,6 +366,11 @@ architecture and implementation:
 | EVM authentication | [EIP-191](https://eips.ethereum.org/EIPS/eip-191), [ERC-4361 / SIWE](https://eips.ethereum.org/EIPS/eip-4361), [ERC-1271](https://eips.ethereum.org/EIPS/eip-1271), [ERC-6492](https://eips.ethereum.org/EIPS/eip-6492) |
 | Solana authentication | [EdDSA — RFC 8032](https://www.rfc-editor.org/rfc/rfc8032) |
 | Bitcoin authentication | [BIP-322 Generic Signed Message Format](https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki) |
-| Provisioning and directories | [SCIM Core Schema — RFC 7643](https://www.rfc-editor.org/rfc/rfc7643), [SCIM Protocol — RFC 7644](https://www.rfc-editor.org/rfc/rfc7644), [LDAP — RFC 4511](https://www.rfc-editor.org/rfc/rfc4511) |
-| Identifiers and time | [URI Syntax — RFC 3986](https://www.rfc-editor.org/rfc/rfc3986), [Date and Time — RFC 3339](https://www.rfc-editor.org/rfc/rfc3339) |
+| Authorization and resource identification | [URN Syntax — RFC 8141](https://www.rfc-editor.org/rfc/rfc8141), [HTTP Semantics and conditional requests — RFC 9110](https://www.rfc-editor.org/rfc/rfc9110), [Envoy External Authorization API v3](https://www.envoyproxy.io/docs/envoy/latest/api-v3/service/auth/v3/external_auth.proto) |
+| Provisioning and directories | [SCIM Definitions and Overview — RFC 7642](https://www.rfc-editor.org/rfc/rfc7642), [SCIM Core Schema — RFC 7643](https://www.rfc-editor.org/rfc/rfc7643), [SCIM Protocol — RFC 7644](https://www.rfc-editor.org/rfc/rfc7644), [LDAP — RFC 4511](https://www.rfc-editor.org/rfc/rfc4511) |
+| Common syntax and time | [URI Syntax — RFC 3986](https://www.rfc-editor.org/rfc/rfc3986), [Date and Time — RFC 3339](https://www.rfc-editor.org/rfc/rfc3339) |
 | Observability | [W3C Trace Context](https://www.w3.org/TR/trace-context/), [OpenTelemetry specification](https://opentelemetry.io/docs/specs/otel/) |
+
+RFC 8141 defines the base URN syntax. AuthGuard defines the `urn:iam:...`
+resource hierarchy, parent-resource relationships, and wildcard semantics used
+by its authorization policy model.
