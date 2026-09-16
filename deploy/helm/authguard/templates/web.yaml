@@ -41,7 +41,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: authguard-web
-          image: "{{ $web.image.repository }}:{{ $web.image.tag }}"
+          image: "{{ $web.image.repository }}:{{ default .Chart.AppVersion $web.image.tag }}"
           imagePullPolicy: {{ $web.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false

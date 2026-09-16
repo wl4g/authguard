@@ -188,6 +188,10 @@ class KubernetesE2E:
         # remaining large images are still being imported. Pending Pods pin the
         # image as soon as it becomes available and remove that race.
         self._prepare_workload_images()
+        # Support Pods now reference their immutable images. Re-check after the
+        # mutable imports so k3s image GC cannot remove a large, previously idle
+        # chain image in the interval between the first import and Pod startup.
+        self._prepare_external_images()
         self._wait_for_support_services()
         self._import_image(AUTHGUARD_IMAGE)
         # Redis is installed by the Authguard chart with pullPolicy=Never. Import it

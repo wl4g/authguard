@@ -8,6 +8,7 @@ use-cases/customer-growth-job-service/e2e/deploy/customer-growth-ui-service
 **/.pytest_cache
 **/.mypy_cache
 **/.ruff_cache
+**/.venv
 **/*.pyc
 **/.idea
 **/.vscode

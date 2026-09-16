@@ -1,4 +1,4 @@
-.PHONY: help build build-web build-image build-runtime-image build-web-image fmt fmt-rust lint lint-rust lint-web lint-helm test test-rust test-web test-go test-python test-java test-helm e2e e2e-k3s package-chart release release-push release-verify clean
+.PHONY: help build build-web build-image build-runtime-image build-web-image fmt fmt-rust lint lint-rust lint-web lint-helm test test-rust test-web test-go test-python test-java test-helm e2e-prepare e2e e2e-k3s package-chart release release-push release-verify clean
 
 CARGO ?= cargo
 GO ?= go
@@ -12,9 +12,7 @@ CONTAINER_BUILD_FLAGS ?=
 VERSION ?= $(shell sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
 VERSION := $(if $(VERSION),$(VERSION),0.1.0)
 GHCR_IMAGE ?= ghcr.io/wl4g/authguard
-ALIYUN_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/authguard
 GHCR_WEB_IMAGE ?= ghcr.io/wl4g/authguard-web
-ALIYUN_WEB_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-web
 AUTHGUARD_CARGO_FEATURES ?= web3
 VITE_AUTHN_BASE_URL ?=
 VITE_AUTHZ_BASE_URL ?=
@@ -23,6 +21,10 @@ HELM_OCI_REGISTRY ?= oci://ghcr.io/wl4g/charts
 RELEASE_DIR ?= dist
 USE_CASE_DIR := use-cases/customer-growth-job-service
 E2E_DEPLOY_DIR := $(USE_CASE_DIR)/e2e/deploy
+E2E_DIR := $(USE_CASE_DIR)/e2e
+E2E_VENV_DIR ?= $(E2E_DIR)/.venv
+E2E_PYTHON := $(E2E_VENV_DIR)/bin/python
+E2E_K3S_SCENARIOS ?= 00,01,02,03,20,10,21,22,23,24,25,26,30,40
 WEB_DIR := web
 
 ifeq ($(IN_CN_GFW),true)
@@ -62,8 +64,8 @@ help:
 	@echo "    make test-python   Run Python adapter and Python use-case tests."
 	@echo "    make test-java     Run Java adapter and Spring Boot use-case tests."
 	@echo "    make test-helm     Verify vendored dependencies, lint, and render Helm manifests."
-	@echo "    make e2e           Clean-build the portable 53-scenario authorization suite."
-	@echo "    make e2e-k3s       Redeploy Keycloak/Envoy/Authguard/Jaeger/data services on k3s."
+	@echo "    make e2e           Run the portable cross-language verifier groups."
+	@echo "    make e2e-k3s       Clean-deploy and run the complete AuthN/AuthZ/UI/observability matrix."
 	@echo "    make release       Build, package, publish, and pull-verify image/chart artifacts."
 	@echo ""
 	@echo "  Utils:"
@@ -88,16 +90,14 @@ build-runtime-image:
 	  fi
 	$(CONTAINER_CLI) build $(CONTAINER_BUILD_FLAGS) -f deploy/docker/Dockerfile \
 		--build-arg AUTHGUARD_CARGO_FEATURES="$(AUTHGUARD_CARGO_FEATURES)" \
-		-t $(GHCR_IMAGE):$(VERSION) -t $(GHCR_IMAGE):latest \
-		-t $(ALIYUN_IMAGE):$(VERSION) -t $(ALIYUN_IMAGE):latest .
+		-t $(GHCR_IMAGE):$(VERSION) -t $(GHCR_IMAGE):latest .
 
 build-web-image:
 	$(CONTAINER_CLI) build $(CONTAINER_BUILD_FLAGS) -f $(WEB_DIR)/Dockerfile \
 		--build-arg VITE_AUTHN_BASE_URL="$(VITE_AUTHN_BASE_URL)" \
 		--build-arg VITE_AUTHZ_BASE_URL="$(VITE_AUTHZ_BASE_URL)" \
 		--build-arg VITE_REOWN_PROJECT_ID="$(VITE_REOWN_PROJECT_ID)" \
-		-t $(GHCR_WEB_IMAGE):$(VERSION) -t $(GHCR_WEB_IMAGE):latest \
-		-t $(ALIYUN_WEB_IMAGE):$(VERSION) -t $(ALIYUN_WEB_IMAGE):latest $(WEB_DIR)
+		-t $(GHCR_WEB_IMAGE):$(VERSION) -t $(GHCR_WEB_IMAGE):latest $(WEB_DIR)
 
 fmt: fmt-rust
 
@@ -107,7 +107,7 @@ fmt-rust:
 lint: lint-rust lint-web
 
 lint-rust:
-	$(CARGO) clippy --workspace --all-targets -- -D warnings
+	$(CARGO) clippy --workspace --all-targets --all-features -- -D warnings
 
 lint-web:
 	cd $(WEB_DIR) && $(NPM) ci && $(NPM) run typecheck
@@ -117,7 +117,7 @@ lint-helm: test-helm
 test: fmt lint test-rust test-web test-go test-python test-java test-helm
 
 test-rust:
-	$(CARGO) test --workspace
+	$(CARGO) test --workspace --all-features
 
 test-web:
 	cd $(WEB_DIR) && $(NPM) run build
@@ -142,11 +142,16 @@ test-helm:
 	helm lint deploy/helm/authguard
 	helm template authguard deploy/helm/authguard >/dev/null
 
-e2e:
-	$(PYTHON) $(USE_CASE_DIR)/e2e/runner.py
+e2e-prepare:
+	test -x $(E2E_PYTHON) || $(PYTHON) -m venv $(E2E_VENV_DIR)
+	$(E2E_PYTHON) -m pip install --disable-pip-version-check -r $(E2E_DIR)/requirements.txt
+	$(E2E_PYTHON) -m playwright install chromium
 
-e2e-k3s:
-	$(PYTHON) $(USE_CASE_DIR)/e2e/runner.py --scenario 00 --timeout 1800
+e2e: e2e-prepare
+	$(E2E_PYTHON) $(E2E_DIR)/runner.py
+
+e2e-k3s: e2e-prepare
+	$(E2E_PYTHON) $(E2E_DIR)/runner.py --scenario $(E2E_K3S_SCENARIOS) --timeout 1800
 
 package-chart: test-helm
 	mkdir -p $(RELEASE_DIR)
@@ -158,15 +163,13 @@ release: build-image package-chart release-push release-verify
 release-push:
 	$(CONTAINER_CLI) push $(GHCR_IMAGE):$(VERSION)
 	$(CONTAINER_CLI) push $(GHCR_IMAGE):latest
-	$(CONTAINER_CLI) push $(ALIYUN_IMAGE):$(VERSION)
-	$(CONTAINER_CLI) push $(ALIYUN_IMAGE):latest
 	$(CONTAINER_CLI) push $(GHCR_WEB_IMAGE):$(VERSION)
 	$(CONTAINER_CLI) push $(GHCR_WEB_IMAGE):latest
-	$(CONTAINER_CLI) push $(ALIYUN_WEB_IMAGE):$(VERSION)
-	$(CONTAINER_CLI) push $(ALIYUN_WEB_IMAGE):latest
 	helm push $(RELEASE_DIR)/authguard-$(VERSION).tgz $(HELM_OCI_REGISTRY)
 
 release-verify:
+	$(CONTAINER_CLI) manifest inspect $(GHCR_IMAGE):$(VERSION) >/dev/null
+	$(CONTAINER_CLI) manifest inspect $(GHCR_WEB_IMAGE):$(VERSION) >/dev/null
 	@pull_dir=$$(mktemp -d); \
 	  trap 'rm -rf "$$pull_dir"' EXIT; \
 	  helm pull $(HELM_OCI_REGISTRY)/authguard --version $(VERSION) --destination "$$pull_dir"; \

@@ -92,22 +92,6 @@ spec:
     - { name: json-rpc, port: 8899, targetPort: json-rpc }
     - { name: faucet, port: 8900, targetPort: faucet }
 ---
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: {{ $name }}-ledger
-  labels:
-    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
-    app.kubernetes.io/component: e2e-authguard-solana
-spec:
-  accessModes: [ReadWriteOnce]
-  {{- with .Values.solana.persistence.storageClass }}
-  storageClassName: {{ . | quote }}
-  {{- end }}
-  resources:
-    requests:
-      storage: {{ .Values.solana.persistence.size }}
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -179,8 +163,8 @@ spec:
             - { name: tmp, mountPath: /tmp }
       volumes:
         - name: ledger
-          persistentVolumeClaim:
-            claimName: {{ $name }}-ledger
+          emptyDir:
+            sizeLimit: 1Gi
         - name: tmp
           emptyDir: {}
 {{- end }}

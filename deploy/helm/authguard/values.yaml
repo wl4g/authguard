@@ -69,7 +69,8 @@ authguard:
     replicaCount: 2
     image:
       repository: ghcr.io/wl4g/authguard
-      tag: "latest"
+      # Empty pins the image to this chart's appVersion.
+      tag: ""
       pullPolicy: IfNotPresent
     service:
       port: 8082
@@ -98,7 +99,8 @@ authguard:
     replicaCount: 2
     image:
       repository: ghcr.io/wl4g/authguard-web
-      tag: "latest"
+      # Empty pins the image to this chart's appVersion.
+      tag: ""
       pullPolicy: IfNotPresent
     service:
       port: 8080
@@ -129,7 +131,8 @@ authguard:
     replicaCount: 1
     image:
       repository: ghcr.io/wl4g/authguard
-      tag: "latest"
+      # Empty pins the image to this chart's appVersion.
+      tag: ""
       pullPolicy: IfNotPresent
     imagePullSecrets: []
     serviceAccount:

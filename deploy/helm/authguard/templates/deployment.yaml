@@ -49,7 +49,7 @@ spec:
       {{- end }}
       containers:
         - name: authguard-authz
-          image: "{{ .Values.authguard.authz.image.repository }}:{{ .Values.authguard.authz.image.tag }}"
+          image: "{{ .Values.authguard.authz.image.repository }}:{{ default .Chart.AppVersion .Values.authguard.authz.image.tag }}"
           imagePullPolicy: {{ .Values.authguard.authz.image.pullPolicy }}
           args: ["authz"]
           securityContext:

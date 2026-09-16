@@ -103,7 +103,7 @@ python3 -m venv .venv
 .venv/bin/python use-cases/customer-growth-job-service/e2e/runner.py --rounds 3
 .venv/bin/python use-cases/customer-growth-job-service/e2e/runner.py --scenario 23
 .venv/bin/python use-cases/customer-growth-job-service/e2e/runner.py --list
-.venv/bin/python use-cases/customer-growth-job-service/e2e/runner.py --scenario 00,20,10,26,30,40 --cleanup-after-run
+.venv/bin/python use-cases/customer-growth-job-service/e2e/runner.py --scenario 00,01,02,03,20,10,21,22,23,24,25,26,30,40 --cleanup-after-run
 ```
 
 By default, every round removes project-local generated artifacts and performs

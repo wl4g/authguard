@@ -36,7 +36,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: authguard-authn
-          image: "{{ .Values.authguard.authn.image.repository }}:{{ .Values.authguard.authn.image.tag }}"
+          image: "{{ .Values.authguard.authn.image.repository }}:{{ default .Chart.AppVersion .Values.authguard.authn.image.tag }}"
           imagePullPolicy: {{ .Values.authguard.authn.image.pullPolicy }}
           args: ["authn"]
           securityContext:

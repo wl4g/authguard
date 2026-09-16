@@ -2187,9 +2187,14 @@ wallet:
 ",
         )
         .expect("wallet configuration");
-        let mut cache = CacheProperties::default();
-        cache.provider = "Redis".to_string();
-        cache.redis.nodes = vec!["redis://127.0.0.1:6379".to_string()];
+        let cache = CacheProperties {
+            provider: "Redis".to_string(),
+            redis: RedisClusterProperties {
+                nodes: vec!["redis://127.0.0.1:6379".to_string()],
+                ..RedisClusterProperties::default()
+            },
+            ..CacheProperties::default()
+        };
 
         validate_authn(&authn, &cache).expect("offline EOA plus contract-wallet RPC");
         assert_eq!(authn.wallet.chains.eip155["1"].rpc, None);
