@@ -7,11 +7,11 @@
 {{- $authguardLdapBindPassword := randAlphaNum 48 -}}
 {{- $existingPrincipalSecret := lookup "v1" "Secret" .Release.Namespace $principalSecretName -}}
 {{- $existingKeycloakSecret := lookup "v1" "Secret" .Release.Namespace $keycloakSecretName -}}
-{{- if and $existingPrincipalSecret (hasKey $existingPrincipalSecret.data "AUTHGUARD_KEYCLOAK_CLIENT_SECRET") -}}
-{{- $clientSecret = index $existingPrincipalSecret.data "AUTHGUARD_KEYCLOAK_CLIENT_SECRET" | b64dec -}}
+{{- if and $existingPrincipalSecret (hasKey $existingPrincipalSecret.data "AUTHGUARD__AUTHN__PROVIDERS__E2E_AUTHGUARD_KEYCLOAK__CLIENT_SECRET") -}}
+{{- $clientSecret = index $existingPrincipalSecret.data "AUTHGUARD__AUTHN__PROVIDERS__E2E_AUTHGUARD_KEYCLOAK__CLIENT_SECRET" | b64dec -}}
 {{- end -}}
-{{- if and $existingPrincipalSecret (hasKey $existingPrincipalSecret.data "AUTHGUARD_LDAP_BIND_PASSWORD") -}}
-{{- $authguardLdapBindPassword = index $existingPrincipalSecret.data "AUTHGUARD_LDAP_BIND_PASSWORD" | b64dec -}}
+{{- if and $existingPrincipalSecret (hasKey $existingPrincipalSecret.data "AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__LDAP__INDEX_0__AUTH__BIND_PASSWORD") -}}
+{{- $authguardLdapBindPassword = index $existingPrincipalSecret.data "AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__LDAP__INDEX_0__AUTH__BIND_PASSWORD" | b64dec -}}
 {{- end -}}
 apiVersion: v1
 kind: Secret
@@ -21,24 +21,25 @@ metadata:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
 type: Opaque
 stringData:
-  # One Secret backs every runtime secret under the kubernetes provider:
-  # the connector credentials resolve through ${KEY} references (expand_env_refs),
-  # AUTHGUARD__AUTHZ__API_TOKEN is a native config override, and the
-  # access-context HMAC key is read directly through secret_env.
-  AUTHGUARD_KEYCLOAK_CLIENT_SECRET: {{ $clientSecret | quote }}
-  AUTHGUARD_LDAP_BIND_PASSWORD: {{ $authguardLdapBindPassword | quote }}
-  AUTHGUARD_GITHUB_CLIENT_SECRET: "e2e-authguard-github-secret"
-  AUTHGUARD_GOOGLE_CLIENT_SECRET: "e2e-authguard-google-secret"
-  AUTHGUARD_WECHAT_CLIENT_SECRET: "e2e-authguard-wechat-secret"
-  AUTHGUARD_QQ_CLIENT_SECRET: "e2e-authguard-qq-secret"
+  # One Secret contains reflected AuthGuard configuration paths. The same keys
+  # work through envFrom or an AUTHGUARD__SECRETS__ENV_FILE projection.
+  AUTHGUARD__AUTHN__PROVIDERS__E2E_AUTHGUARD_KEYCLOAK__CLIENT_SECRET: {{ $clientSecret | quote }}
+  AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__LDAP__INDEX_0__AUTH__BIND_PASSWORD: {{ $authguardLdapBindPassword | quote }}
+  AUTHGUARD__AUTHN__PROVIDERS__GITHUB__CLIENT_SECRET: "e2e-authguard-github-secret"
+  AUTHGUARD__AUTHN__PROVIDERS__GOOGLE__CLIENT_SECRET: "e2e-authguard-google-secret"
+  AUTHGUARD__AUTHN__PROVIDERS__WECHAT__CLIENT_SECRET: "e2e-authguard-wechat-secret"
+  AUTHGUARD__AUTHN__PROVIDERS__QQ__CLIENT_SECRET: "e2e-authguard-qq-secret"
+  # AuthN OIDC login and AuthZ Keycloak discovery intentionally use separate
+  # configuration paths, although this E2E realm gives both the same client secret.
+  AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__KEYCLOAK__INDEX_0__AUTH__CLIENT_SECRET: {{ $clientSecret | quote }}
   # Fixed E2E-only AES-256 key. Production deployments inject their own secret.
-  AUTHGUARD_STANDALONE_CREDENTIAL_KEY: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+  AUTHGUARD__AUTHN__STANDALONE__CREDENTIAL_ENCRYPTION_KEY: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
   AUTHGUARD__STORAGE__POSTGRES__PASSWORD: {{ .Values.postgresql.authguardPassword | quote }}
-  AUTHGUARD_SCIM_API_PASSWORD: {{ required "authguard.apiToken is required" .Values.authguard.apiToken | quote }}
-  AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY: {{ .Values.authguard.accessContext.signingKey | quote }}
+  AUTHGUARD__CACHE__REDIS__PASSWORD: "e2e-authguard-redis-password"
+  AUTHGUARD__AUTHZ__API_TOKEN: {{ required "authguard.apiToken is required" .Values.authguard.apiToken | quote }}
+  AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY: {{ .Values.authguard.accessContext.signingKey | quote }}
   # AuthN signs canonical sessions; Envoy receives only the paired public JWKS.
-  AUTHGUARD_AUTHN_TOKEN_PRIVATE_KEY: |
-{{ required "keycloak.realmSigningPrivateKey must contain the AuthN test signing key" .Values.keycloak.realmSigningPrivateKey | indent 4 }}
+  AUTHGUARD__AUTHN__TOKEN__PRIVATE_KEY_B64: {{ required "keycloak.realmSigningPrivateKey must contain the AuthN test signing key" .Values.keycloak.realmSigningPrivateKey | b64enc | quote }}
   # Base64 PKCS#8 PEM is consumed directly by authz.resign.private_key_b64.
   AUTHGUARD__AUTHZ__RESIGN__PRIVATE_KEY_B64: {{ required "keycloak.resignJwtPrivateKey must contain the resign JWT private key" .Values.keycloak.resignJwtPrivateKey | b64enc | quote }}
 ---
@@ -169,7 +170,7 @@ spec:
             - { name: KC_HTTP_ENABLED, value: "true" }
             - { name: KC_HOSTNAME, value: {{ $issuer | quote }} }
             - { name: KC_HOSTNAME_STRICT, value: "false" }
-            - { name: E2E_AUTHGUARD_PRINCIPAL_DISCOVERY_CLIENT_SECRET, valueFrom: { secretKeyRef: { name: {{ $principalSecretName }}, key: AUTHGUARD_KEYCLOAK_CLIENT_SECRET } } }
+            - { name: E2E_AUTHGUARD_PRINCIPAL_DISCOVERY_CLIENT_SECRET, valueFrom: { secretKeyRef: { name: {{ $principalSecretName }}, key: AUTHGUARD__AUTHN__PROVIDERS__E2E_AUTHGUARD_KEYCLOAK__CLIENT_SECRET } } }
             - { name: E2E_AUTHGUARD_WORKLOAD_CLIENT_SECRET, value: {{ .Values.keycloak.workloadClientSecret | quote }} }
             # Keycloak substitutes the placeholder into the raw realm JSON, so
             # the pod must see the PEM with \n JSON escapes, not real newlines:

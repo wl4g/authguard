@@ -110,11 +110,11 @@ authn:
     issuer: authguard
     audience: authguard-services
     ttl: 1h
-    privateKey: ${AUTHGUARD_TOKEN_PRIVATE_KEY}
+    privateKeyB64: "${AUTHGUARD__AUTHN__TOKEN__PRIVATE_KEY_B64}"
   standalone:
     enabled: true
     issuer: authguard:standalone
-    credentialEncryptionKey: ${AUTHGUARD_CREDENTIAL_KEY}
+    credentialEncryptionKey: "${AUTHGUARD__AUTHN__STANDALONE__CREDENTIAL_ENCRYPTION_KEY}"
     totp: { enabled: true, issuer: AuthGuard }
     webauthn:
       enabled: true

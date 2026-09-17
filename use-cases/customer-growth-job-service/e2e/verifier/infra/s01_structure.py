@@ -263,8 +263,11 @@ def _verify(_context: RunContext) -> VerificationResult:
         )
     runner_source = (USE_CASE_DIR / "e2e/runner.py").read_text(encoding="utf-8")
     cleanup_contract = (
+        '"cleanup"',
+        '"--cleanup"',
         '"--cleanup-after-run"',
         "finally:",
+        "cleanup_requested",
         "cleanup_deployment(context)",
         "KubernetesE2E(context).cleanup()",
     )
@@ -272,6 +275,13 @@ def _verify(_context: RunContext) -> VerificationResult:
         errors.append(f"runner cleanup lifecycle is incomplete: {missing}")
     if "def cleanup(" not in kubernetes_source:
         errors.append("Kubernetes infrastructure must expose one cleanup lifecycle")
+    isolated_gateway_markers = (
+        "gateway_controller_name",
+        "config.envoyGateway.gateway.controllerName",
+        '"controllerName": self.gateway_controller_name',
+    )
+    if missing := [marker for marker in isolated_gateway_markers if marker not in kubernetes_source]:
+        errors.append(f"E2E Envoy Gateway controller isolation is incomplete: {missing}")
     for verifier in REAL_E2E_VERIFIERS:
         source = (verifier_dir / verifier).read_text(encoding="utf-8")
         if "class " not in source or "(BaseVerifier)" not in source:
@@ -347,6 +357,41 @@ def _verify(_context: RunContext) -> VerificationResult:
     ]:
         errors.append(f"web E2E lacks real Chromium journeys: {missing}")
 
+    docker_root = PROJECT_ROOT / "deploy/docker"
+    docker_compose = docker_root / "docker-compose.yaml"
+    docker_env = docker_root / ".env.example"
+    docker_envoy = docker_root / "config/envoy.yaml"
+    docker_authguard_config = docker_root / "config/authguard.yaml"
+    for path in (docker_compose, docker_env, docker_envoy, docker_authguard_config):
+        if not path.is_file():
+            errors.append(f"Docker deployment is missing {path.relative_to(PROJECT_ROOT)}")
+    for obsolete in (docker_root / "compose.yaml", docker_root / "nginx.compose.conf"):
+        if obsolete.exists():
+            errors.append(f"Docker deployment retains obsolete {obsolete.relative_to(PROJECT_ROOT)}")
+    if docker_env.is_file():
+        for line in docker_env.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _value = line.split("=", 1)
+            if not key.startswith("AUTHGUARD__"):
+                errors.append(
+                    "Docker .env exposes a non-reflected runtime key: " + key
+                )
+    if docker_envoy.is_file():
+        envoy_source = docker_envoy.read_text(encoding="utf-8")
+        required_envoy_filters = (
+            "envoy.filters.http.jwt_authn",
+            "envoy.filters.http.ext_authz",
+            "authz_grpc",
+            "remote_jwks",
+            "/.well-known/jwks.json",
+        )
+        if missing := [
+            marker for marker in required_envoy_filters if marker not in envoy_source
+        ]:
+            errors.append(f"Docker Envoy PEP is incomplete: {missing}")
+
     telemetry_contracts = {
         "Helm workloads": (
             USE_CASE_DIR / "e2e/helm/templates/workloads.yaml",
@@ -409,7 +454,8 @@ def _verify(_context: RunContext) -> VerificationResult:
         "Real k3s phases are ordered 00 deployment -> 15 pre-authorization -> "
         "16 AuthN -> 17 Envoy/AuthZ/Biz -> 19 UI -> 21 runtime evidence; phase 20 is their "
         "shared fail-closed observability contract",
-        "Runner supports opt-in cleanup of all Helm releases and the isolated namespace",
+        "Runner supports one-shot and opt-in cleanup of all E2E Helm releases and the isolated namespace",
+        "Docker uses the same reflected AuthGuard secret keys and Envoy PEP filter order as Helm",
     ]
     details.extend(errors)
     return VerificationResult(

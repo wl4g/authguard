@@ -1,0 +1,78 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/bitnami_postgresql:18.3
+    environment:
+      POSTGRESQL_USERNAME: authguard
+      POSTGRESQL_PASSWORD: ${AUTHGUARD__STORAGE__POSTGRES__PASSWORD:?set AUTHGUARD__STORAGE__POSTGRES__PASSWORD in .env}
+      POSTGRESQL_DATABASE: authguard
+    volumes: [postgres-data:/bitnami/postgresql]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U authguard -d authguard']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    # A single local Redis instance preserves AuthN/AuthZ cache semantics. Helm
+    # remains the HA Redis Cluster topology for production Kubernetes.
+    image: redis:7.2-alpine
+    command: [redis-server, --save, "", --appendonly, "no", --requirepass, "${AUTHGUARD__CACHE__REDIS__PASSWORD:?set AUTHGUARD__CACHE__REDIS__PASSWORD in .env}"]
+    healthcheck:
+      test: [CMD-SHELL, 'redis-cli --no-auth-warning -a "${AUTHGUARD__CACHE__REDIS__PASSWORD:?set AUTHGUARD__CACHE__REDIS__PASSWORD in .env}" ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  authn:
+    image: ghcr.io/wl4g/authguard:0.1.0
+    command: [--config, /etc/authguard/authguard.yaml, authn, --bind, 0.0.0.0:8082]
+    env_file: [.env]
+    environment:
+      AUTHGUARD__SERVER__SERVICE_NAME: authguard-authn
+    volumes:
+      - ./config/authguard.yaml:/etc/authguard/authguard.yaml:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    expose: ["8082"]
+
+  authz:
+    image: ghcr.io/wl4g/authguard:0.1.0
+    command: [--config, /etc/authguard/authguard.yaml, authz]
+    env_file: [.env]
+    environment:
+      AUTHGUARD__SERVER__SERVICE_NAME: authguard-authz
+    volumes:
+      - ./config/authguard.yaml:/etc/authguard/authguard.yaml:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    expose: ["8080", "8081", "9091"]
+
+  web:
+    image: ghcr.io/wl4g/authguard-web:0.1.0
+    depends_on:
+      authn: { condition: service_started }
+      authz: { condition: service_started }
+    expose: ["8080"]
+
+  # Matches the Helm data plane: unauthenticated UI/AuthN traffic reaches the
+  # public listener while the protected listener always performs
+  # jwt_authn -> ext_authz before a request reaches its upstream.
+  envoy:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/envoyproxy_envoy:distroless-v1.36.4
+    command: [-c, /etc/envoy/envoy.yaml, --log-level, info]
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    volumes:
+      - ./config/envoy.yaml:/etc/envoy/envoy.yaml:ro
+    depends_on:
+      authn: { condition: service_started }
+      authz: { condition: service_started }
+      web: { condition: service_started }
+
+volumes:
+  postgres-data:

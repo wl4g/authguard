@@ -76,6 +76,10 @@ impl AuthenticationPipeline {
         self.tokens.authenticate_bearer(headers)
     }
 
+    pub(crate) fn jwks(&self) -> Result<Value, TokenError> {
+        self.tokens.jwks()
+    }
+
     pub(crate) async fn rollback_identity_binding(
         &self,
         principal_id: &str,

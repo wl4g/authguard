@@ -188,25 +188,41 @@ The reproducible application and verifier suite lives in
 |---|---|---|
 | Runtime | `ghcr.io/wl4g/authguard:<version>` | `authn`, `authz`, and `console` commands |
 | Web UI | `ghcr.io/wl4g/authguard-web:<version>` | Static React control plane and login UI |
-| Helm chart | `oci://ghcr.io/wl4g/charts/authguard:<version>` | Envoy Gateway, AuthGuard, Redis, routes, and policies |
+| Helm chart | `oci://ghcr.io/wl4g/charts/authguard:<version>` | Envoy Gateway, AuthGuard, Redis Cluster, PostgreSQL, routes, and policies |
 
 `make release` builds and publishes exactly these two product images and the
 OCI chart, then pulls each artifact back for verification.
 
 ### Install with Helm
 
-Create the referenced Secret through your secret manager, then install an
-immutable chart version:
+Create the one `authguard-secrets` payload before installing. The placeholder
+file and cloud-provider variants are documented in the
+[Helm chart guide](deploy/helm/authguard/README.md#bootstrap-credentials).
+
+```bash
+export AUTHGUARD_NAMESPACE=authguard
+export AUTHGUARD_SECRET_FILE=authguard-secrets.env
+cp deploy/helm/authguard/bootstrap/authguard-secrets.env.example "$AUTHGUARD_SECRET_FILE"
+# Replace every placeholder with a production secret value.
+deploy/helm/authguard/bootstrap/k8s-secrets-setup.sh \
+  --namespace "$AUTHGUARD_NAMESPACE" --secret-file "$PWD/$AUTHGUARD_SECRET_FILE"
+```
+
+Then install an immutable chart version:
 
 ```bash
 helm upgrade --install authguard oci://ghcr.io/wl4g/charts/authguard \
   --version 0.1.0 \
-  --namespace authguard --create-namespace \
+  --namespace "$AUTHGUARD_NAMESPACE" \
   --set authguard.authn.image.repository=ghcr.io/wl4g/authguard \
   --set authguard.authz.image.repository=ghcr.io/wl4g/authguard \
   --set authguard.web.image.repository=ghcr.io/wl4g/authguard-web \
-  --set secrets.kubernetes.existingSecret=authguard-runtime
+  --set secrets.kubernetes.existingSecret=authguard-secrets
 ```
+
+For a single-host deployment without Kubernetes, use the
+[Docker Compose topology](deploy/docker/README.md). It uses the same
+`AUTHGUARD__...` secret keys as Helm.
 
 Choose the smallest topology that matches the application:
 
@@ -235,8 +251,8 @@ Both services mount the same `authguard.authguard-config`. Supply a production
 file with `--set-file authguard.authguard-config=authguard.yaml`; nested values
 may also be overridden with `AUTHGUARD__...` environment variables.
 
-- OAuth client secrets, signing keys, database passwords, TOTP encryption keys,
-  and RPC credentials belong in Kubernetes Secret or an external secret manager.
+- PostgreSQL, Redis, signing keys, TOTP encryption, provider credentials, and
+  optional RPC credentials belong in the one logical `authguard-secrets` payload.
 - Keycloak discovery uses a renewable service-account credential; LDAP uses a
   least-privilege bind credential; SCIM callers obtain their own workload token.
 - Wallet RPC URLs are server-configured per CAIP chain. Clients cannot submit an
@@ -256,15 +272,19 @@ The CLI calls the AuthZ management API, preserving validation, reference checks,
 cache invalidation, audit logs, metrics, and optimistic policy revisions.
 
 ```bash
-export AUTHGUARD_CONSOLE_ENDPOINT=http://authguard.authguard.svc:9091
-export AUTHGUARD_CONSOLE_TOKEN='<control-plane-secret>'
+agctl() {
+  authguard console \
+    --endpoint http://authguard.authguard.svc:9091 \
+    --token '<control-plane-secret>' \
+    "$@"
+}
 
 # Discover and materialize a federated identity before assigning policy.
-authguard console discover --file principal-search.json
-authguard console materialize --file principal-materialization.json
-authguard console create action --file action.json
-authguard console create role --file role.json
-authguard console create role-binding --file role-binding.json
+agctl discover --file principal-search.json
+agctl materialize --file principal-materialization.json
+agctl create action --file action.json
+agctl create role --file role.json
+agctl create role-binding --file role-binding.json
 
 authguard console list principals
 authguard console policy get
@@ -341,8 +361,8 @@ AuthGuard builds on excellent open-source projects and standards communities:
 - [Alloy](https://github.com/alloy-rs/alloy) and
   [rust-bitcoin](https://github.com/rust-bitcoin/rust-bitcoin) — EVM and Bitcoin
   cryptographic primitives.
-- [SQLx](https://github.com/launchbadge/sqlx) and
-  [Redis](https://redis.io/) — durable IAM storage and atomic one-time state.
+- [SQLx](https://github.com/launchbadge/sqlx) — durable IAM storage; and
+  [Redis](https://redis.io/) — atomic one-time state and short-lived scope.
 - [React](https://react.dev/), [Vite](https://vite.dev/), and
   [Reown AppKit](https://docs.reown.com/appkit/overview) — control-plane UI and
   optional client-side wallet discovery/signing UX. Reown is not a server

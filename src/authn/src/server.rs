@@ -35,7 +35,7 @@ impl ReadinessProbe for AuthnReadiness {
 /// # Errors
 ///
 /// Returns an error for invalid configuration, telemetry, storage, or listener startup.
-pub async fn run() -> anyhow::Result<()> {
+pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
     let config = AppConfig::get();
     let telemetry = init_telemetry(&TelemetryConfig::from_settings(
         "authguard-authn",
@@ -60,7 +60,7 @@ pub async fn run() -> anyhow::Result<()> {
             Arc::new(AuthnReadiness { challenges: runtime.challenges.clone() }),
         ),
     );
-    let mut app = crate::route::meta::router();
+    let mut app = crate::route::meta::router(runtime.pipeline.clone());
     if let Some(handler) = oauth {
         app = app.merge(crate::route::authentication::router(handler));
     }
@@ -72,10 +72,6 @@ pub async fn run() -> anyhow::Result<()> {
         app = app.merge(crate::route::wallet::router(handler));
     }
     let app = app.merge(management).layer(middleware::from_fn(propagate_http_trace_context));
-    let bind = std::env::var("AUTHGUARD_AUTHN_BIND")
-        .unwrap_or_else(|_| "0.0.0.0:8082".to_string())
-        .parse::<SocketAddr>()
-        .context("parse AUTHGUARD_AUTHN_BIND")?;
     let listener = tokio::net::TcpListener::bind(bind).await.context("bind AuthN listener")?;
     tracing::info!(%bind, "AuthGuard AuthN listener started");
     let result = axum::serve(listener, app)

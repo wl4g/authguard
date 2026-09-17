@@ -8,7 +8,7 @@ kind: GatewayClass
 metadata:
   name: {{ $gateway.className }}
 spec:
-  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  controllerName: {{ default "gateway.envoyproxy.io/gatewayclass-controller" $gateway.controllerName }}
 ---
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: EnvoyProxy

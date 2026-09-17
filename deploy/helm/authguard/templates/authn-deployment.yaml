@@ -38,31 +38,25 @@ spec:
         - name: authguard-authn
           image: "{{ .Values.authguard.authn.image.repository }}:{{ default .Chart.AppVersion .Values.authguard.authn.image.tag }}"
           imagePullPolicy: {{ .Values.authguard.authn.image.pullPolicy }}
-          args: ["authn"]
+          args:
+            - --config
+            - /etc/authguard/authguard.yaml
+            - authn
+            - --bind
+            - 0.0.0.0:{{ .Values.authguard.authn.service.port }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities: { drop: ["ALL"] }
           env:
-            - name: AUTHGUARD_CONFIG_FILE
-              value: /etc/authguard/authguard.yaml
             - name: AUTHGUARD__SERVER__SERVICE_NAME
               value: authguard-authn
-            - name: AUTHGUARD_AUTHN_BIND
-              value: 0.0.0.0:{{ .Values.authguard.authn.service.port }}
             {{- if or (eq $provider "gcp") (eq $provider "aws") }}
-            - name: AUTHGUARD_ENV_FILE
+            - name: AUTHGUARD__SECRETS__ENV_FILE
               value: {{ include "authguard.csiSecretsMountPath" . }}/env
             {{- else if eq $provider "vault" }}
-            - name: AUTHGUARD_ENV_FILE
+            - name: AUTHGUARD__SECRETS__ENV_FILE
               value: /vault/secrets/env
-            {{- end }}
-            {{- if and .Values.redis_cluster.enabled .Values.redis_cluster.usePassword }}
-            - name: AUTHGUARD__CACHE__REDIS__PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "authguard.redisSecretName" . }}
-                  key: {{ include "authguard.redisPasswordKey" . }}
             {{- end }}
           {{- if and (eq $provider "kubernetes") .Values.secrets.kubernetes.existingSecret }}
           envFrom:

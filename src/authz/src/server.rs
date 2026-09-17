@@ -386,7 +386,7 @@ impl RuntimeComponents {
             metrics.clone(),
             config.authz.identity.clone(),
             config.authz.scope_delivery.clone(),
-            AccessContextSigner::from_env()
+            AccessContextSigner::new(&config.authz.scope_delivery.direct_context_hmac_key)
                 .context("configure direct access-context signing key")?,
             resign,
         );

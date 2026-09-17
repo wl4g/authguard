@@ -1,9 +1,13 @@
 //! Public, secret-free authentication capability discovery.
 
 use authguard_common::config::{AppConfig, AuthnProperties, ProviderProperties};
+use axum::extract::State;
+use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
+
+use crate::handler::AuthenticationPipeline;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,12 +60,21 @@ struct WalletMetadata {
     link_endpoint: &'static str,
 }
 
-pub(crate) fn router() -> Router {
-    Router::new().route("/.well-known/authn.json", get(metadata))
+pub(crate) fn router(pipeline: std::sync::Arc<AuthenticationPipeline>) -> Router {
+    Router::new()
+        .route("/.well-known/authn.json", get(metadata))
+        .route("/.well-known/jwks.json", get(jwks))
+        .with_state(pipeline)
 }
 
 async fn metadata() -> Json<AuthenticationMetadata> {
     Json(build_metadata(AppConfig::get().get_authn()))
+}
+
+async fn jwks(
+    State(pipeline): State<std::sync::Arc<AuthenticationPipeline>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    pipeline.jwks().map(Json).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)
 }
 
 fn build_metadata(config: &AuthnProperties) -> AuthenticationMetadata {

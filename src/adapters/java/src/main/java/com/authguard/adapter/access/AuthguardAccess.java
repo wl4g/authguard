@@ -17,7 +17,8 @@ import java.util.Optional;
 public final class AuthguardAccess {
   public static final String GRPC_TARGET_ENV = "AUTHGUARD_GRPC_TARGET";
   public static final String GRPC_TLS_ENV = "AUTHGUARD_GRPC_TLS";
-  public static final String ACCESS_CONTEXT_HMAC_KEY_ENV = "AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY";
+  public static final String ACCESS_CONTEXT_HMAC_KEY_ENV =
+      "AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY";
 
   private AuthguardAccess() {}
 

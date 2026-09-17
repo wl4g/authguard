@@ -200,7 +200,7 @@ func executeScenario(
 
 func requestContext(t *testing.T, version int, scenario authorizationScenario) context.Context {
 	t.Helper()
-	t.Setenv("AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY", testAccessContextSigningKey)
+	t.Setenv("AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY", testAccessContextSigningKey)
 	if !scenario.GatewayAllowed {
 		ctx, authenticated, err := filter.NewAccessFilter(nil).Enter(
 			context.Background(), filter.HeaderFunc(func(string) string { return "" }),

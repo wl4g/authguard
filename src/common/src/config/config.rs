@@ -16,9 +16,7 @@ use anyhow::{bail, Context as _};
 use config::{Config, File, FileFormat};
 use serde::{Deserialize, Serialize};
 
-use super::constants::{
-    CONFIG_FILE_ENV, DEFAULT_CONFIG, DEFAULT_CONFIG_YAML, ENV_PREFIX, SECRET_ENV_FILE_ENV,
-};
+use super::constants::{DEFAULT_CONFIG_YAML, ENV_PREFIX, SECRETS_ENV_FILE_ENV};
 use crate::model::IamPolicyInfo;
 
 /// Complete product configuration shared by `AuthN` and `AuthZ`.
@@ -29,6 +27,7 @@ use crate::model::IamPolicyInfo;
 #[serde(default, deny_unknown_fields)]
 pub struct AppConfigProperties {
     pub server: ServerProperties,
+    pub secrets: SecretsProperties,
     pub mgmt: ManagementProperties,
     pub logging: LoggingProperties,
     pub cache: CacheProperties,
@@ -51,6 +50,21 @@ pub struct ServerProperties {
     pub request: RequestProperties,
     pub response: ResponseProperties,
     pub performance: PerformanceProperties,
+    pub deployment: DeploymentProperties,
+}
+
+/// Deployment topology values consumed by a running process.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DeploymentProperties {
+    pub replica_count: usize,
+}
+
+/// Optional local projection used by external secret-store integrations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SecretsProperties {
+    pub env_file: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -359,6 +373,8 @@ pub struct TokenProperties {
     pub ttl: Duration,
     #[serde(rename = "privateKey")]
     pub private_key: String,
+    #[serde(rename = "privateKeyB64")]
+    pub private_key_b64: String,
     #[serde(rename = "privateKeyFile")]
     pub private_key_file: String,
 }
@@ -614,6 +630,7 @@ pub struct ScimPrincipalDiscoveryProperties {
 pub struct ScopeDeliveryProperties {
     pub direct_urn_limit: usize,
     pub max_direct_header_bytes: usize,
+    pub direct_context_hmac_key: String,
     #[serde(with = "humantime_serde")]
     pub context_ttl: Duration,
     #[serde(with = "humantime_serde")]
@@ -655,7 +672,20 @@ impl Default for ServerProperties {
             request: RequestProperties::default(),
             response: ResponseProperties::default(),
             performance: PerformanceProperties::default(),
+            deployment: DeploymentProperties::default(),
         }
+    }
+}
+
+impl Default for DeploymentProperties {
+    fn default() -> Self {
+        Self { replica_count: 1 }
+    }
+}
+
+impl Default for SecretsProperties {
+    fn default() -> Self {
+        Self { env_file: String::new() }
     }
 }
 
@@ -890,6 +920,7 @@ impl Default for TokenProperties {
             audience: "authguard".to_string(),
             ttl: Duration::from_secs(300),
             private_key: String::new(),
+            private_key_b64: String::new(),
             private_key_file: String::new(),
         }
     }
@@ -1022,6 +1053,7 @@ impl Default for ScopeDeliveryProperties {
         Self {
             direct_urn_limit: 32,
             max_direct_header_bytes: 8 * 1024,
+            direct_context_hmac_key: String::new(),
             context_ttl: Duration::from_secs(30),
             scope_token_ttl: Duration::from_secs(30),
         }
@@ -1116,8 +1148,8 @@ impl AppConfig {
     /// # Errors
     ///
     /// Returns an error for invalid configuration or deployment constraints.
-    pub fn load() -> anyhow::Result<Arc<AppConfigProperties>> {
-        Self::install(AppConfigProperties::load()?)
+    pub fn load(path: impl AsRef<Path>) -> anyhow::Result<Arc<AppConfigProperties>> {
+        Self::install(AppConfigProperties::load(path)?)
     }
 
     /// Loads the `AuthN` view without resolving or validating `AuthZ`-only secrets.
@@ -1134,8 +1166,8 @@ impl AppConfig {
     /// # Errors
     ///
     /// Returns an error for invalid configuration or deployment constraints.
-    pub fn refresh() -> anyhow::Result<Arc<AppConfigProperties>> {
-        Self::load()
+    pub fn refresh(path: impl AsRef<Path>) -> anyhow::Result<Arc<AppConfigProperties>> {
+        Self::load(path)
     }
 
     fn install(config: AppConfigProperties) -> anyhow::Result<Arc<AppConfigProperties>> {
@@ -1173,9 +1205,10 @@ impl AppConfigProperties {
     ///
     /// Returns an error when a process-local storage or cache provider is used
     /// by more than one Authguard replica.
-    pub fn validate_deployment(&self, replica_count: usize) -> anyhow::Result<()> {
+    pub fn validate_deployment(&self) -> anyhow::Result<()> {
+        let replica_count = self.server.deployment.replica_count;
         if replica_count == 0 {
-            bail!("AUTHGUARD_REPLICA_COUNT must be positive");
+            bail!("server.deployment.replica_count must be positive");
         }
         if replica_count > 1 && self.storage.provider.eq_ignore_ascii_case("SQLite") {
             bail!(
@@ -1651,6 +1684,13 @@ fn apply_environment_entries(
 fn parse_environment_path(path: &str) -> anyhow::Result<Vec<ConfigPathSegment>> {
     let mut parsed = Vec::new();
     for segment in path.split("__").filter(|segment| !segment.is_empty()) {
+        if let Some(index) = segment.strip_prefix("INDEX_") {
+            let index = index
+                .parse::<usize>()
+                .with_context(|| format!("invalid array index in `{segment}`"))?;
+            parsed.push(ConfigPathSegment::Index(index));
+            continue;
+        }
         let mut remaining = segment;
         if !remaining.starts_with('[') {
             let key_end = remaining.find('[').unwrap_or(remaining.len());
@@ -1743,7 +1783,8 @@ pub fn read_secret_env_file(path: Option<&str>) -> anyhow::Result<HashMap<String
 
 #[must_use]
 pub fn secret_env(name: &str) -> Option<String> {
-    read_secret_env_file(std::env::var(SECRET_ENV_FILE_ENV).ok().as_deref())
+    let secret_file = projected_secret_env_file();
+    read_secret_env_file(secret_file.as_deref())
         .ok()
         .and_then(|values| values.get(name).cloned())
         .or_else(|| std::env::var(name).ok())
@@ -1807,10 +1848,8 @@ fn expand_yaml_env_refs(
     Ok(())
 }
 
-fn runtime_replica_count() -> anyhow::Result<usize> {
-    std::env::var("AUTHGUARD_REPLICA_COUNT").map_or(Ok(1), |value| {
-        value.parse::<usize>().context("AUTHGUARD_REPLICA_COUNT must be a positive integer")
-    })
+fn projected_secret_env_file() -> Option<String> {
+    std::env::var(SECRETS_ENV_FILE_ENV).ok().filter(|path| !path.trim().is_empty())
 }
 
 impl AppConfigProperties {
@@ -1819,24 +1858,23 @@ impl AppConfigProperties {
     /// # Errors
     ///
     /// Returns an error for unreadable, invalid, or unresolved configuration.
-    pub fn load() -> anyhow::Result<Self> {
-        let configured_path =
-            std::env::var(CONFIG_FILE_ENV).unwrap_or_else(|_| DEFAULT_CONFIG.to_string());
-        let configured_path = Path::new(&configured_path);
-        let file = configured_path.exists().then_some(configured_path);
-        let mut value = merged_yaml(Some(DEFAULT_CONFIG_YAML), file)?;
-        let env_values = read_secret_env_file(std::env::var(SECRET_ENV_FILE_ENV).ok().as_deref())?;
+    pub fn load(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let path = path.as_ref();
+        let mut value = merged_yaml(Some(DEFAULT_CONFIG_YAML), Some(path))?;
+        let secret_file = projected_secret_env_file();
+        let env_values = read_secret_env_file(secret_file.as_deref())?;
         expand_authz_owned_env_refs(&mut value, &env_values)?;
         let config: Self =
             serde_yaml::from_value(value).context("decode AuthGuard configuration")?;
         config.validate()?;
-        config.validate_deployment(runtime_replica_count()?)?;
+        config.validate_deployment()?;
         Ok(config)
     }
 
     fn load_for_authn(path: &Path) -> anyhow::Result<Self> {
         let mut value = merged_yaml(Some(DEFAULT_CONFIG_YAML), Some(path))?;
-        let env_values = read_secret_env_file(std::env::var(SECRET_ENV_FILE_ENV).ok().as_deref())?;
+        let secret_file = projected_secret_env_file();
+        let env_values = read_secret_env_file(secret_file.as_deref())?;
         expand_authn_owned_env_refs(&mut value, &env_values)?;
         let config: Self = serde_yaml::from_value(value)
             .with_context(|| format!("decode AuthN configuration {}", path.display()))?;
@@ -1928,6 +1966,20 @@ mod tests {
             &[("AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__KEYCLOAK[1]__ENABLED", "true")],
         );
         assert_eq!(value["authz"]["principal_discovery"]["keycloak"][1]["enabled"], true);
+    }
+
+    #[test]
+    fn environment_supports_kubernetes_safe_array_indices() {
+        let mut config = serde_yaml::Value::Null;
+        apply_environment_entries(
+            &mut config,
+            [(
+                "AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__LDAP__INDEX_0__ENABLED".to_string(),
+                "true".to_string(),
+            )],
+        )
+        .expect("Kubernetes-safe array override");
+        assert_eq!(config["authz"]["principal_discovery"]["ldap"][0]["enabled"], true);
     }
 
     #[test]
@@ -2231,17 +2283,21 @@ wallet:
     fn rejects_process_local_providers_in_multi_replica_deployments() {
         let mut memory = AppConfigProperties::default();
         memory.storage.provider = "postgres".to_string();
-        assert!(memory.validate_deployment(2).is_err());
+        memory.server.deployment.replica_count = 2;
+        assert!(memory.validate_deployment().is_err());
 
         let mut sqlite = AppConfigProperties::default();
         sqlite.cache.provider = "Redis".to_string();
-        assert!(sqlite.validate_deployment(2).is_err());
+        sqlite.server.deployment.replica_count = 2;
+        assert!(sqlite.validate_deployment().is_err());
 
         let mut shared = AppConfigProperties::default();
         shared.storage.provider = "postgres".to_string();
         shared.cache.provider = "Redis".to_string();
-        assert!(shared.validate_deployment(2).is_ok());
-        assert!(shared.validate_deployment(0).is_err());
+        shared.server.deployment.replica_count = 2;
+        assert!(shared.validate_deployment().is_ok());
+        shared.server.deployment.replica_count = 0;
+        assert!(shared.validate_deployment().is_err());
     }
 
     #[test]

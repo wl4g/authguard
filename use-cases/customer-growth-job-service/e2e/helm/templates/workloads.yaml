@@ -75,7 +75,7 @@ spec:
             - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ printf "http://%s:4318" $jaegerName | quote }} }
             - { name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, value: {{ printf "http://%s:4318/v1/traces" $jaegerName | quote }} }
             - { name: AUTHGUARD_OTEL_GRPC_ENDPOINT, value: {{ printf "http://%s:4317" $jaegerName | quote }} }
-            - name: AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY
+            - name: AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "customer-growth-e2e.accessContextSecretName" $root }}

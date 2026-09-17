@@ -2,10 +2,11 @@
 
 mod console;
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use authguard_common::config::{AppConfig, CONFIG_FILE_ENV, DEFAULT_CONFIG};
+use authguard_common::config::{AppConfig, DEFAULT_CONFIG};
 use clap::{Args, Parser, Subcommand};
 
 use crate::console::ConsoleOptions;
@@ -21,7 +22,6 @@ struct Cli {
         short,
         long,
         global = true,
-        env = CONFIG_FILE_ENV,
         default_value = DEFAULT_CONFIG,
         value_name = "FILE"
     )]
@@ -44,31 +44,28 @@ enum Command {
 #[derive(Debug, Args)]
 struct AuthnOptions {
     /// Override the `AuthN` HTTP listen address.
-    #[arg(long, env = "AUTHGUARD_AUTHN_BIND", value_name = "HOST:PORT")]
-    bind: Option<String>,
+    #[arg(long, default_value = "0.0.0.0:8082", value_name = "HOST:PORT")]
+    bind: SocketAddr,
 }
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    std::env::set_var(CONFIG_FILE_ENV, &cli.config);
 
     match cli.command {
         Command::Authn(options) => run_authn(&cli.config, options),
-        Command::Authz => run_authz(),
+        Command::Authz => run_authz(&cli.config),
         Command::Console(options) => runtime(2)?.block_on(options.run()),
     }
 }
 
 fn run_authn(config_file: &std::path::Path, options: AuthnOptions) -> anyhow::Result<()> {
-    if let Some(bind) = options.bind {
-        std::env::set_var("AUTHGUARD_AUTHN_BIND", bind);
-    }
     let config = AppConfig::load_authn(config_file)?;
-    runtime(config.server.performance.worker_threads)?.block_on(authguard_authn::server::run())
+    runtime(config.server.performance.worker_threads)?
+        .block_on(authguard_authn::server::run(options.bind))
 }
 
-fn run_authz() -> anyhow::Result<()> {
-    let config = AppConfig::load()?;
+fn run_authz(config_file: &std::path::Path) -> anyhow::Result<()> {
+    let config = AppConfig::load(config_file)?;
     runtime(config.server.performance.worker_threads)?
         .block_on(authguard_authz::server::AuthguardServer::new().run())
 }

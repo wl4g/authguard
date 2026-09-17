@@ -5,8 +5,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Context as _;
 use authguard_common::config::{AuthnProperties, TokenProperties};
 use authguard_common::model::{AuthenticatedPrincipalContext, AuthenticationResult};
-use authguard_common::utils::jwt::{load_signing_key, public_key_pem, sign, verify, JwtSigningKey};
+use authguard_common::utils::jwt::{
+    load_signing_key, public_key_jwk_components, public_key_pem, sign, verify, JwtSigningKey,
+};
 use axum::http::HeaderMap;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+use base64::Engine as _;
 use serde_json::{json, Value};
 use thiserror::Error;
 
@@ -32,17 +36,36 @@ impl TokenIssuer {
     ///
     /// Returns an error for a missing or invalid signing key.
     pub fn from_config(config: &AuthnProperties) -> anyhow::Result<Self> {
-        let key = if config.token.private_key_file.is_empty() {
-            config.token.private_key.clone()
-        } else {
+        let configured_sources = [
+            !config.token.private_key.is_empty(),
+            !config.token.private_key_b64.is_empty(),
+            !config.token.private_key_file.is_empty(),
+        ]
+        .into_iter()
+        .filter(|configured| *configured)
+        .count();
+        if configured_sources > 1 {
+            anyhow::bail!(
+                "configure only one of authn.token privateKey, privateKeyB64, or privateKeyFile"
+            );
+        }
+        let key = if !config.token.private_key_b64.is_empty() {
+            let decoded = STANDARD
+                .decode(config.token.private_key_b64.trim())
+                .context("decode authn.token.privateKeyB64")?;
+            String::from_utf8(decoded)
+                .context("authn.token.privateKeyB64 is not UTF-8 PKCS#8 PEM")?
+        } else if !config.token.private_key_file.is_empty() {
             std::fs::read_to_string(&config.token.private_key_file)
                 .context("read AuthN token private key")?
+        } else {
+            config.token.private_key.clone()
         };
         let authn_enabled =
             !config.providers.is_empty() || config.standalone.enabled || config.wallet.enabled;
         if key.is_empty() && authn_enabled {
             anyhow::bail!(
-                "authn.token privateKey or privateKeyFile is required when AuthN is enabled"
+                "authn.token privateKey, privateKeyB64, or privateKeyFile is required when AuthN is enabled"
             );
         }
         let signing_key = (!key.is_empty()).then(|| load_signing_key(&key)).transpose()?;
@@ -87,6 +110,19 @@ impl TokenIssuer {
         let payload = serde_json::to_vec(&Value::Object(claims))
             .map_err(|_| TokenError::SigningUnavailable)?;
         sign(key, &payload).map_err(|_| TokenError::SigningUnavailable)
+    }
+
+    /// Returns the public canonical-token verification key as an RFC 7517 JWKS.
+    pub fn jwks(&self) -> Result<Value, TokenError> {
+        let key = self.signing_key.as_ref().ok_or(TokenError::SigningUnavailable)?;
+        let (modulus, exponent) = public_key_jwk_components(key);
+        Ok(json!({"keys": [{
+            "kty": "RSA",
+            "use": "sig",
+            "alg": "RS256",
+            "n": URL_SAFE_NO_PAD.encode(modulus),
+            "e": URL_SAFE_NO_PAD.encode(exponent),
+        }]}))
     }
 
     /// Verifies the current `AuthGuard` bearer token and returns its Principal ID.
@@ -209,5 +245,13 @@ mod tests {
             format!("Bearer {token}").parse().expect("authorization header"),
         );
         assert_eq!(issuer.authenticate_bearer(&headers).expect("valid token"), "P_canonical");
+    }
+
+    #[test]
+    fn canonical_issuer_accepts_a_base64_pkcs8_key() {
+        let mut config = AuthnProperties::default();
+        config.standalone.enabled = true;
+        config.token.private_key_b64 = STANDARD.encode(TEST_PRIVATE_KEY);
+        TokenIssuer::from_config(&config).expect("base64 canonical token key");
     }
 }

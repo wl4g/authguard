@@ -14,7 +14,8 @@ use crate::{
 
 pub const GRPC_TARGET_ENV: &str = "AUTHGUARD_GRPC_TARGET";
 pub const GRPC_TLS_ENV: &str = "AUTHGUARD_GRPC_TLS";
-pub const ACCESS_CONTEXT_HMAC_KEY_ENV: &str = "AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY";
+pub const ACCESS_CONTEXT_HMAC_KEY_ENV: &str =
+    "AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY";
 
 pub trait AccessRequest: Send + Sync {
     fn header(&self, name: &str) -> Option<&str>;
@@ -49,7 +50,8 @@ impl HeaderAccessContextResolver {
             .map_err(|error| AccessError::Resolver(error.to_string()))
     }
 
-    /// Creates a direct-header resolver from `AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY`.
+    /// Creates a direct-header resolver from
+    /// `AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY`.
     ///
     /// # Errors
     ///

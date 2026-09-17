@@ -150,6 +150,11 @@ class KubernetesE2E:
     def authguard_web_route(self) -> str:
         return "e2e-authguard-customer-growth-web"
 
+    @property
+    def gateway_controller_name(self) -> str:
+        """Controller identity dedicated to this isolated E2E GatewayClass."""
+        return f"e2e.authguard.io/{self.gateway_name}"
+
     def workload_service(self, component: str) -> str:
         return f"{self.support_release}-{component}"
 
@@ -449,6 +454,8 @@ class KubernetesE2E:
                 f"global.images.envoyProxy.image={ALIYUN_ENVOY_IMAGE}",
                 "--set",
                 "global.images.envoyProxy.pullPolicy=Never",
+                "--set-string",
+                f"config.envoyGateway.gateway.controllerName={self.gateway_controller_name}",
                 "--wait",
                 f"--timeout={self.context.timeout_seconds}s",
             )
@@ -551,6 +558,7 @@ class KubernetesE2E:
                         "create": True,
                         "className": self.gateway_name,
                         "name": self.gateway_name,
+                        "controllerName": self.gateway_controller_name,
                     },
                     "authguardRoute": {"enabled": False},
                     "authnRoute": {
@@ -575,10 +583,13 @@ class KubernetesE2E:
                     "tag": "7.0.14",
                     "pullPolicy": "Never",
                 },
-                "password": "e2e-authguard-redis-password",
+                "existingSecret": self.principal_discovery_secret,
+                "existingSecretPasswordKey": "AUTHGUARD__CACHE__REDIS__PASSWORD",
                 "cluster": {"nodes": 6, "replicas": 1},
                 "persistence": {"enabled": False},
             },
+            # The E2E support chart owns its dedicated PostgreSQL instance.
+            "postgresql": {"enabled": False},
             "fullnameOverride": self.authguard_release,
             "secrets": {
                 # kubernetes provider: the support-chart Secret is injected
@@ -687,7 +698,7 @@ class KubernetesE2E:
                 "      type: oauth2",
                 "      issuer: https://github.com",
                 "      clientId: e2e-authguard-github-client",
-                '      clientSecret: "${AUTHGUARD_GITHUB_CLIENT_SECRET}"',
+                '      clientSecret: "${AUTHGUARD__AUTHN__PROVIDERS__GITHUB__CLIENT_SECRET}"',
                 f"      callbackUrl: http://{AUTHN_BROWSER_HOST}:8082/auth/oauth2/github/callback",
                 "      authorization:",
                 f"        endpoint: {mock_idp_url + '/github/login/oauth/authorize'!r}",
@@ -706,7 +717,7 @@ class KubernetesE2E:
                 "      type: oauth2",
                 "      issuer: https://accounts.google.com",
                 "      clientId: e2e-authguard-google-client",
-                '      clientSecret: "${AUTHGUARD_GOOGLE_CLIENT_SECRET}"',
+                '      clientSecret: "${AUTHGUARD__AUTHN__PROVIDERS__GOOGLE__CLIENT_SECRET}"',
                 f"      callbackUrl: http://{AUTHN_BROWSER_HOST}:8082/auth/oauth2/google/callback",
                 "      authorization:",
                 f"        endpoint: {mock_idp_url + '/google/o/oauth2/v2/auth'!r}",
@@ -723,7 +734,7 @@ class KubernetesE2E:
                 "      type: oidc",
                 f"      issuer: {keycloak_base + '/realms/example-corp'!r}",
                 "      clientId: e2e-authguard-principal-discovery",
-                '      clientSecret: "${AUTHGUARD_KEYCLOAK_CLIENT_SECRET}"',
+                '      clientSecret: "${AUTHGUARD__AUTHN__PROVIDERS__E2E_AUTHGUARD_KEYCLOAK__CLIENT_SECRET}"',
                 f"      callbackUrl: http://{AUTHN_BROWSER_HOST}:8082/auth/oauth2/e2e-authguard-keycloak/callback",
                 "      scopes: [openid, profile, email]",
                 "      userinfo: true",
@@ -741,7 +752,7 @@ class KubernetesE2E:
                 "      type: oauth2-like",
                 "      issuer: https://open.weixin.qq.com",
                 "      clientId: e2e-authguard-wechat-app",
-                '      clientSecret: "${AUTHGUARD_WECHAT_CLIENT_SECRET}"',
+                '      clientSecret: "${AUTHGUARD__AUTHN__PROVIDERS__WECHAT__CLIENT_SECRET}"',
                 f"      callbackUrl: http://{AUTHN_BROWSER_HOST}:8082/auth/oauth2/wechat/callback",
                 "      authorization:",
                 f"        endpoint: {mock_idp_url + '/wechat/connect/qrconnect'!r}",
@@ -762,7 +773,7 @@ class KubernetesE2E:
                 "      type: oauth2-like",
                 "      issuer: https://graph.qq.com",
                 "      clientId: e2e-authguard-qq-app",
-                '      clientSecret: "${AUTHGUARD_QQ_CLIENT_SECRET}"',
+                '      clientSecret: "${AUTHGUARD__AUTHN__PROVIDERS__QQ__CLIENT_SECRET}"',
                 f"      callbackUrl: http://{AUTHN_BROWSER_HOST}:8082/auth/oauth2/qq/callback",
                 "      authorization:",
                 f"        endpoint: {mock_idp_url + '/qq/oauth2.0/authorize'!r}",
@@ -784,7 +795,7 @@ class KubernetesE2E:
                 "  standalone:",
                 "    enabled: true",
                 "    issuer: urn:authguard:e2e:standalone",
-                '    credentialEncryptionKey: "${AUTHGUARD_STANDALONE_CREDENTIAL_KEY}"',
+                '    credentialEncryptionKey: "${AUTHGUARD__AUTHN__STANDALONE__CREDENTIAL_ENCRYPTION_KEY}"',
                 "    password:",
                 "      minLength: 12",
                 "    totp:",
@@ -828,7 +839,7 @@ class KubernetesE2E:
                 f"    issuer: {self.authn_issuer!r}",
                 "    audience: customer-growth-job-service",
                 "    ttl: 5m",
-                '    privateKey: "${AUTHGUARD_AUTHN_TOKEN_PRIVATE_KEY}"',
+                '    privateKeyB64: "${AUTHGUARD__AUTHN__TOKEN__PRIVATE_KEY_B64}"',
                 "server:",
                 "  service_name: authguard-authz",
                 "  host: 0.0.0.0",
@@ -872,6 +883,7 @@ class KubernetesE2E:
                 "  scope_delivery:",
                 "    direct_urn_limit: 1",
                 "    max_direct_header_bytes: 8192",
+                '    direct_context_hmac_key: "${AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY}"',
                 "    context_ttl: 30s",
                 "    scope_token_ttl: 30s",
                 "  principal_discovery:",
@@ -883,7 +895,7 @@ class KubernetesE2E:
                 f"        issuer: {self.issuer!r}",
                 "        auth:",
                 "          client_id: e2e-authguard-principal-discovery",
-                '          client_secret: "${AUTHGUARD_KEYCLOAK_CLIENT_SECRET}"',
+                '          client_secret: "${AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__KEYCLOAK__INDEX_0__AUTH__CLIENT_SECRET}"',
                 "        connect_timeout: 3s",
                 "        request_timeout: 10s",
                 "        max_page_size: 100",
@@ -896,7 +908,7 @@ class KubernetesE2E:
                 '        base_dn: "dc=example,dc=org"',
                 "        auth:",
                 '          bind_dn: "cn=svc-authguard,ou=Users,dc=example,dc=org"',
-                '          bind_password: "${AUTHGUARD_LDAP_BIND_PASSWORD}"',
+                '          bind_password: "${AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__LDAP__INDEX_0__AUTH__BIND_PASSWORD}"',
                 "        user:",
                 "          search_base: \"\"",
                 '          object_filter: "(objectClass=posixAccount)"',
@@ -924,7 +936,7 @@ class KubernetesE2E:
                 "    enabled: true",
                 "    max_ttl: 60s",
                 '    private_key_b64: "${AUTHGUARD__AUTHZ__RESIGN__PRIVATE_KEY_B64}"',
-                '  api_token: "${AUTHGUARD_SCIM_API_PASSWORD}"',
+                '  api_token: "${AUTHGUARD__AUTHZ__API_TOKEN}"',
                 "storage:",
                 "  provider: Postgres",
                 "  bootstrap_policy: null",

@@ -105,14 +105,15 @@ class InfrastructureVerifier(BaseVerifier):
             f"url: 'ldap://{self.ldap_service}",
             "discovery_id: e2e-authguard-keycloak",
             "discovery_id: e2e-authguard-direct-ldap",
-            "${AUTHGUARD_KEYCLOAK_CLIENT_SECRET}",
-            "${AUTHGUARD_LDAP_BIND_PASSWORD}",
-            "${AUTHGUARD_GITHUB_CLIENT_SECRET}",
-            "${AUTHGUARD_GOOGLE_CLIENT_SECRET}",
-            "${AUTHGUARD_WECHAT_CLIENT_SECRET}",
-            "${AUTHGUARD_QQ_CLIENT_SECRET}",
+            "${AUTHGUARD__AUTHN__PROVIDERS__E2E_AUTHGUARD_KEYCLOAK__CLIENT_SECRET}",
+            "${AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__KEYCLOAK__INDEX_0__AUTH__CLIENT_SECRET}",
+            "${AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__LDAP__INDEX_0__AUTH__BIND_PASSWORD}",
+            "${AUTHGUARD__AUTHN__PROVIDERS__GITHUB__CLIENT_SECRET}",
+            "${AUTHGUARD__AUTHN__PROVIDERS__GOOGLE__CLIENT_SECRET}",
+            "${AUTHGUARD__AUTHN__PROVIDERS__WECHAT__CLIENT_SECRET}",
+            "${AUTHGUARD__AUTHN__PROVIDERS__QQ__CLIENT_SECRET}",
             "${AUTHGUARD__STORAGE__POSTGRES__PASSWORD}",
-            "${AUTHGUARD_SCIM_API_PASSWORD}",
+            "${AUTHGUARD__AUTHZ__API_TOKEN}",
         )
         if missing := [value for value in required if value not in runtime]:
             raise RuntimeError(f"AuthZ discovery runtime configuration is incomplete: {missing}")
@@ -156,37 +157,23 @@ class InfrastructureVerifier(BaseVerifier):
         )
         expected = {
             "AUTHGUARD__STORAGE__POSTGRES__PASSWORD",
-            "AUTHGUARD_GITHUB_CLIENT_SECRET",
-            "AUTHGUARD_GOOGLE_CLIENT_SECRET",
-            "AUTHGUARD_WECHAT_CLIENT_SECRET",
-            "AUTHGUARD_QQ_CLIENT_SECRET",
-            "AUTHGUARD_KEYCLOAK_CLIENT_SECRET",
-            "AUTHGUARD_STANDALONE_CREDENTIAL_KEY",
-            "AUTHGUARD_LDAP_BIND_PASSWORD",
-            "AUTHGUARD_SCIM_API_PASSWORD",
+            "AUTHGUARD__CACHE__REDIS__PASSWORD",
+            "AUTHGUARD__AUTHN__PROVIDERS__GITHUB__CLIENT_SECRET",
+            "AUTHGUARD__AUTHN__PROVIDERS__GOOGLE__CLIENT_SECRET",
+            "AUTHGUARD__AUTHN__PROVIDERS__WECHAT__CLIENT_SECRET",
+            "AUTHGUARD__AUTHN__PROVIDERS__QQ__CLIENT_SECRET",
+            "AUTHGUARD__AUTHN__PROVIDERS__E2E_AUTHGUARD_KEYCLOAK__CLIENT_SECRET",
+            "AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__KEYCLOAK__INDEX_0__AUTH__CLIENT_SECRET",
+            "AUTHGUARD__AUTHN__STANDALONE__CREDENTIAL_ENCRYPTION_KEY",
+            "AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__LDAP__INDEX_0__AUTH__BIND_PASSWORD",
+            "AUTHGUARD__AUTHZ__API_TOKEN",
+            "AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY",
         }
         if missing := expected - keys:
             raise RuntimeError(f"external integration Secret lacks keys: {sorted(missing)}")
-        redis_secret = f"{self.authguard_release}-redis-cluster"
-        redis_keys = set(
-            self._run(
-                (
-                    "kubectl",
-                    "get",
-                    "secret",
-                    redis_secret,
-                    "-n",
-                    self.namespace,
-                    "-o",
-                    f"go-template={template}",
-                )
-            ).output.splitlines()
-        )
-        if "redis-password" not in redis_keys:
-            raise RuntimeError("Redis Secret lacks redis-password")
         self.details.append(
-            "verified key-only wiring for nine external credential classes: PostgreSQL, "
-            "Redis, GitHub, Google, WeChat, QQ, Keycloak, LDAP, and SCIM; no value was read"
+            "verified one key-only Secret for PostgreSQL, Redis, GitHub, Google, WeChat, QQ, "
+            "Keycloak, LDAP, SCIM, standalone encryption, and direct scope signing; no value was read"
         )
 
     def _wait_for_gateway_api_acceptance(self) -> None:

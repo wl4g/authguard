@@ -215,7 +215,7 @@ authn:
       type: oidc
       issuer: https://sso.example.com/realms/corporate
       clientId: authguard
-      clientSecret: ${AUTHGUARD_CORPORATE_OIDC_CLIENT_SECRET}
+      clientSecret: "${AUTHGUARD__AUTHN__PROVIDERS__CORPORATE_OIDC__CLIENT_SECRET}"
       callbackUrl: https://app.example.com/auth/oauth2/corporate-oidc/callback
       scopes: [openid, profile, email]
       userinfo: true

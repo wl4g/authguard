@@ -11,11 +11,11 @@ use serde_json::Value;
 #[derive(Debug, Args)]
 pub struct ConsoleOptions {
     /// `AuthZ` management endpoint, including its configured context path.
-    #[arg(long, env = "AUTHGUARD_CONSOLE_ENDPOINT", default_value = "http://127.0.0.1:9091")]
+    #[arg(long, default_value = "http://127.0.0.1:9091")]
     endpoint: String,
 
     /// Control-plane bearer credential.
-    #[arg(long, env = "AUTHGUARD_CONSOLE_TOKEN", hide_env_values = true)]
+    #[arg(long, hide_env_values = true)]
     token: String,
 
     #[command(subcommand)]
@@ -155,7 +155,7 @@ struct InteractiveCommand {
 impl ConsoleOptions {
     pub async fn run(self) -> anyhow::Result<()> {
         if self.token.trim().is_empty() {
-            bail!("--token or AUTHGUARD_CONSOLE_TOKEN is required");
+            bail!("--token is required");
         }
         let client = ConsoleClient::new(&self.endpoint, self.token)?;
         match self.operation {

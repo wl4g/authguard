@@ -1,4 +1,4 @@
-.PHONY: help build build-web build-image build-runtime-image build-web-image fmt fmt-rust lint lint-rust lint-web lint-helm test test-rust test-web test-go test-python test-java test-helm e2e-prepare e2e e2e-k3s package-chart release release-push release-verify clean
+.PHONY: help build build-web build-image build-runtime-image build-web-image docker-up docker-down docker-logs fmt fmt-rust lint lint-rust lint-web lint-helm test test-rust test-web test-go test-python test-java test-helm e2e-python e2e-prepare e2e e2e-k3s e2e-cleanup package-chart release release-push release-verify clean
 
 CARGO ?= cargo
 GO ?= go
@@ -26,6 +26,8 @@ E2E_VENV_DIR ?= $(E2E_DIR)/.venv
 E2E_PYTHON := $(E2E_VENV_DIR)/bin/python
 E2E_K3S_SCENARIOS ?= 00,01,02,03,20,10,21,22,23,24,25,26,30,40
 WEB_DIR := web
+DOCKER_COMPOSE_FILE := deploy/docker/docker-compose.yaml
+DOCKER_ENV_FILE := deploy/docker/.env
 
 ifeq ($(IN_CN_GFW),true)
 HTTPS_PROXY ?= http://127.0.0.1:8800
@@ -51,6 +53,9 @@ help:
 	@echo "    make build         Build backend, AuthGuard Web, and Java modules."
 	@echo "    make build-web     Build the AuthGuard React control-plane UI."
 	@echo "    make build-image   Build AuthGuard runtime + AuthGuard Web release images."
+	@echo "    make docker-up     Start the local Docker Compose AuthGuard topology."
+	@echo "    make docker-down   Stop the local Docker Compose topology."
+	@echo "    make docker-logs   Follow local Docker Compose logs."
 	@echo ""
 	@echo "  Quality:"
 	@echo "    make fmt           Check Rust formatting."
@@ -66,6 +71,7 @@ help:
 	@echo "    make test-helm     Verify vendored dependencies, lint, and render Helm manifests."
 	@echo "    make e2e           Run the portable cross-language verifier groups."
 	@echo "    make e2e-k3s       Clean-deploy and run the complete AuthN/AuthZ/UI/observability matrix."
+	@echo "    make e2e-cleanup   Remove only the E2E-managed Helm releases and namespace."
 	@echo "    make release       Build, package, publish, and pull-verify image/chart artifacts."
 	@echo ""
 	@echo "  Utils:"
@@ -98,6 +104,16 @@ build-web-image:
 		--build-arg VITE_AUTHZ_BASE_URL="$(VITE_AUTHZ_BASE_URL)" \
 		--build-arg VITE_REOWN_PROJECT_ID="$(VITE_REOWN_PROJECT_ID)" \
 		-t $(GHCR_WEB_IMAGE):$(VERSION) -t $(GHCR_WEB_IMAGE):latest $(WEB_DIR)
+
+docker-up:
+	@test -f $(DOCKER_ENV_FILE) || (echo "copy deploy/docker/.env.example to $(DOCKER_ENV_FILE) and replace its placeholders" >&2; exit 1)
+	$(CONTAINER_CLI) compose --env-file $(DOCKER_ENV_FILE) -f $(DOCKER_COMPOSE_FILE) up -d
+
+docker-down:
+	$(CONTAINER_CLI) compose --env-file $(DOCKER_ENV_FILE) -f $(DOCKER_COMPOSE_FILE) down
+
+docker-logs:
+	$(CONTAINER_CLI) compose --env-file $(DOCKER_ENV_FILE) -f $(DOCKER_COMPOSE_FILE) logs -f
 
 fmt: fmt-rust
 
@@ -138,13 +154,16 @@ test-java:
 test-helm:
 	test -f deploy/helm/authguard/charts/gateway-helm-v1.9.0.tgz
 	test -f deploy/helm/authguard/charts/redis-cluster-8.8.2.tgz
+	test -f deploy/helm/authguard/charts/postgresql-18.8.13.tgz
 	helm dependency list deploy/helm/authguard
 	helm lint deploy/helm/authguard
 	helm template authguard deploy/helm/authguard >/dev/null
 
-e2e-prepare:
+e2e-python:
 	test -x $(E2E_PYTHON) || $(PYTHON) -m venv $(E2E_VENV_DIR)
 	$(E2E_PYTHON) -m pip install --disable-pip-version-check -r $(E2E_DIR)/requirements.txt
+
+e2e-prepare: e2e-python
 	$(E2E_PYTHON) -m playwright install chromium
 
 e2e: e2e-prepare
@@ -152,6 +171,9 @@ e2e: e2e-prepare
 
 e2e-k3s: e2e-prepare
 	$(E2E_PYTHON) $(E2E_DIR)/runner.py --scenario $(E2E_K3S_SCENARIOS) --timeout 1800
+
+e2e-cleanup: e2e-python
+	$(E2E_PYTHON) $(E2E_DIR)/runner.py --cleanup --timeout 1800
 
 package-chart: test-helm
 	mkdir -p $(RELEASE_DIR)

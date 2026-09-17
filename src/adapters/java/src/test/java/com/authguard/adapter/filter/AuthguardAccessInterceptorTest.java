@@ -304,7 +304,8 @@ class AuthguardAccessInterceptorTest {
   @Test
   void signingKeyConfigurationUsesStandardEnvironmentName() {
     assertEquals(
-        "AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY", AuthguardAccess.ACCESS_CONTEXT_HMAC_KEY_ENV);
+        "AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY",
+        AuthguardAccess.ACCESS_CONTEXT_HMAC_KEY_ENV);
   }
 
   private static void assertAuthenticated(RequestAccess requestAccess) {
