@@ -1,30 +1,44 @@
 # AuthGuard Docker Compose
 
-Complete local AuthGuard deployment: PostgreSQL, Redis, AuthN, AuthZ, Web, and
-single-node Envoy. `.env` uses the same `AUTHGUARD__...` secret keys as Helm.
+Local single-node deployment: PostgreSQL, Redis, AuthN, AuthZ, Web, and Envoy.
+All user-supplied values use the same `AUTHGUARD__...` keys as Helm.
+
+## 1. Prepare the local Secret file
 
 ```bash
 cp deploy/docker/.env.example deploy/docker/.env && \
-${EDITOR:-vi} deploy/docker/.env && \
+${EDITOR:-vi} deploy/docker/.env
+```
+
+Replace every active placeholder. OAuth/OIDC and wallet-chain settings belong in
+[`config/authguard.yaml`](config/authguard.yaml).
+
+## 2. Start
+
+```bash
 docker compose --env-file deploy/docker/.env \
   -f deploy/docker/docker-compose.yaml up -d
 ```
 
-Open `http://localhost:8080`. The UI is same-origin proxied to AuthN (`/auth`,
-`/.well-known/authn.json`) and AuthZ management (`/api`); enter
-`AUTHGUARD__AUTHZ__API_TOKEN` in the UI control-token input to manage policies
-and Principals.
+`make docker-up` is equivalent.
+
+## 3. Use
+
+- UI/AuthN/AuthZ management: `http://localhost:8080`
+- Protected Envoy PEP: `http://localhost:8081`
+
+Envoy obtains AuthN's public key from `/.well-known/jwks.json`; no script,
+init image, or private-key mount is required.
+
+## 4. Inspect or stop
 
 ```bash
-docker compose --env-file deploy/docker/.env -f deploy/docker/docker-compose.yaml logs -f
-docker compose --env-file deploy/docker/.env -f deploy/docker/docker-compose.yaml down
-# Equivalent repository target: make docker-down
+docker compose --env-file deploy/docker/.env \
+  -f deploy/docker/docker-compose.yaml logs -f
+docker compose --env-file deploy/docker/.env \
+  -f deploy/docker/docker-compose.yaml down
 ```
 
-Envoy exposes `:8080` for UI/AuthN/API and `:8081` for the real
-`jwt_authn → ext_authz` protected listener. It obtains AuthN's public JWKS from
-`/.well-known/jwks.json`; no local script, init image, or private-key mount is
-needed. The protected listener points to Web as a small demonstrator upstream.
-
-Runtime files live in `config/`; OAuth/OIDC and wallet chain settings belong in
-`config/authguard.yaml`.
+The `:8081` listener enforces `jwt_authn → ext_authz`; it routes to Web only as
+a small demonstrator upstream. Replace that upstream in
+[`config/envoy.yaml`](config/envoy.yaml) for application integration.
