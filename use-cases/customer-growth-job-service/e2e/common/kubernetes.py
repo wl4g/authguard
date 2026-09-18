@@ -65,6 +65,8 @@ WORKLOAD_HOSTS = {
     for component in WORKLOAD_IMAGES
 }
 AUTHN_HOST = "e2e-authguard-authn.customer-growth.local"
+CUSTOMER_GROWTH_HOST = "customer-growth.local"
+CUSTOMER_GROWTH_FALLBACK_HOST = "customer-growth-default.local"
 # WebAuthn is available only in a trustworthy browser context. Chromium treats
 # HTTP localhost as trustworthy, so browser ceremonies use this additional
 # route host while protocol/API scenarios retain the descriptive AuthN host.
@@ -179,6 +181,7 @@ class KubernetesE2E:
 
     def redeploy(self) -> None:
         self._run(("helm", "dependency", "list", str(self.helm_chart)))
+        self._run(("helm", "dependency", "list", str(self.support_chart)))
         if self.context.clean:
             self.cleanup()
         self._run(("kubectl", "create", "namespace", self.namespace), allowed_codes={0, 1})
@@ -199,6 +202,10 @@ class KubernetesE2E:
         self._prepare_external_images()
         self._wait_for_support_services()
         self._import_image(AUTHGUARD_IMAGE)
+        # The Web Pod is created by the AuthGuard chart, not the support chart.
+        # Re-import immediately before Helm creates that consumer so k3s image
+        # GC cannot collect the unreferenced local image during support startup.
+        self._import_image(AUTHGUARD_WEB_IMAGE)
         # Redis is installed by the Authguard chart with pullPolicy=Never. Import it
         # immediately before Helm creates the StatefulSet so k3s image GC cannot
         # collect an unreferenced image while the support services are starting.
@@ -377,12 +384,20 @@ class KubernetesE2E:
         # e2e-local tags are intentionally mutable. Import them immediately before
         # creating their Pods so k3s image GC cannot collect an unreferenced image
         # while an earlier Helm release is still becoming ready.
-        for image in (*WORKLOAD_IMAGES.values(), MOCK_IDP_IMAGE, AUTHGUARD_WEB_IMAGE):
+        for image in (
+            *WORKLOAD_IMAGES.values(),
+            MOCK_IDP_IMAGE,
+            AUTHGUARD_WEB_IMAGE,
+        ):
             self._import_image(image)
 
     def _remove_mutable_cluster_images(self) -> None:
         """Prevent a recreated Pod from starting an obsolete mutable E2E image tag."""
-        for image in (*WORKLOAD_IMAGES.values(), MOCK_IDP_IMAGE, AUTHGUARD_WEB_IMAGE):
+        for image in (
+            *WORKLOAD_IMAGES.values(),
+            MOCK_IDP_IMAGE,
+            AUTHGUARD_WEB_IMAGE,
+        ):
             self._run(
                 (*self._k3s_command(), "ctr", "-n", "k8s.io", "images", "remove", image),
                 allowed_codes={0, 1},
@@ -475,7 +490,7 @@ class KubernetesE2E:
                 "--set-file",
                 f"keycloak.realm={CONFIG_DIR / 'keycloak-realm.json'}",
                 "--set-file",
-                f"postgresql.initSQL={CONFIG_DIR / 'init.sql'}",
+                f"supportPostgresql.initSQL={CONFIG_DIR / 'init.sql'}",
                 "--set-file",
                 f"keycloak.realmSigningPrivateKey={E2E_KEYS_DIR / 'realm-signing-key.pem'}",
                 "--set-file",
@@ -518,7 +533,19 @@ class KubernetesE2E:
             )
 
     def _install_authguard(self) -> None:
-        values = self._authguard_values()
+        # Install the optional vendored subchart from the same business Chart,
+        # but under a distinct release. Normal business upgrades use the
+        # default authguard.enabled=false and cannot mutate this middleware.
+        values = {
+            "support": {"enabled": False},
+            "authguard": {"enabled": True},
+            "global": {
+                "authguard": {
+                    "themeConfigMap": "{{ .Release.Name }}-authguard-theme"
+                }
+            },
+            "authguard-middleware": self._authguard_values(),
+        }
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as values_file:
             json.dump(values, values_file)
             values_file.flush()
@@ -528,7 +555,7 @@ class KubernetesE2E:
                     "upgrade",
                     "--install",
                     self.authguard_release,
-                    str(self.helm_chart),
+                    str(self.support_chart),
                     "-n",
                     self.namespace,
                     "-f",
@@ -558,14 +585,19 @@ class KubernetesE2E:
                         "create": True,
                         "className": self.gateway_name,
                         "name": self.gateway_name,
+                        "listenerPort": 8082,
                         "controllerName": self.gateway_controller_name,
                     },
                     "authguardRoute": {"enabled": False},
                     "authnRoute": {
                         "enabled": True,
                         "name": "e2e-authguard-customer-growth-authn",
-                        "listenerPort": 8082,
-                        "hostnames": [AUTHN_HOST, AUTHN_BROWSER_HOST],
+                        "hostnames": [
+                            AUTHN_HOST,
+                            AUTHN_BROWSER_HOST,
+                            CUSTOMER_GROWTH_HOST,
+                            CUSTOMER_GROWTH_FALLBACK_HOST,
+                        ],
                     },
                     "tracing": {
                         "enabled": True,
@@ -576,7 +608,10 @@ class KubernetesE2E:
             },
             "redis_cluster": {
                 "enabled": True,
-                "nameOverride": "redis-cluster",
+                # Keep the StatefulSet controller-revision label below the
+                # Kubernetes 63-character limit even when the E2E release
+                # name is intentionally descriptive.
+                "fullnameOverride": "e2e-redis-cluster",
                 "image": {
                     "registry": "registry.cn-shenzhen.aliyuncs.com",
                     "repository": "wl4g-k8s/bitnami_redis-cluster",
@@ -636,7 +671,17 @@ class KubernetesE2E:
                     "route": {
                         "enabled": True,
                         "name": self.authguard_web_route,
-                        "hostnames": [AUTHN_HOST, AUTHN_BROWSER_HOST],
+                        "hostnames": [
+                            AUTHN_HOST,
+                            AUTHN_BROWSER_HOST,
+                            CUSTOMER_GROWTH_HOST,
+                            CUSTOMER_GROWTH_FALLBACK_HOST,
+                        ],
+                        "console": {
+                            "enabled": True,
+                            "name": f"{self.authguard_web_route}-console",
+                            "hostnames": [AUTHN_HOST, AUTHN_BROWSER_HOST],
+                        },
                     },
                 },
                 "authz": {
@@ -656,7 +701,7 @@ class KubernetesE2E:
                         ),
                     },
                 },
-                # The COMPLETE main configuration (flowgent-chart style) is
+                # The complete main configuration is
                 # rendered by Helm tpl into the authguard ConfigMap. Policy
                 # data is deliberately absent: authorization policies are
                 # imported into the Authguard storage as the post-deploy
@@ -682,7 +727,7 @@ class KubernetesE2E:
         )
         solana_reference = self.solana_chain_reference()
         redis_node = (
-            f"redis://{self.authguard_release}-redis-cluster."
+            "redis://e2e-redis-cluster."
             f"{self.namespace}.svc.cluster.local:6379"
         )
         iam_postgres_url = (
@@ -693,6 +738,19 @@ class KubernetesE2E:
         return "\n".join(
             [
                 "authn:",
+                "  applications:",
+                "    customer-growth:",
+                f"      hosts: [{AUTHN_BROWSER_HOST}, {CUSTOMER_GROWTH_HOST}]",
+                "      displayName: Customer Growth",
+                "      logo: /auth/assets/themes/custom/customer-growth.svg",
+                "      theme:",
+                "        id: customer-growth",
+                "        stylesheet: /auth/assets/themes/custom/customer-growth.css",
+                f"      returnUris: [https://localhost/**, https://{CUSTOMER_GROWTH_HOST}/**]",
+                "    customer-growth-default:",
+                f"      hosts: [{CUSTOMER_GROWTH_FALLBACK_HOST}]",
+                "      displayName: Customer Growth",
+                f"      returnUris: [https://{CUSTOMER_GROWTH_FALLBACK_HOST}/**]",
                 "  providers:",
                 "    github:",
                 "      type: oauth2",
@@ -1103,37 +1161,49 @@ class KubernetesE2E:
             yield port
 
     @contextmanager
-    def _forward_service(
-        self, service: str, remote_port: int, *, local_port: int | None = None
-    ) -> Iterator[int]:
-        with self._forward_resource(
-            f"service/{service}", remote_port, local_port=local_port
-        ) as port:
+    def _forward_service(self, service: str, remote_port: int) -> Iterator[int]:
+        with self._forward_resource(f"service/{service}", remote_port) as port:
             yield port
 
     @contextmanager
-    def _forward_resource(
-        self, resource: str, remote_port: int, *, local_port: int | None = None
-    ) -> Iterator[int]:
-        local_port = _free_port() if local_port is None else _require_free_port(local_port)
-        process = subprocess.Popen(
-            (
-                "kubectl",
-                "port-forward",
-                "--address=127.0.0.1",
-                "-n",
-                self.namespace,
-                resource,
-                f"{local_port}:{remote_port}",
-            ),
-            cwd=PROJECT_ROOT,
-            env={**os.environ, **self.environment},
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+    def _forward_resource(self, resource: str, remote_port: int) -> Iterator[int]:
+        process: subprocess.Popen | None = None
+        forwarded_port = 0
+        failures: list[str] = []
+        for attempt in range(1, 4):
+            forwarded_port = _free_port()
+            process = subprocess.Popen(
+                (
+                    "kubectl",
+                    "port-forward",
+                    "--address=127.0.0.1",
+                    "-n",
+                    self.namespace,
+                    resource,
+                    f"{forwarded_port}:{remote_port}",
+                ),
+                cwd=PROJECT_ROOT,
+                env={**os.environ, **self.environment},
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            try:
+                _wait_for_port(process, forwarded_port)
+                break
+            except RuntimeError as error:
+                process.terminate()
+                stderr = process.communicate(timeout=5)[1].strip()
+                failures.append(f"attempt {attempt}: {error}; {stderr or 'no stderr'}")
+                process = None
+                time.sleep(0.2)
+        if process is None:
+            raise RuntimeError(
+                f"kubectl port-forward {resource}:{remote_port} failed after 3 attempts: "
+                + " | ".join(failures)
+            )
         try:
-            _wait_for_port(process, local_port)
-            yield local_port
+            yield forwarded_port
         finally:
             process.terminate()
             try:
@@ -1187,15 +1257,6 @@ def _free_port() -> int:
                 continue
             return port
     raise RuntimeError("no free E2E host port remains in 28800-28899")
-
-
-def _require_free_port(port: int) -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        try:
-            listener.bind(("127.0.0.1", port))
-        except OSError as error:
-            raise RuntimeError(f"required E2E host port is unavailable: {port}") from error
-    return port
 
 
 def _has_true_condition(conditions: list[dict], condition_type: str) -> bool:

@@ -1,6 +1,6 @@
 import { Languages, Moon, Sun } from 'lucide-react'
-import { useI18n } from '../lib/i18n'
-import { useTheme, type Theme } from '../lib/theme'
+import { useI18n } from './i18n'
+import { useTheme, type Theme } from './theme'
 
 export function Preferences() {
   const { locale, setLocale, t } = useI18n()

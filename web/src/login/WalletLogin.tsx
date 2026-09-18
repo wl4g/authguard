@@ -3,8 +3,8 @@ import { WalletCards } from 'lucide-react'
 import { getAddress, stringToHex } from 'viem'
 import { useChainId, useSignMessage } from 'wagmi'
 import { useState } from 'react'
-import { authn, type AuthMetadata, type LoginResponse } from '../../lib/api'
-import { useI18n } from '../../lib/i18n'
+import { authn, type AuthMetadata, type LoginResponse } from '../core/api'
+import { useI18n } from '../shared/i18n'
 import { walletConfigured } from './Web3Provider'
 
 type Challenge = { challengeId: string; accountId: string; message: string; expiresAt: string; signatureEncoding: string; verificationMethods: string[] }
@@ -12,7 +12,7 @@ type Challenge = { challengeId: string; accountId: string; message: string; expi
 type InjectedWallet = { request: (request: { method: string; params?: unknown[] }) => Promise<unknown> }
 const ERC6492_MAGIC_SUFFIX = '6492'.repeat(16)
 
-export function WalletLogin({ metadata, onAuthenticated }: { metadata: AuthMetadata; onAuthenticated: (result: LoginResponse) => void }) {
+export function WalletLogin({ metadata, returnTo, onAuthenticated }: { metadata: AuthMetadata; returnTo: string; onAuthenticated: (result: LoginResponse) => void }) {
   const { t } = useI18n()
   const { open } = useAppKit()
   const { address, isConnected, allAccounts, embeddedWalletInfo } = useAppKitAccount()
@@ -60,6 +60,7 @@ export function WalletLogin({ metadata, onAuthenticated }: { metadata: AuthMetad
         method: 'POST', body: JSON.stringify({
           challengeId: challenge.challengeId,
           signature,
+          returnTo,
           ...(verificationMethod && { verificationMethod }),
         }),
       })

@@ -7,7 +7,7 @@ const messages = {
     product: 'AuthGuard', tagline: 'Identity control plane', loginTitle: 'Enter the trust fabric',
     loginHint: 'One Principal. One token. Every authentication protocol.', login: 'Sign in',
     loginId: 'Email or login ID', password: 'Password', totp: 'TOTP code (optional)',
-    passkey: 'Continue with passkey', registerPasskey: 'Add passkey to this account', wallet: 'Continue with wallet', connecting: 'Connecting…',
+    passkey: 'Continue with passkey', registerPasskey: 'Add passkey', wallet: 'Continue with wallet', connecting: 'Connecting…',
     orFederated: 'or continue with', notEnabled: 'This method is not enabled by the server.',
     policy: 'Policy', principals: 'Principals', overview: 'Overview', signOut: 'Sign out',
     controlToken: 'Control-plane token', saveToken: 'Use token', revision: 'Revision',
@@ -23,12 +23,14 @@ const messages = {
     username: 'Login identifier', next: 'Next', welcome: 'Control plane ready',
     welcomeCopy: 'Manage canonical identities and policy without leaking authentication protocols into authorization.',
     system: 'System', dark: 'Dark', light: 'Light', language: 'Language', configureWallet: 'Configure Reown project ID',
+    accountSecurity: 'Account security', manageCredentials: 'Manage your credentials', stepUpHint: 'Confirm your standalone password and TOTP, if enabled, before adding a passkey to the authenticated Principal.',
+    passkeyAdded: 'Passkey added', backToApplication: 'Back to application', copyId: 'Copy ID',
   },
   zh_CN: {
     product: 'AuthGuard', tagline: '身份与授权控制平面', loginTitle: '进入可信身份网络',
     loginHint: '统一 Principal、统一 Token，认证协议彼此独立。', login: '登录',
     loginId: '邮箱或登录标识', password: '密码', totp: 'TOTP 验证码（可选）',
-    passkey: '使用通行密钥', registerPasskey: '为此账号添加通行密钥', wallet: '使用钱包登录', connecting: '正在连接…',
+    passkey: '使用通行密钥', registerPasskey: '添加通行密钥', wallet: '使用钱包登录', connecting: '正在连接…',
     orFederated: '或使用以下方式', notEnabled: '服务端尚未启用此认证方式。',
     policy: '策略管理', principals: '身份主体', overview: '概览', signOut: '退出登录',
     controlToken: '控制面令牌', saveToken: '应用令牌', revision: '版本',
@@ -44,6 +46,8 @@ const messages = {
     username: '登录标识', next: '下一步', welcome: '控制平面已就绪',
     welcomeCopy: '管理 canonical identity 与策略，认证协议不会泄漏到授权边界。',
     system: '跟随系统', dark: '酷黑', light: '白天', language: '语言', configureWallet: '请配置 Reown Project ID',
+    accountSecurity: '账号安全', manageCredentials: '管理认证凭据', stepUpHint: '添加通行密钥前，请使用本地账号密码及已启用的 TOTP 再次确认当前 Principal。',
+    passkeyAdded: '通行密钥已添加', backToApplication: '返回应用', copyId: '复制 ID',
   },
 } as const
 

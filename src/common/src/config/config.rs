@@ -61,7 +61,7 @@ pub struct DeploymentProperties {
 }
 
 /// Optional local projection used by external secret-store integrations.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SecretsProperties {
     pub env_file: String,
@@ -210,6 +210,12 @@ pub struct PostgresProperties {
 #[serde(default, deny_unknown_fields)]
 pub struct AuthnProperties {
     pub providers: BTreeMap<String, ProviderProperties>,
+    /// Trusted relying applications for the same-origin hosted login.
+    ///
+    /// Authentication providers stay protocol focused. This mapping only
+    /// establishes which browser host may use a branded login surface and
+    /// which post-authentication destinations it owns.
+    pub applications: BTreeMap<String, ApplicationProperties>,
     #[serde(rename = "challengeTtl", with = "humantime_serde")]
     pub challenge_ttl: Duration,
     pub standalone: StandaloneAuthnProperties,
@@ -217,6 +223,33 @@ pub struct AuthnProperties {
     #[serde(rename = "accountLinking")]
     pub account_linking: AccountLinkingProperties,
     pub token: TokenProperties,
+}
+
+/// A browser-facing application that delegates login UX to `AuthGuard`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ApplicationProperties {
+    /// Exact, trusted DNS hosts. Schemes, paths, and wildcards are forbidden.
+    pub hosts: BTreeSet<String>,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+    /// Optional same-origin static asset served by `AuthGuard` Web. An empty
+    /// value uses the built-in AuthGuard mark without disabling text branding.
+    pub logo: String,
+    /// Optional same-origin presentation pack applied only to Hosted Login and
+    /// account-security surfaces. Authentication remains protocol-independent.
+    pub theme: Option<ApplicationThemeProperties>,
+    #[serde(rename = "returnUris")]
+    pub return_uris: Vec<String>,
+}
+
+/// Declarative, static application theme. Rust never loads executable plugins;
+/// the Web image serves this stylesheet from the trusted `/auth/assets` tree.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ApplicationThemeProperties {
+    pub id: String,
+    pub stylesheet: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -683,12 +716,6 @@ impl Default for DeploymentProperties {
     }
 }
 
-impl Default for SecretsProperties {
-    fn default() -> Self {
-        Self { env_file: String::new() }
-    }
-}
-
 impl Default for RequestProperties {
     fn default() -> Self {
         Self { max_message_bytes: 1024 * 1024, timeout: Duration::from_secs(5) }
@@ -849,6 +876,7 @@ impl Default for AuthnProperties {
     fn default() -> Self {
         Self {
             providers: BTreeMap::new(),
+            applications: BTreeMap::new(),
             challenge_ttl: Duration::from_secs(300),
             standalone: StandaloneAuthnProperties::default(),
             wallet: WalletAuthnProperties::default(),
@@ -1494,6 +1522,9 @@ fn validate_authn(authn: &AuthnProperties, cache: &CacheProperties) -> anyhow::R
     if authn.challenge_ttl.is_zero() || authn.challenge_ttl > Duration::from_secs(15 * 60) {
         bail!("authn.challengeTtl must be between 1 second and 15 minutes");
     }
+    for (id, application) in &authn.applications {
+        validate_application(id, application)?;
+    }
     let needs_challenge_store = !authn.providers.is_empty()
         || authn.wallet.enabled
         || authn.standalone.enabled
@@ -1505,7 +1536,12 @@ fn validate_authn(authn: &AuthnProperties, cache: &CacheProperties) -> anyhow::R
         validate_redis_cache(&cache.redis)?;
     }
 
-    let standalone = &authn.standalone;
+    validate_standalone_authn(&authn.standalone)?;
+    validate_wallet_authn(&authn.wallet)?;
+    Ok(())
+}
+
+fn validate_standalone_authn(standalone: &StandaloneAuthnProperties) -> anyhow::Result<()> {
     if !standalone.enabled && (standalone.totp.enabled || standalone.webauthn.enabled) {
         bail!("standalone TOTP/WebAuthn cannot be enabled when authn.standalone.enabled=false");
     }
@@ -1541,8 +1577,11 @@ fn validate_authn(authn: &AuthnProperties, cache: &CacheProperties) -> anyhow::R
         }
     }
 
-    if authn.wallet.enabled {
-        let wallet = &authn.wallet;
+    Ok(())
+}
+
+fn validate_wallet_authn(wallet: &WalletAuthnProperties) -> anyhow::Result<()> {
+    if wallet.enabled {
         let uri =
             reqwest::Url::parse(&wallet.uri).context("authn.wallet.uri must be an absolute URL")?;
         if wallet.domain.trim().is_empty()
@@ -1593,6 +1632,87 @@ fn validate_authn(authn: &AuthnProperties, cache: &CacheProperties) -> anyhow::R
         }
     }
     Ok(())
+}
+
+fn validate_application(id: &str, application: &ApplicationProperties) -> anyhow::Result<()> {
+    if id.is_empty()
+        || id.len() > 64
+        || !id
+            .bytes()
+            .all(|value| value.is_ascii_lowercase() || value.is_ascii_digit() || value == b'-')
+    {
+        bail!("authn.applications keys must be lowercase application IDs");
+    }
+    let logo_is_valid = application.logo.is_empty()
+        || (application.logo.starts_with("/auth/assets/")
+            && !application.logo.contains("..")
+            && !application.logo.contains(['\\', '?', '#'])
+            && !application.logo.bytes().any(|value| value.is_ascii_control()));
+    if application.hosts.is_empty()
+        || application.display_name.trim().is_empty()
+        || application.display_name.len() > 256
+        || !logo_is_valid
+        || application.return_uris.is_empty()
+    {
+        bail!("authn.applications.{id} requires hosts, displayName, an optional /auth/assets/ logo, and returnUris");
+    }
+    for host in &application.hosts {
+        if !is_application_host(host) {
+            bail!("authn.applications.{id}.hosts contains an invalid DNS host");
+        }
+    }
+    if let Some(theme) = &application.theme {
+        if theme.id.is_empty()
+            || theme.id.len() > 64
+            || !theme
+                .id
+                .bytes()
+                .all(|value| value.is_ascii_lowercase() || value.is_ascii_digit() || value == b'-')
+            || !theme.stylesheet.starts_with("/auth/assets/themes/")
+            || !std::path::Path::new(&theme.stylesheet)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("css"))
+            || theme.stylesheet.contains("..")
+            || theme.stylesheet.contains(['\\', '?', '#'])
+            || theme.stylesheet.bytes().any(|value| value.is_ascii_control())
+        {
+            bail!(
+                "authn.applications.{id}.theme requires a lowercase ID and a same-origin /auth/assets/themes/*.css stylesheet"
+            );
+        }
+    }
+    for return_uri in &application.return_uris {
+        let is_wildcard = return_uri.ends_with("/**");
+        if return_uri.contains('*') && !is_wildcard {
+            bail!("authn.applications.{id}.returnUris supports a wildcard only as a trailing /**");
+        }
+        let wildcard = return_uri.strip_suffix("/**").unwrap_or(return_uri);
+        let parsed = reqwest::Url::parse(wildcard).with_context(|| {
+            format!("authn.applications.{id}.returnUris must contain absolute URLs")
+        })?;
+        if parsed.scheme() != "https"
+            || parsed.username() != ""
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+            || !application.hosts.contains(parsed.host_str().unwrap_or_default())
+        {
+            bail!("authn.applications.{id}.returnUris must be HTTPS URLs for a configured host, optionally ending in /**");
+        }
+    }
+    Ok(())
+}
+
+fn is_application_host(host: &str) -> bool {
+    !host.is_empty()
+        && host.len() <= 253
+        && host == host.to_ascii_lowercase()
+        && host.bytes().all(|value| {
+            value.is_ascii_lowercase() || value.is_ascii_digit() || value == b'.' || value == b'-'
+        })
+        && !host.starts_with('.')
+        && !host.ends_with('.')
+        && !host.contains("..")
 }
 
 fn validate_caip_reference(reference: &str, namespace: &str) -> anyhow::Result<()> {
@@ -2251,6 +2371,54 @@ wallet:
         validate_authn(&authn, &cache).expect("offline EOA plus contract-wallet RPC");
         assert_eq!(authn.wallet.chains.eip155["1"].rpc, None);
         assert_eq!(authn.wallet.chains.eip155["31337"].rpc.as_deref(), Some("http://anvil:8545"));
+    }
+
+    #[test]
+    fn hosted_login_applications_require_exact_https_origins() {
+        let mut authn = AuthnProperties::default();
+        authn.applications.insert(
+            "example-app".to_string(),
+            ApplicationProperties {
+                hosts: BTreeSet::from(["app.example.com".to_string()]),
+                display_name: "Example App".to_string(),
+                logo: "/auth/assets/branding/example-app.svg".to_string(),
+                theme: Some(ApplicationThemeProperties {
+                    id: "example-app".to_string(),
+                    stylesheet: "/auth/assets/themes/example-app/theme.css".to_string(),
+                }),
+                return_uris: vec!["https://app.example.com/**".to_string()],
+            },
+        );
+        validate_authn(&authn, &CacheProperties::default()).expect("valid hosted application");
+
+        let mut fallback = authn.clone();
+        let fallback_application =
+            fallback.applications.get_mut("example-app").expect("application");
+        fallback_application.logo.clear();
+        fallback_application.theme = None;
+        validate_authn(&fallback, &CacheProperties::default())
+            .expect("text branding with the built-in visual fallback");
+
+        authn
+            .applications
+            .get_mut("example-app")
+            .expect("application")
+            .theme
+            .as_mut()
+            .expect("theme")
+            .stylesheet = "https://cdn.example.com/theme.css".to_string();
+        assert!(validate_authn(&authn, &CacheProperties::default()).is_err());
+        authn
+            .applications
+            .get_mut("example-app")
+            .expect("application")
+            .theme
+            .as_mut()
+            .expect("theme")
+            .stylesheet = "/auth/assets/themes/example-app/theme.css".to_string();
+        authn.applications.get_mut("example-app").expect("application").return_uris =
+            vec!["http://app.example.com/**".to_string()];
+        assert!(validate_authn(&authn, &CacheProperties::default()).is_err());
     }
 
     #[test]

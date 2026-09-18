@@ -9,7 +9,7 @@ use authguard_common::cache::ICache;
 use authguard_common::model::{AuthenticationResult, ExternalIdentity, PrincipalKind};
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::HeaderMap;
-use axum::response::Redirect;
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::Json;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -53,6 +53,26 @@ pub(crate) struct OAuth2Handler {
 pub(crate) struct AuthorizeQuery {
     #[serde(default)]
     return_uri: String,
+    #[serde(default, alias = "returnTo")]
+    return_to: String,
+}
+
+impl AuthorizeQuery {
+    fn return_destination(self) -> Result<(String, bool), ApiError> {
+        if !self.return_uri.is_empty()
+            && !self.return_to.is_empty()
+            && self.return_uri != self.return_to
+        {
+            return Err(ApiError::bad_request(
+                "return_uri and return_to must match when both are set",
+            ));
+        }
+        if self.return_to.is_empty() {
+            Ok((self.return_uri, false))
+        } else {
+            Ok((self.return_to, true))
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -73,6 +93,7 @@ pub(crate) struct TokenExchangeRequest {
 struct OAuthChallenge {
     provider: String,
     return_uri: String,
+    redirect_after_login: bool,
     nonce: Option<String>,
     pkce_verifier: Option<String>,
     link_principal_id: Option<String>,
@@ -111,8 +132,10 @@ pub(crate) async fn authorize(
     AxumPath(provider): AxumPath<String>,
     Query(query): Query<AuthorizeQuery>,
     State(state): State<OAuth2Handler>,
+    headers: HeaderMap,
 ) -> Result<Redirect, ApiError> {
-    prepare_authorization(&state, &provider, query.return_uri, None).await
+    let (return_uri, redirect_after_login) = query.return_destination()?;
+    prepare_authorization(&state, &provider, &headers, return_uri, redirect_after_login, None).await
 }
 
 pub(crate) async fn link_authorize(
@@ -122,17 +145,33 @@ pub(crate) async fn link_authorize(
     headers: HeaderMap,
 ) -> Result<Redirect, ApiError> {
     let principal_id = state.pipeline.authenticate_token(&headers).map_err(ApiError::token)?;
-    prepare_authorization(&state, &provider, query.return_uri, Some(principal_id)).await
+    let (return_uri, redirect_after_login) = query.return_destination()?;
+    prepare_authorization(
+        &state,
+        &provider,
+        &headers,
+        return_uri,
+        redirect_after_login,
+        Some(principal_id),
+    )
+    .await
 }
 
 async fn prepare_authorization(
     state: &OAuth2Handler,
     provider: &str,
+    headers: &HeaderMap,
     return_uri: String,
+    redirect_after_login: bool,
     link_principal_id: Option<String>,
 ) -> Result<Redirect, ApiError> {
     let started = Instant::now();
     let result = async {
+        let return_uri = crate::route::application::ApplicationResolver::new(
+            authguard_common::config::AppConfig::get().get_authn(),
+            headers,
+        )
+        .validate_return_to(&return_uri)?;
         let runtime = state
             .providers
             .get(provider)
@@ -149,6 +188,7 @@ async fn prepare_authorization(
             &OAuthChallenge {
                 provider: provider.to_string(),
                 return_uri,
+                redirect_after_login,
                 nonce: authorization.nonce,
                 pkce_verifier: authorization.pkce_verifier,
                 link_principal_id,
@@ -169,7 +209,7 @@ pub(crate) async fn callback(
     AxumPath(provider): AxumPath<String>,
     Query(query): Query<CallbackQuery>,
     State(state): State<OAuth2Handler>,
-) -> Result<Json<LoginResponse>, ApiError> {
+) -> Result<Response, ApiError> {
     let started = Instant::now();
     let result = async {
         let flow = consume_json::<OAuthChallenge>(
@@ -204,7 +244,12 @@ pub(crate) async fn callback(
             state.pipeline.login(authentication, PrincipalKind::User).await
         }
         .map_err(ApiError::pipeline)?;
-        Ok(Json(LoginResponse::new(issued, flow.return_uri)))
+        let response = LoginResponse::new(issued, flow.return_uri);
+        if flow.redirect_after_login {
+            response.into_redirect()
+        } else {
+            Ok(response.into_response())
+        }
     }
     .await;
     let outcome = result.as_ref().err().map_or("success", ApiError::metric_outcome);
@@ -216,7 +261,7 @@ pub(crate) async fn token_exchange(
     AxumPath(provider): AxumPath<String>,
     State(state): State<OAuth2Handler>,
     Json(request): Json<TokenExchangeRequest>,
-) -> Result<Json<LoginResponse>, ApiError> {
+) -> Result<LoginResponse, ApiError> {
     let started = Instant::now();
     let result = async {
         if request.subject_token.is_empty() {
@@ -239,7 +284,7 @@ pub(crate) async fn token_exchange(
         let authentication = provider_authentication(identity, runtime.protocol);
         let issued =
             state.pipeline.login(authentication, request.kind).await.map_err(ApiError::pipeline)?;
-        Ok(Json(LoginResponse::new(issued, String::new())))
+        Ok(LoginResponse::new(issued, String::new()))
     }
     .await;
     let outcome = result.as_ref().err().map_or("success", ApiError::metric_outcome);
@@ -388,6 +433,25 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn distinguishes_legacy_json_completion_from_hosted_login_redirect() {
+        assert_eq!(
+            AuthorizeQuery { return_uri: "/legacy-client".to_string(), return_to: String::new() }
+                .return_destination()
+                .expect("legacy completion"),
+            ("/legacy-client".to_string(), false)
+        );
+        assert_eq!(
+            AuthorizeQuery { return_uri: String::new(), return_to: "/hosted-login".to_string() }
+                .return_destination()
+                .expect("hosted completion"),
+            ("/hosted-login".to_string(), true)
+        );
+        assert!(AuthorizeQuery { return_uri: "/one".to_string(), return_to: "/two".to_string() }
+            .return_destination()
+            .is_err());
+    }
 
     #[test]
     fn oidc_authentication_preserves_the_actual_evidence() {

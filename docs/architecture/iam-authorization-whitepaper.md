@@ -459,9 +459,12 @@ critical flows. Workload SDKs do not initialize global exporters; Rust emits
 and telemetry-observer bridges so the host service can attach its existing OTel
 Meter/Tracer without creating a second SDK provider.
 
-## 12. Flowgent and Sigbot
+## 12. Business-system integration
 
-Flowgent, Sigbot, and other business systems only deploy or reuse Envoy Gateway, `authguard-authn`, and `authguard-authz`. Provider selection and account linking remain AuthN configuration and state. Business code never handles provider callbacks, token exchange, or identity binding.
+Business systems only deploy or reuse Envoy Gateway, `authguard-authn`, and
+`authguard-authz`. Provider selection and account linking remain AuthN
+configuration and state. Business code never handles provider callbacks, token
+exchange, or identity binding.
 
 ## 13. Final principles
 

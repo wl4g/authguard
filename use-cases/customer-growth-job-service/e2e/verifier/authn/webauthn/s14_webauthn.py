@@ -180,10 +180,21 @@ class WebAuthnAuthenticationVerifier(AuthnProtocolVerifier):
             )
 
     def _registration_requires_mfa(self, port: int, fixture: StandaloneFixture) -> None:
+        # Possessing standalone credentials alone is insufficient: enrollment is
+        # an authenticated Principal operation.
         status, payload = self.post(
             port,
             "/auth/webauthn/register/challenge",
             {"login": fixture.login, "password": fixture.password},
+        )
+        self.expect_error(status, payload, 401, "authentication_failed")
+        # A canonical Principal still has to complete the account's configured
+        # password + TOTP step-up before WebAuthn registration starts.
+        status, payload = self.post(
+            port,
+            "/auth/webauthn/register/challenge",
+            {"login": fixture.login, "password": fixture.password},
+            bearer=fixture.access_token,
         )
         self.expect_error(status, payload, 401, "authentication_failed")
 
@@ -203,6 +214,7 @@ class WebAuthnAuthenticationVerifier(AuthnProtocolVerifier):
             port,
             "/auth/standalone/webauthn/register/challenge",
             {"login": fixture.login, "password": fixture.password, "totp": code},
+            bearer=fixture.access_token,
         )
         if status != 200:
             raise RuntimeError(f"WebAuthn registration challenge failed: {status}/{challenge}")
@@ -220,6 +232,7 @@ class WebAuthnAuthenticationVerifier(AuthnProtocolVerifier):
                 "challengeId": challenge["challengeId"],
                 "credential": authenticator.registration(options),
             },
+            bearer=fixture.access_token,
         )
         self.canonical_login(
             status,
@@ -235,6 +248,7 @@ class WebAuthnAuthenticationVerifier(AuthnProtocolVerifier):
                 "challengeId": challenge["challengeId"],
                 "credential": authenticator.registration(options),
             },
+            bearer=fixture.access_token,
         )
         self.expect_error(replay_status, replay, 400, "invalid_request")
         row = self.postgres_scalar(

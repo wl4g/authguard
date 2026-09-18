@@ -71,6 +71,12 @@ OAuth state、TOTP enrollment、WebAuthn ceremony 和 SIWX nonce 都通过通用
 Account Linking 仅接受已验证的 `ExternalIdentity`，支持 first-login 和 explicit-link；
 禁止按 email、ENS、display name、NFT metadata 或 WalletConnect accounts 自动合并。
 
+Canonical Principal ID 保持为有界 opaque string，因为它需要跨越 JWT `sub`、SCIM、HTTP、
+SDK 与 AuthZ 边界。PostgreSQL 的 `TEXT` 与无长度限制 `VARCHAR` 使用相同 varlena 存储及
+B-tree 行为，SQLite 也会赋予二者 TEXT affinity。百万 Principal 登录查询的关键是
+Principal 主键、`(provider, issuer, subject)` 与 credential key 唯一索引，而不是把
+`TEXT` 改名为 `VARCHAR`。
+
 ## 5. HTTP 契约
 
 ```text
@@ -90,6 +96,35 @@ POST /auth/wallet/link
 GET  /.well-known/authn.json
 ```
 
+### Hosted Login
+
+业务系统只需把 `GET /auth/login`、认证后的 `GET /auth/account/security` 和
+`GET /auth/assets/*` 路由到 AuthGuard Web；`/.well-known/*` 与其余 `/auth/*`
+仍路由到 AuthN。`authn.applications` 根据 Gateway 保留的可信 Host 解析
+`application_id`、显示名、logo、静态 Theme Pack 和 HTTPS `returnUris` 白名单。
+Hosted Login 读取 `/.well-known/authn.json` 后显示该业务品牌，并继续调用既有
+Password/TOTP、WebAuthn、OAuth 和 Wallet endpoint。
+
+Theme Pack 只允许使用 `/auth/assets/themes/` 下的同源 CSS 与静态资源，可覆盖
+展示变量和布局 selector，但不能注入 HTML 或 JavaScript。业务 umbrella Chart
+可把自己的本地静态目录打包为 ConfigMap，AuthGuard tgz 与 Web image 保持不可变。
+未配置 `logo` 和
+`theme` 的 Application 仍显示基于 Host 解析的业务名称，并自动回退到 AuthGuard
+内置图标与青绿色 trust-fabric 样式，无需挂载资源。未认证登录页不再提供
+WebAuthn 注册；Account Security 必须同时验证 canonical Principal Cookie 与
+Password/TOTP step-up，并确保两份证明解析到同一 Principal 后才能添加 Passkey。
+
+`return_to` 只接受已配置的同 Host URI 或安全相对路径；AuthN 成功后统一归一化为
+path，把同一份 AuthGuard JWT 写入 `HttpOnly; Secure; SameSite=Lax` Cookie，并在
+OAuth callback 直接重定向或向浏览器 API 返回安全 path。不需要 npm SDK、iframe、
+token localStorage，业务系统也不复制 wallet/WebAuthn/OAuth 前端逻辑。AuthGuard
+Console 使用独立 UI 路径，始终显示 AuthGuard 品牌。
+
+Gateway 只使用一个 listener 承载业务系统和 AuthGuard 公共路径。SecurityPolicy
+仅选择带 `authguard.io/protected: "true"` 标签的业务 `HTTPRoute`；依靠路由精确度，
+`/auth/login`、`/auth/assets/*`、`/.well-known/*` 和 `/auth/*` 保持公开，无需第二个
+origin 或 listener。
+
 公开 metadata 只暴露已启用能力、provider ID、CAIP chain 与 endpoint，不暴露 secret 或
 RPC URL。WalletConnect/Reown 仅用于浏览器 discovery/transport/signing UX；服务端不保存
 其 session、relay 或 wallet brand，也不信任客户端 `signatureValid`。
@@ -106,6 +141,15 @@ proof 不具备自描述性，已知账号类型的钱包客户端应在 chain �
 ```yaml
 authn:
   challengeTtl: 5m
+  applications:
+    example-app:
+      hosts: [app.example.com]
+      displayName: Example App
+      logo: /auth/assets/branding/example-app.svg
+      theme:
+        id: example-app
+        stylesheet: /auth/assets/themes/custom/example-app.css
+      returnUris: [https://app.example.com/**]
   token:
     issuer: authguard
     audience: authguard-services

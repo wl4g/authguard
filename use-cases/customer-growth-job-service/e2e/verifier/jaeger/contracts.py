@@ -381,7 +381,25 @@ class OidcJaegerTraceVerifier:
             and graph.tags(span).get("authguard.provider.flow") == "token_exchange"
             and graph.descends_from(span, {authn[0].get("spanID")})
         ]
-        linked = graph.event(authn[0], "authguard.authn.account_linking.succeeded")
+        request_span_id = authn[0].get("spanID")
+        linked = next(
+            (
+                event
+                for span in graph.select(self.authn_service)
+                if (
+                    span.get("spanID") == request_span_id
+                    or graph.descends_from(span, {request_span_id})
+                )
+                and (
+                    event := graph.event(
+                        span, "authguard.authn.account_linking.succeeded"
+                    )
+                )
+                is not None
+                and event.get("principal_id") == self.principal_id
+            ),
+            None,
+        )
         if len(providers) != 1 or linked is None or linked.get("principal_id") != self.principal_id:
             raise RuntimeError("OIDC trace lacks provider normalization or canonical linking evidence")
 

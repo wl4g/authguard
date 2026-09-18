@@ -42,6 +42,10 @@ class InfrastructureVerifier(BaseVerifier):
             self.infrastructure.redeploy,
         )
         self.step(
+            "verify the business Chart keeps AuthGuard opt-in and mounts its local theme files",
+            self._verify_business_chart_authguard_integration,
+        )
+        self.step(
             "wait for accepted Gateway API resources",
             self._wait_for_gateway_api_acceptance,
         )
@@ -56,6 +60,90 @@ class InfrastructureVerifier(BaseVerifier):
         self.step("verify Redis Cluster health", self._verify_redis_cluster)
         self.step("verify immutable running images", self._verify_running_images)
         self.step("verify zero container restarts", self._verify_zero_container_restarts)
+
+    def _verify_business_chart_authguard_integration(self) -> None:
+        """Prove one business Chart owns local theme files and an optional subchart."""
+        default_theme_name = f"{self.support_release}-authguard-theme"
+        default_theme = self._run(
+            (
+                "kubectl",
+                "get",
+                "configmap",
+                default_theme_name,
+                "-n",
+                self.namespace,
+                "--ignore-not-found",
+                "-o",
+                "name",
+            )
+        ).output.strip()
+        if default_theme:
+            raise RuntimeError(
+                "the normal business release rendered AuthGuard theme resources by default"
+            )
+
+        theme_name = f"{self.authguard_release}-authguard-theme"
+        theme = json.loads(
+            self._run(
+                (
+                    "kubectl",
+                    "get",
+                    "configmap",
+                    theme_name,
+                    "-n",
+                    self.namespace,
+                    "-o",
+                    "json",
+                )
+            ).output
+        )
+        if theme.get("immutable") is not True or set(theme.get("data", {})) != {
+            "customer-growth.css",
+            "customer-growth.svg",
+        }:
+            raise RuntimeError(
+                "business Chart did not package the exact local login-theme directory"
+            )
+        if (
+            theme.get("metadata", {})
+            .get("annotations", {})
+            .get("meta.helm.sh/release-name")
+            != self.authguard_release
+        ):
+            raise RuntimeError("local Theme ConfigMap is not owned by the middleware release")
+
+        web = json.loads(
+            self._run(
+                (
+                    "kubectl",
+                    "get",
+                    "deployment",
+                    self.authguard_web_service,
+                    "-n",
+                    self.namespace,
+                    "-o",
+                    "json",
+                )
+            ).output
+        )
+        pod_spec = web["spec"]["template"]["spec"]
+        custom_theme = next(
+            (
+                volume.get("configMap", {}).get("name")
+                for volume in pod_spec.get("volumes", [])
+                if volume.get("name") == "custom-themes"
+            ),
+            None,
+        )
+        if custom_theme != theme_name or pod_spec.get("initContainers"):
+            raise RuntimeError(
+                "AuthGuard Web did not mount the business ConfigMap directly or added an unexpected init container"
+            )
+        self.details.append(
+            "normal business Helm release left authguard.enabled=false; the separate opt-in "
+            "middleware release rendered the vendored AuthGuard tgz and mounted two local "
+            "Chart files without building a theme image"
+        )
 
     def _verify_identity_middleware_initialization(self) -> None:
         """Verify that enterprise directories and OAuth test IdPs initialized."""
@@ -234,8 +322,8 @@ class InfrastructureVerifier(BaseVerifier):
                     raise RuntimeError("accepted SecurityPolicy payload is unavailable")
                 self._verify_security_policy_contract(accepted_policy)
                 self.details.append(
-                    "Gateway, five protected business routes, public AuthN/UI routes, and "
-                    "listener-scoped SecurityPolicy are accepted"
+                    "Gateway, five labelled protected business routes, and same-origin public "
+                    "AuthN/UI routes are accepted"
                 )
                 return
             last_state = (
@@ -247,13 +335,16 @@ class InfrastructureVerifier(BaseVerifier):
 
     def _verify_security_policy_contract(self, policy: dict) -> None:
         spec = policy.get("spec", {})
-        targets = spec.get("targetRefs", [])
+        selectors = spec.get("targetSelectors", [])
         if not any(
-            target.get("name") == self.gateway_name
-            and target.get("sectionName") == "protected"
-            for target in targets
+            selector.get("group") == "gateway.networking.k8s.io"
+            and selector.get("kind") == "HTTPRoute"
+            and selector.get("matchLabels", {}).get("authguard.io/protected") == "true"
+            for selector in selectors
         ):
-            raise RuntimeError("SecurityPolicy must target only the protected listener")
+            raise RuntimeError(
+                "SecurityPolicy must target explicitly labelled protected HTTPRoutes"
+            )
         ext_auth = spec.get("extAuth", {})
         grpc = ext_auth.get("grpc", {})
         backends = grpc.get("backendRefs", [])
@@ -271,7 +362,13 @@ class InfrastructureVerifier(BaseVerifier):
             raise RuntimeError(
                 "SecurityPolicy extAuth does not target the Authguard Check gRPC port"
             )
-        required_headers = {"authorization", "x-request-id", "traceparent", "tracestate"}
+        required_headers = {
+            "authorization",
+            "cookie",
+            "x-request-id",
+            "traceparent",
+            "tracestate",
+        }
         configured_headers = set(ext_auth.get("headersToExtAuth", []))
         if not required_headers.issubset(configured_headers):
             missing = sorted(required_headers - configured_headers)
@@ -315,7 +412,7 @@ class InfrastructureVerifier(BaseVerifier):
             raise RuntimeError("the deterministic Envoy local JWKS must contain keys")
         self.details.append(
             "SecurityPolicy requires only the AuthN issuer/audience and deterministic local "
-            "JWKS, then calls fail-closed Authguard ext_auth gRPC on port 8080"
+            "JWKS, then calls fail-closed Authguard ext_auth gRPC on labelled routes"
         )
 
     def _verify_redis_cluster(self) -> None:

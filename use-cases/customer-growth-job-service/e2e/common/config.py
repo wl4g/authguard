@@ -183,6 +183,10 @@ OPTIONAL_SCENARIOS = {
         "Web: real Chromium authentication and control-plane journeys",
         "verifier.web.s30_authguard_ui",
     ),
+    "31": (
+        "Web: hosted login application branding and return-target safety",
+        "verifier.web.s31_hosted_login",
+    ),
     "40": (
         "Observability: PostgreSQL, logs, metrics, Jaeger, and runtime health",
         "verifier.jaeger.s40_runtime_evidence",

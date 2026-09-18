@@ -136,6 +136,25 @@ impl TokenIssuer {
             .and_then(|value| value.to_str().ok())
             .and_then(bearer_value)
             .ok_or(TokenError::InvalidToken)?;
+        Ok(self.authenticate(token)?.principal_id)
+    }
+
+    /// Verifies the canonical browser cookie and returns the canonical
+    /// Principal context. Cookie extraction is `AuthN` transport handling, not
+    /// an authorization concern.
+    pub fn authenticate_cookie(
+        &self,
+        headers: &HeaderMap,
+    ) -> Result<AuthenticatedPrincipalContext, TokenError> {
+        let token = headers
+            .get(axum::http::header::COOKIE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(cookie_token)
+            .ok_or(TokenError::InvalidToken)?;
+        self.authenticate(token)
+    }
+
+    fn authenticate(&self, token: &str) -> Result<AuthenticatedPrincipalContext, TokenError> {
         let payload =
             verify(self.public_key.as_deref().ok_or(TokenError::SigningUnavailable)?, token)
                 .map_err(|_| TokenError::InvalidToken)?;
@@ -154,7 +173,8 @@ impl TokenIssuer {
         {
             return Err(TokenError::InvalidToken);
         }
-        Ok(principal_id.to_string())
+        AuthenticatedPrincipalContext::from_verified_jwt(token)
+            .map_err(|_| TokenError::InvalidToken)
     }
 
     #[must_use]
@@ -166,6 +186,15 @@ impl TokenIssuer {
 fn bearer_value(value: &str) -> Option<&str> {
     let (scheme, token) = value.split_once(' ')?;
     (scheme.eq_ignore_ascii_case("bearer") && !token.trim().is_empty()).then(|| token.trim())
+}
+
+fn cookie_token(value: &str) -> Option<&str> {
+    value.split(';').map(str::trim).find_map(|entry| {
+        entry
+            .strip_prefix(crate::handler::TOKEN_COOKIE)
+            .and_then(|entry| entry.strip_prefix('='))
+            .filter(|token| !token.is_empty())
+    })
 }
 
 fn audience_matches(value: Option<&Value>, expected: &str) -> bool {

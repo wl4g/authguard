@@ -30,6 +30,7 @@ mgmt:
 authn:
   challengeTtl: 5m
   providers: {}
+  applications: {}
   standalone:
     enabled: false
     issuer: authguard:standalone

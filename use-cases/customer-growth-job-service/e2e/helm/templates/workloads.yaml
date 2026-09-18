@@ -1,3 +1,4 @@
+{{- if .Values.support.enabled }}
 {{- $root := . -}}
 {{- $postgresqlName := include "customer-growth-e2e.postgresqlName" . -}}
 {{- $jaegerName := include "customer-growth-e2e.jaegerName" . -}}
@@ -46,9 +47,9 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       initContainers:
         - name: e2e-authguard-wait-postgresql
-          image: {{ $root.Values.postgresql.image | quote }}
-          imagePullPolicy: {{ $root.Values.postgresql.pullPolicy }}
-          command: ["bash", "-ec", "until pg_isready -h {{ $postgresqlName }} -U $DATABASE_USERNAME -d {{ $root.Values.postgresql.database }}; do sleep 1; done"]
+          image: {{ $root.Values.supportPostgresql.image | quote }}
+          imagePullPolicy: {{ $root.Values.supportPostgresql.pullPolicy }}
+          command: ["bash", "-ec", "until pg_isready -h {{ $postgresqlName }} -U $DATABASE_USERNAME -d {{ $root.Values.supportPostgresql.database }}; do sleep 1; done"]
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
@@ -122,10 +123,11 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "customer-growth-e2e.labels" $root | nindent 4 }}
+    authguard.io/protected: "true"
 spec:
   parentRefs:
     - name: {{ required "gateway.name is required" $root.Values.gateway.name }}
-      sectionName: protected
+      sectionName: http
   hostnames:
     - {{ $workload.host | quote }}
   rules:
@@ -136,3 +138,4 @@ spec:
           port: 8080
 ---
 {{ end }}
+{{- end }}

@@ -1,3 +1,4 @@
+{{- if .Values.support.enabled }}
 {{- $name := include "customer-growth-e2e.keycloakName" . -}}
 {{- $keycloakSecretName := include "customer-growth-e2e.keycloakSecretName" . -}}
 {{- $principalSecretName := include "customer-growth-e2e.principalDiscoverySecretName" . -}}
@@ -34,7 +35,7 @@ stringData:
   AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__KEYCLOAK__INDEX_0__AUTH__CLIENT_SECRET: {{ $clientSecret | quote }}
   # Fixed E2E-only AES-256 key. Production deployments inject their own secret.
   AUTHGUARD__AUTHN__STANDALONE__CREDENTIAL_ENCRYPTION_KEY: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
-  AUTHGUARD__STORAGE__POSTGRES__PASSWORD: {{ .Values.postgresql.authguardPassword | quote }}
+  AUTHGUARD__STORAGE__POSTGRES__PASSWORD: {{ .Values.supportPostgresql.authguardPassword | quote }}
   AUTHGUARD__CACHE__REDIS__PASSWORD: "e2e-authguard-redis-password"
   AUTHGUARD__AUTHZ__API_TOKEN: {{ required "authguard.apiToken is required" .Values.authguard.apiToken | quote }}
   AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY: {{ .Values.authguard.accessContext.signingKey | quote }}
@@ -231,3 +232,4 @@ metadata:
 data:
   resign-jwt-public-key.pem: |
 {{ required "keycloak.resignJwtPublicKey must contain the fixed resign JWT public key" .Values.keycloak.resignJwtPublicKey | indent 4 }}
+{{- end }}

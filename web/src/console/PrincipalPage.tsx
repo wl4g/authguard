@@ -1,8 +1,8 @@
 import { CloudDownload, Plus, RefreshCw, Search, ToggleLeft, ToggleRight, Trash2, UserRound, X } from 'lucide-react'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { useControl } from '../features/control/ControlContext'
-import { authn, control, metadata, type LoginResponse, type Principal } from '../lib/api'
-import { useI18n } from '../lib/i18n'
+import { useControl } from '../core/ControlContext'
+import { authn, control, metadata, type LoginResponse, type Principal } from '../core/api'
+import { useI18n } from '../shared/i18n'
 
 type PrincipalPageData = { total: number; items: Principal[]; next_cursor?: string }
 type Projection = { reference: { provider_id: string; issuer: string; external_id: string }; kind: Principal['kind']; display_name: string; username?: string; email?: string; enabled: boolean }

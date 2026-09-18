@@ -14,8 +14,19 @@ export type LoginResponse = {
   principal: { principalId: string; kind: string; stableGroupIds: string[]; trustedClaims: Record<string, string>; acr?: string; amr: string[] }
 }
 
+export type BrowserSession = { principal: LoginResponse['principal'] }
+
+export type ApplicationBrand = {
+  id: string
+  displayName: string
+  logo: string
+  theme?: { id: string; stylesheet: string } | null
+}
+
 export type AuthMetadata = {
   version: string
+  application?: ApplicationBrand | null
+  methods: { password: boolean; totp: boolean; webauthn: boolean; wallet: boolean }
   oauth2: { providers: Array<{ id: string; protocol: string; issuer: string; authorizationEndpoint: string }> }
   standalone: {
     enabled: boolean; password: boolean; totp: boolean; webauthn: boolean
@@ -45,6 +56,8 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
 export function authn<T>(path: string, init?: RequestInit) { return json<T>(`${authnBase}${path}`, init) }
 export function authnUrl(path: string) { return `${authnBase}${path}` }
 export function metadata() { return authn<AuthMetadata>('/.well-known/authn.json') }
+export function browserSession() { return authn<BrowserSession>('/auth/session') }
+export function logout() { return authn<void>('/auth/logout', { method: 'POST' }) }
 
 export function control<T>(path: string, token: string, init?: RequestInit) {
   return json<T>(`${authzBase}${path}`, {

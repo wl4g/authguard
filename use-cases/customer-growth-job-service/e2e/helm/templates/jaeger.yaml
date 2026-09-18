@@ -1,4 +1,4 @@
-{{- if .Values.jaeger.enabled -}}
+{{- if and .Values.support.enabled .Values.jaeger.enabled -}}
 {{- $name := include "customer-growth-e2e.jaegerName" . -}}
 apiVersion: v1
 kind: Service

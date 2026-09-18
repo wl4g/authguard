@@ -17,12 +17,8 @@ from playwright.sync_api import (
 
 from common.kubernetes import AUTHGUARD_API_TOKEN, AUTHN_BROWSER_HOST
 from common.model import RunContext, VerificationResult
-from verifier.authn.wallet.s15_wallet import (
-    ANVIL_ACCOUNT_0_ADDRESS,
-    EVM_OFFLINE_EOA_CHAIN_REFERENCE,
-    EvmWallet,
-)
 from verifier.other.base import BaseVerifier
+from verifier.web.fixtures import BrowserWalletFixture, Ctap2BrowserAuthenticator
 
 
 UI_ORIGIN = f"http://{AUTHN_BROWSER_HOST}:8082"
@@ -54,39 +50,29 @@ class AuthGuardWebVerifier(BaseVerifier):
             f"{self.mock_idp_service}.{self.namespace}.svc.cluster.local"
         )
         with (
-            self._forward_service(
-                self._envoy_proxy_service(), 8082, local_port=8082
-            ),
-            self._forward_service(self.mock_idp_service, 8080, local_port=8080),
+            self._forward_service(self._envoy_proxy_service(), 8082) as gateway_port,
+            self._forward_service(self.mock_idp_service, 8080) as mock_port,
             sync_playwright() as playwright,
         ):
-            browser = self._launch_browser(playwright, mock_host)
+            browser = self._launch_browser(
+                playwright, mock_host, gateway_port, mock_port
+            )
             try:
                 context = browser.new_context(locale="en-US")
-                context.expose_function("authguardE2ESign", self._sign_personal_message)
-                context.add_init_script(self._injected_wallet_script())
+                context.expose_function(
+                    "authguardE2ESign", BrowserWalletFixture.sign_personal_message
+                )
+                context.add_init_script(BrowserWalletFixture.injected_script())
                 self.page = context.new_page()
-                cdp = context.new_cdp_session(self.page)
-                cdp.send("WebAuthn.enable")
-                self.authenticator_id = cdp.send(
-                    "WebAuthn.addVirtualAuthenticator",
-                    {
-                        "options": {
-                            "protocol": "ctap2",
-                            "transport": "internal",
-                            "hasResidentKey": True,
-                            "hasUserVerification": True,
-                            "isUserVerified": True,
-                            "automaticPresenceSimulation": True,
-                        }
-                    },
-                )["authenticatorId"]
+                cdp, self.authenticator_id = Ctap2BrowserAuthenticator.install(
+                    context, self.page
+                )
                 self.step(
                     "Web UI-01..03: metadata controls seven login choices, locale, and theme",
                     self._capabilities_and_preferences,
                 )
                 self.step(
-                    "Web UI-04..07: GitHub/Google/WeChat/QQ popup journeys issue unified JWTs",
+                    "Web UI-04..07: GitHub/Google/WeChat/QQ redirect journeys issue unified JWTs",
                     self._oauth_journeys,
                 )
                 self.step(
@@ -117,8 +103,18 @@ class AuthGuardWebVerifier(BaseVerifier):
                 browser.close()
 
     @staticmethod
-    def _launch_browser(playwright: Playwright, mock_host: str):
-        resolver = f"MAP {mock_host} 127.0.0.1"
+    def _launch_browser(
+        playwright: Playwright,
+        mock_host: str,
+        gateway_port: int,
+        mock_port: int,
+    ):
+        resolver = ", ".join(
+            (
+                f"MAP {AUTHN_BROWSER_HOST}:8082 127.0.0.1:{gateway_port}",
+                f"MAP {mock_host}:8080 127.0.0.1:{mock_port}",
+            )
+        )
         try:
             return playwright.chromium.launch(
                 headless=True,
@@ -158,7 +154,6 @@ class AuthGuardWebVerifier(BaseVerifier):
         required = [
             "login-password-submit",
             "login-webauthn",
-            "register-webauthn",
             "login-wallet",
             "login-provider-github",
             "login-provider-google",
@@ -167,6 +162,7 @@ class AuthGuardWebVerifier(BaseVerifier):
         ]
         for test_id in required:
             expect(page.get_by_test_id(test_id)).to_be_visible()
+        expect(page.get_by_test_id("register-webauthn")).to_have_count(0)
         self._checkpoint("UI-01", "metadata-driven authentication choices")
         page.get_by_test_id("locale-select").select_option("zh_CN")
         expect(page.get_by_role("heading", name="登录", exact=True)).to_be_visible()
@@ -194,17 +190,17 @@ class AuthGuardWebVerifier(BaseVerifier):
             strict=True,
         ):
             page.goto(f"{UI_ORIGIN}/login", wait_until="domcontentloaded")
-            with page.expect_popup(timeout=20_000):
-                page.get_by_test_id(f"login-provider-{provider}").click()
-            page.wait_for_url(re.compile(rf"^{re.escape(UI_ORIGIN)}/?$"), timeout=25_000)
+            page.get_by_test_id(f"login-provider-{provider}").click()
+            suffix = r"/?(?:#wechat_redirect)?" if provider == "wechat" else r"/?"
+            page.wait_for_url(re.compile(rf"^{re.escape(UI_ORIGIN)}{suffix}$"), timeout=25_000)
             expect(page.get_by_test_id("authentication-amr")).to_have_text("oauth2")
             expect(page.get_by_test_id("authenticated-principal")).not_to_have_text("")
-            self._checkpoint(case_id, f"{provider} OAuth popup login")
+            self._checkpoint(case_id, f"{provider} OAuth redirect login")
             if provider != "qq":
                 page.get_by_test_id("sign-out").click()
                 page.wait_for_url(f"{UI_ORIGIN}/login")
         self.details.append(
-            "four real browser popup/redirect/callback journeys converged on AuthGuard JWT amr=oauth2"
+            "four real browser redirect/callback journeys converged on AuthGuard JWT amr=oauth2"
         )
 
     def _principal_journeys(self) -> None:
@@ -305,19 +301,18 @@ class AuthGuardWebVerifier(BaseVerifier):
     def _webauthn_journey(self, cdp) -> None:
         page = self.browser_page
         password_principal = page.get_by_test_id("authenticated-principal").inner_text()
-        page.get_by_test_id("sign-out").click()
-        page.wait_for_url(f"{UI_ORIGIN}/login")
-        self._fill_standalone_credentials()
-        page.get_by_test_id("register-webauthn").click()
+        page.goto(f"{UI_ORIGIN}/auth/account/security", wait_until="domcontentloaded")
+        page.get_by_test_id("security-login-id").fill(self.standalone_login)
+        page.get_by_test_id("security-password").fill(self.standalone_password)
+        page.get_by_test_id("account-register-webauthn").click()
         try:
-            page.wait_for_url(re.compile(rf"^{re.escape(UI_ORIGIN)}/?$"), timeout=20_000)
+            expect(page.get_by_test_id("account-security-result")).to_contain_text(
+                "pwd + webauthn", timeout=20_000
+            )
         except PlaywrightTimeoutError as error:
             banner = page.locator(".error-banner")
             detail = banner.inner_text() if banner.count() else "no UI error banner"
             raise RuntimeError(f"WebAuthn registration did not complete: {detail}") from error
-        expect(page.get_by_test_id("authentication-amr")).to_have_text(
-            "pwd + webauthn"
-        )
         self._checkpoint("UI-15", "WebAuthn credential registration")
         credentials = cdp.send(
             "WebAuthn.getCredentials", {"authenticatorId": self.authenticator_id}
@@ -328,8 +323,9 @@ class AuthGuardWebVerifier(BaseVerifier):
             )
         self._checkpoint("UI-16", "CTAP2 authenticator credential persistence")
 
-        page.get_by_test_id("sign-out").click()
-        page.wait_for_url(f"{UI_ORIGIN}/login")
+        page.get_by_test_id("account-sign-out").click()
+        page.wait_for_url(f"{UI_ORIGIN}/auth/login")
+        page.goto(f"{UI_ORIGIN}/login", wait_until="domcontentloaded")
         page.get_by_test_id("login-id").fill(self.standalone_login)
         page.get_by_test_id("login-webauthn").click()
         page.wait_for_url(re.compile(rf"^{re.escape(UI_ORIGIN)}/?$"), timeout=20_000)
@@ -397,40 +393,6 @@ class AuthGuardWebVerifier(BaseVerifier):
         path = self.evidence_path(case_id, title, "png")
         self.browser_page.screenshot(path=str(path), full_page=True, animations="disabled")
         self.record_evidence(case_id, title, "image/png", path)
-
-    @staticmethod
-    def _sign_personal_message(encoded_message: str) -> str:
-        if not isinstance(encoded_message, str) or not encoded_message.startswith("0x"):
-            raise RuntimeError("EIP-1193 personal_sign payload was not hexadecimal")
-        try:
-            message = bytes.fromhex(encoded_message[2:]).decode("utf-8")
-        except (ValueError, UnicodeDecodeError) as error:
-            raise RuntimeError("EIP-1193 personal_sign payload was invalid UTF-8") from error
-        return EvmWallet.sign(message)
-
-    @staticmethod
-    def _injected_wallet_script() -> str:
-        return f"""
-        (() => {{
-          const account = {json.dumps(ANVIL_ACCOUNT_0_ADDRESS)};
-          const chainId = '0x{int(EVM_OFFLINE_EOA_CHAIN_REFERENCE):x}';
-          const wallet = {{
-            isMetaMask: true,
-            on() {{}},
-            removeListener() {{}},
-            async request({{ method, params = [] }}) {{
-              if (method === 'eth_requestAccounts' || method === 'eth_accounts') return [account];
-              if (method === 'eth_chainId') return chainId;
-              if (method === 'net_version') return String(parseInt(chainId, 16));
-              if (method === 'wallet_getPermissions') return [];
-              if (method === 'personal_sign') return window.authguardE2ESign(params[0]);
-              throw new Error(`Unsupported E2E wallet method: ${{method}}`);
-            }}
-          }};
-          Object.defineProperty(window, 'ethereum', {{ value: wallet, configurable: false }});
-        }})();
-        """
-
 
 def verify(context: RunContext) -> VerificationResult:
     return AuthGuardWebVerifier(context).run()

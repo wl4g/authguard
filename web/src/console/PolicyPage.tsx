@@ -1,8 +1,8 @@
 import { Braces, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useControl } from '../features/control/ControlContext'
-import { control } from '../lib/api'
-import { useI18n } from '../lib/i18n'
+import { useControl } from '../core/ControlContext'
+import { control } from '../core/api'
+import { useI18n } from '../shared/i18n'
 
 type Resource = Record<string, unknown>
 type Collection = { policy_revision: number; total: number; items: Resource[] }

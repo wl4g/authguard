@@ -55,6 +55,8 @@ pub(crate) struct LoginRequest {
     pub(super) login: String,
     pub(super) password: String,
     pub(super) totp: Option<String>,
+    #[serde(default)]
+    pub(super) return_to: String,
 }
 
 #[derive(Deserialize)]
@@ -189,7 +191,7 @@ pub(crate) async fn register(
     State(state): State<StandaloneHandler>,
     headers: HeaderMap,
     Json(request): Json<RegistrationRequest>,
-) -> Result<Json<LoginResponse>, ApiError> {
+) -> Result<LoginResponse, ApiError> {
     let login = normalize_login(&request.login)?;
     if !state.password.validate_new(&request.password) {
         return Err(ApiError::bad_request("password does not meet the configured policy"));
@@ -253,20 +255,26 @@ pub(crate) async fn register(
         }
         return Err(ApiError::credential(error));
     }
-    Ok(Json(LoginResponse::new(issued, String::new())))
+    Ok(LoginResponse::new(issued, String::new()))
 }
 
 pub(crate) async fn login(
     State(state): State<StandaloneHandler>,
+    headers: HeaderMap,
     Json(request): Json<LoginRequest>,
-) -> Result<Json<LoginResponse>, ApiError> {
+) -> Result<LoginResponse, ApiError> {
+    let return_to = crate::route::application::ApplicationResolver::new(
+        authguard_common::config::AppConfig::get().get_authn(),
+        &headers,
+    )
+    .validate_return_to(&request.return_to)?;
     let authentication = state.authenticate_credentials(request).await?;
     let issued = state
         .pipeline
         .login(authentication, PrincipalKind::User)
         .await
         .map_err(ApiError::pipeline)?;
-    Ok(Json(LoginResponse::new(issued, String::new())))
+    Ok(LoginResponse::new(issued, return_to))
 }
 
 pub(crate) async fn totp_enrollment_challenge(
@@ -302,7 +310,7 @@ pub(crate) async fn totp_enrollment_challenge(
 pub(crate) async fn totp_enrollment_verify(
     State(state): State<StandaloneHandler>,
     Json(request): Json<TotpEnrollmentVerifyRequest>,
-) -> Result<Json<LoginResponse>, ApiError> {
+) -> Result<LoginResponse, ApiError> {
     let service = state.totp.as_ref().ok_or_else(|| ApiError::not_found("TOTP is not enabled"))?;
     let challenge = consume_json::<TotpEnrollmentChallenge>(
         state.challenge_store()?,
@@ -345,7 +353,7 @@ pub(crate) async fn totp_enrollment_verify(
         .login(authentication, PrincipalKind::User)
         .await
         .map_err(ApiError::pipeline)?;
-    Ok(Json(LoginResponse::new(issued, String::new())))
+    Ok(LoginResponse::new(issued, String::new()))
 }
 
 pub(super) fn normalize_login(login: &str) -> Result<String, ApiError> {

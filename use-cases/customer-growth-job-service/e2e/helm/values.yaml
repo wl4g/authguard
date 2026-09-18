@@ -1,3 +1,15 @@
+support:
+  # Normal business releases keep this enabled and leave authguard.enabled
+  # false. AuthGuard is bootstrapped as a separate release from this same
+  # Chart, so frequent application upgrades cannot remove or mutate it.
+  enabled: true
+
+global:
+  authguard:
+    # The business Chart creates this ConfigMap from authguard.theme.files.
+    # AuthGuard's immutable subchart evaluates the template in release scope.
+    themeConfigMap: '{{ .Release.Name }}-authguard-theme'
+
 keycloak:
   image: registry.cn-shenzhen.aliyuncs.com/wl4g/keycloak:26.7.0
   pullPolicy: IfNotPresent
@@ -35,7 +47,7 @@ jaeger:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 500m, memory: 512Mi }
 
-postgresql:
+supportPostgresql:
   image: registry.cn-shenzhen.aliyuncs.com/wl4g/bitnami_postgresql:18.3
   pullPolicy: IfNotPresent
   database: e2e_authguard_customer_growth
@@ -82,6 +94,13 @@ solana:
     limits: { cpu: 250m, memory: 1536Mi }
 
 authguard:
+  # Disabled for every normal business release. The E2E bootstrap installs the
+  # vendored authguard_middleware dependency as a separate Helm release.
+  enabled: false
+  theme:
+    # Chart-relative glob; Helm packages these local files with the business
+    # application. File basenames must be unique because ConfigMap keys are flat.
+    files: files/authguard-theme/*
   grpcTarget: ""
   grpcTLS: false
   apiToken: e2e-authguard-api-token

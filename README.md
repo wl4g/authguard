@@ -37,6 +37,11 @@ AuthGuard AuthZ is the PDP and never becomes a reverse proxy.
 - **One Principal and one token pipeline** — every successful login resolves a
   canonical `principal_id`; JWTs consistently carry `sub`, `amr`, `acr`,
   `auth_time`, `iat`, and `exp`.
+- **Hosted Login, not an SDK** — a single AuthGuard Web image serves
+  `/auth/login`, authenticated `/auth/account/security`, and `/auth/assets/*`
+  on each relying application's own host. `authn.applications` resolves trusted
+  host branding, static Theme Packs, and allow-listed `return_to` paths; no
+  iframe, copied UI, executable theme plugin, or browser token storage is needed.
 - **Envoy-native authorization** — Envoy Gateway performs `jwt_authn` and
   `ext_authz`; AuthGuard evaluates `principal_id + resource + action + context`
   and returns bounded resource scope.
@@ -331,6 +336,45 @@ Rust, Go, Java, and Python integrations.
 - [Authorization whitepaper](docs/architecture/iam-authorization-whitepaper.md) · [中文](docs/architecture/iam-authorization-whitepaper_ZH.md)
 - [Customer Growth reference application](use-cases/customer-growth-job-service/README.md)
 - [Helm values and deployment contract](deploy/helm/authguard/values.yaml)
+
+### Hosted Login integration
+
+Attach the AuthGuard public routes to the business Gateway, preserving the
+original Host header. The business owns `/api/*` and `/*`; AuthGuard owns only
+`/auth/login` (GET), `/auth/assets/*` (GET), `/.well-known/*`, and `/auth/*`.
+
+```yaml
+authn:
+  applications:
+    example-app:
+      hosts: [app.example.com]
+      displayName: Example App
+      logo: /auth/assets/branding/example-app.svg
+      theme:
+        id: example-app
+        stylesheet: /auth/assets/themes/custom/example-app.css
+      returnUris: [https://app.example.com/**]
+```
+
+Unauthenticated business requests redirect to
+`/auth/login?return_to=/workflows/123`. AuthN validates that destination,
+places the unified JWT in an `HttpOnly; Secure; SameSite=Lax` cookie, and the
+Hosted Login returns the browser to the same host. See the authentication
+whitepaper for the complete Gateway route contract. Mark protected business
+`HTTPRoute` objects with `authguard.io/protected: "true"`; the Helm
+SecurityPolicy then attaches JWT and `ext_authz` to those routes only, leaving
+the public AuthGuard paths available on the same listener.
+
+Do not fork or rebuild AuthGuard Web for branding. A business umbrella Chart
+can package its local CSS/logo/font directory with `.Files.Glob`, create an
+immutable ConfigMap, and pass its templated name through
+`global.authguard.themeConfigMap`; no extra image is needed. The vendored
+AuthGuard tgz remains disabled by default and is best bootstrapped as a separate
+one-time Helm release, so normal business upgrades never touch it. The mounted
+theme contains static assets only; AuthGuard never loads theme JavaScript or
+arbitrary HTML. Applications that omit both `logo` and `theme`
+retain their Host-resolved display name and fall back to AuthGuard's built-in
+cyan trust-fabric visual without mounting assets.
 
 ## License
 

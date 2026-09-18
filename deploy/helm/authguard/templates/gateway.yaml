@@ -63,23 +63,13 @@ spec:
       kind: EnvoyProxy
       name: {{ printf "%s-authguard" $gateway.name | trunc 63 | trimSuffix "-" }}
   listeners:
-    # Only this listener is protected by jwt_authn -> ext_authz. Keeping the
-    # section name explicit prevents login/callback routes from inheriting the
-    # business authorization policy.
-    - name: protected
+    # Authentication endpoints and business routes deliberately share one
+    # listener. SecurityPolicy is attached to labelled HTTPRoutes instead of
+    # this listener, so Hosted Login remains same-origin and pre-auth public.
+    - name: http
       protocol: HTTP
-      port: 80
+      port: {{ $gateway.listenerPort }}
       allowedRoutes:
         namespaces:
           from: All
-    {{- if and .Values.authguard.authn.enabled $ext.authnRoute.enabled }}
-    # AuthN authorize/callback traffic still enters through Envoy, but must be
-    # reachable before a canonical token exists.
-    - name: authn
-      protocol: HTTP
-      port: {{ $ext.authnRoute.listenerPort }}
-      allowedRoutes:
-        namespaces:
-          from: All
-    {{- end }}
 {{- end }}

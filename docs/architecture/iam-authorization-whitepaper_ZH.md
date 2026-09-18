@@ -506,9 +506,9 @@ policy/action/role/binding 表。OAuth、MFA、WebAuthn、SIWX challenge 均是 
 应用配置的 logger 与 telemetry observer bridge，从而复用业务服务已有的 OTel
 Meter/Tracer provider，避免重复全局实例。
 
-## 12. Flowgent / Sigbot 集成目标
+## 12. 业务系统集成目标
 
-Flowgent、Sigbot 等业务项目只部署或复用：
+业务项目只部署或复用：
 
 ```text
 Envoy Gateway

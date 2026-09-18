@@ -76,6 +76,12 @@ Account Linking accepts only verified `ExternalIdentity` values and supports fir
 explicit-link. Email, ENS, display names, NFT metadata, and WalletConnect accounts are never
 automatic merge keys.
 
+Canonical Principal IDs remain bounded opaque strings because they cross JWT `sub`, SCIM, HTTP,
+SDK, and AuthZ boundaries. PostgreSQL stores `TEXT` and unconstrained `VARCHAR` with the same
+varlena representation and B-tree behavior; SQLite gives both TEXT affinity. At million-Principal
+scale, the primary/unique indexes on Principal ID, `(provider, issuer, subject)`, and credential
+keys determine login lookup performance, not changing `TEXT` to `VARCHAR`.
+
 ## 5. HTTP contract
 
 ```text
@@ -95,6 +101,39 @@ POST /auth/wallet/link
 GET  /.well-known/authn.json
 ```
 
+### Hosted Login
+
+`GET /auth/login`, authenticated `GET /auth/account/security`, and
+`GET /auth/assets/*` are the only AuthGuard Web routes that a relying application
+needs. `/.well-known/*` and the remaining `/auth/*` remain AuthN
+routes. A trusted `authn.applications` entry resolves the Gateway-preserved
+Host to an `application_id`, display name, logo, static Theme Pack, and HTTPS
+`returnUris` allow list. The Hosted Login reads `/.well-known/authn.json`, renders that brand, and
+submits the existing Password/TOTP, WebAuthn, OAuth, and Wallet endpoints.
+
+Theme Packs are same-origin CSS and static assets under `/auth/assets/themes/`.
+They can override presentation variables and layout selectors but cannot inject
+HTML or JavaScript. A business umbrella Chart may package its local asset
+directory into a ConfigMap while the AuthGuard tgz and Web image remain
+immutable. An Application without `logo` or `theme` still receives its
+Host-resolved display name and falls back to the built-in AuthGuard mark and
+cyan trust-fabric CSS without an asset mount. WebAuthn enrollment is absent from the unauthenticated login
+page: Account Security requires a canonical Principal cookie plus password/TOTP
+step-up and verifies both proofs resolve to the same Principal.
+
+`return_to` accepts a configured same-host URI or a safe relative path. AuthN
+normalizes successful values to a path, stores the unified JWT in an
+`HttpOnly; Secure; SameSite=Lax` cookie, and redirects (OAuth) or returns the
+safe path (browser API flows). No SDK, iframe, token localStorage, or business
+copy of wallet/WebAuthn/OAuth logic is required. The AuthGuard Console is a
+separate UI route and always uses the AuthGuard brand.
+
+Gateway uses one listener for the relying application and AuthGuard public
+paths. Its SecurityPolicy targets only business `HTTPRoute` objects labelled
+`authguard.io/protected: "true"`; route specificity keeps `/auth/login`,
+`/auth/assets/*`, `/.well-known/*`, and `/auth/*` public without a second
+origin or listener.
+
 Public metadata exposes enabled capabilities, provider IDs, CAIP chains, and endpoints only;
 it never exposes secrets or RPC URLs. WalletConnect/Reown is browser-side discovery,
 transport, and signing UX. The server stores no vendor session, relay metadata, or wallet
@@ -113,6 +152,15 @@ invalid or ambiguous proof remains `401`.
 ```yaml
 authn:
   challengeTtl: 5m
+  applications:
+    example-app:
+      hosts: [app.example.com]
+      displayName: Example App
+      logo: /auth/assets/branding/example-app.svg
+      theme:
+        id: example-app
+        stylesheet: /auth/assets/themes/custom/example-app.css
+      returnUris: [https://app.example.com/**]
   token:
     issuer: authguard
     audience: authguard-services

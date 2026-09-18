@@ -58,15 +58,13 @@ services:
       authz: { condition: service_started }
     expose: ["8080"]
 
-  # Matches the Helm data plane: unauthenticated UI/AuthN traffic reaches the
-  # public listener while the protected listener always performs
-  # jwt_authn -> ext_authz before a request reaches its upstream.
+  # Mirrors the Helm data plane: one same-origin listener exposes public
+  # AuthN/UI paths and protects the business catch-all with jwt_authn -> ext_authz.
   envoy:
     image: registry.cn-shenzhen.aliyuncs.com/wl4g/envoyproxy_envoy:distroless-v1.36.4
     command: [-c, /etc/envoy/envoy.yaml, --log-level, info]
     ports:
       - "8080:8080"
-      - "8081:8081"
     volumes:
       - ./config/envoy.yaml:/etc/envoy/envoy.yaml:ro
     depends_on:

@@ -69,4 +69,97 @@ canonical JWT validation followed by `ext_authz`; AuthZ receives only Principal,
 resource, action, and context. Configure providers, wallet RPC mappings, and
 external storage by overriding that one runtime configuration block.
 
+For Hosted Login, set `authguard.authguard-config.authn.applications` with each
+trusted business host, display name, optional `/auth/assets/...` logo/theme,
+and HTTPS `returnUris`. Keep the AuthGuard Web image immutable.
+
+The simplest business integration needs no extra image. Vendor the immutable
+AuthGuard tgz, keep CSS/SVG/font files inside the business Chart, and create a
+ConfigMap with `.Files.Glob`:
+
+```yaml
+# business/Chart.yaml
+dependencies:
+  - name: authguard
+    alias: authguard-middleware
+    version: 0.1.0
+    repository: oci://ghcr.io/wl4g/charts
+    condition: authguard.enabled
+```
+
+```yaml
+# business/values.yaml
+global:
+  authguard:
+    themeConfigMap: '{{ .Release.Name }}-authguard-theme'
+authguard:
+  enabled: false
+  theme:
+    files: files/authguard-theme/*
+```
+
+```yaml
+# business/templates/authguard-theme.yaml
+{{- if .Values.authguard.enabled }}
+{{- $files := .Files.Glob .Values.authguard.theme.files }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ tpl .Values.global.authguard.themeConfigMap . }}
+immutable: true
+data:
+{{ $files.AsConfig | indent 2 }}
+{{- end }}
+```
+
+Put uniquely named files under `business/files/authguard-theme/`; Helm packages
+the directory into the business tgz and AuthGuard mounts it read-only at
+`/auth/assets/themes/custom/`. `.Files` can only read files inside the Chart,
+not an arbitrary host directory outside its package. Keep ConfigMap-backed
+assets below Kubernetes' object-size limit (approximately 1 MiB), so CSS, SVG,
+and fonts should remain compact. To update an immutable theme, publish a new
+ConfigMap name through `global.authguard.themeConfigMap`.
+
+Use a separate one-time middleware release from the same business Chart. This
+is important: disabling a dependency in a later upgrade of the *same* release
+would delete resources previously owned by that release.
+
+```bash
+helm upgrade --install business-authguard ./business \
+  --set application.enabled=false \
+  --set authguard.enabled=true \
+  --set-string 'authguard.theme.files=files/authguard-theme/*'
+
+# Frequent application releases keep authguard.enabled=false and therefore
+# never create, upgrade, or remove the separate middleware release.
+helm upgrade --install business ./business
+```
+
+`application.enabled` represents the business Chart's own workload gate; use
+its actual name. The Customer Growth reference uses `support.enabled=false`.
+
+The complete executable reference is
+[`use-cases/customer-growth-job-service/e2e/helm`](../../../use-cases/customer-growth-job-service/e2e/helm):
+its default business release disables AuthGuard, while a second release enables
+the vendored tgz and packages `files/authguard-theme/`. The real Chromium E2E
+verifies both that ConfigMap mount and the no-theme fallback.
+
+Both `logo` and `theme` are optional per Application. If neither is configured,
+Hosted Login still replaces the product name from Host-resolved metadata while
+rendering the built-in AuthGuard mark and cyan trust-fabric visual. No asset
+volume is required for that fallback.
+The chart never loads theme JavaScript or arbitrary HTML. The Web HTTPRoute owns only
+`GET /auth/login`, `GET /auth/account/security`, and `GET /auth/assets/*`; the
+AuthN HTTPRoute owns `/.well-known/*` and the remaining `/auth/*`. This leaves
+an application's `/api/*` and `/*` routes to its own chart. Enable
+`authguard.web.route.console` only on a dedicated AuthGuard Console hostname.
+
+The Gateway has one listener, so Hosted Login remains on the application's
+browser origin. Label each protected business `HTTPRoute` with
+`authguard.io/protected: "true"`; the chart's route-scoped SecurityPolicy then
+applies canonical JWT validation and fail-closed `ext_authz` only there. The
+selector is same-namespace by default. For a business route in another
+namespace, set `envoy_gateway.ext_authz.protectedRouteSelector.namespaces.from=All`
+and create the required Gateway API `ReferenceGrant` in that namespace.
+
 For a local non-Kubernetes deployment, use the [Docker Compose guide](../../docker/README.md).

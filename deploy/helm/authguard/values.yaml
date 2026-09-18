@@ -1,3 +1,13 @@
+# Helm propagates global values through immutable umbrella-chart dependencies.
+# A business Chart can therefore attach its local-files ConfigMap without
+# unpacking or rebuilding the AuthGuard tgz.
+global:
+  authguard:
+    # Optional ConfigMap created by an umbrella/business Chart from its local
+    # static files. The value is evaluated with Helm `tpl`, so a parent can use
+    # `{{ .Release.Name }}-authguard-theme` without unpacking this Chart.
+    themeConfigMap: ""
+
 # Optional cluster-level Envoy Gateway controller. Disable this when the
 # cluster already has a compatible Envoy Gateway installation. This block is
 # passed directly to the vendored official gateway-helm chart.
@@ -34,6 +44,9 @@ envoy_gateway:
     gateway:
       create: true
       name: authguard
+      # A single listener keeps Hosted Login and the relying application on the
+      # same browser origin. E2E may override this to 8082 for port-forwarding.
+      listenerPort: 80
       className: authguard
       # Use a distinct controller name only when operating an isolated Envoy
       # Gateway controller (for example the disposable E2E topology).
@@ -55,13 +68,21 @@ envoy_gateway:
       backend:
         name: app
         port: 8080
-    # Public pre-authentication route on a separate Gateway listener. It serves
-    # only AuthN authorize/callback endpoints; business routes remain protected.
+    # Public AuthN routes share the Gateway listener with relying applications.
+    # Their more-specific HTTP path matches bypass the route-scoped PEP.
     authnRoute:
       enabled: true
       name: authguard-authn
-      listenerPort: 8082
       hostnames: []
+    # Attach the PEP only to explicitly labelled business HTTPRoutes. This
+    # keeps /auth/login, /auth/account/security, /auth/assets/*,
+    # /.well-known/*, and /auth/* public
+    # while allowing each business application to own its normal routes.
+    protectedRouteSelector:
+      matchLabels:
+        authguard.io/protected: "true"
+      namespaces:
+        from: Same
 
 # AuthN and AuthZ deployment knobs share one product root. Runtime settings
 # remain in the single authguard-config payload below.
@@ -100,6 +121,7 @@ authguard:
   web:
     enabled: true
     replicaCount: 2
+    imagePullSecrets: []
     image:
       repository: ghcr.io/wl4g/authguard-web
       # Empty pins the image to this chart's appVersion.
@@ -107,12 +129,23 @@ authguard:
       pullPolicy: IfNotPresent
     service:
       port: 8080
+    theme:
+      # Optional pre-created ConfigMap for standalone Chart installations.
+      # Umbrella/business Charts should set global.authguard.themeConfigMap.
+      existingConfigMap: ""
     route:
       enabled: true
       name: authguard-web
-      # Empty inherits envoy_gateway.ext_authz.authnRoute.hostnames so OAuth
-      # callbacks and the UI remain same-origin.
+      # Empty inherits envoy_gateway.ext_authz.authnRoute.hostnames. This route
+      # owns only /auth/login, /auth/account/security, and /auth/assets/*,
+      # never an application's root.
       hostnames: []
+      console:
+        enabled: false
+        name: authguard-console
+        # Configure a dedicated console host; do not attach this to an
+        # application's business host where / and /api belong to it.
+        hostnames: []
     resources:
       requests: { cpu: 10m, memory: 16Mi }
       limits: { cpu: 100m, memory: 64Mi }
@@ -187,7 +220,7 @@ authguard:
         interval: 30s
         labels: {}
 
-  # The COMPLETE authguard.yaml main configuration (flowgent-chart style).
+  # The complete authguard.yaml main configuration.
   # Helm-templated: chart values and helpers can be referenced inside, so a
   # full override stays one file.
   authguard-config: |
@@ -232,6 +265,7 @@ authguard:
     authn:
       challengeTtl: 5m
       providers: {}
+      applications: {}
       standalone:
         enabled: false
         issuer: authguard:standalone
@@ -495,7 +529,7 @@ postgresql:
       requests: { cpu: 100m, memory: 256Mi }
       limits: { cpu: 1000m, memory: 1Gi }
 
-# ── Secrets — pick exactly ONE provider (flowgent cache.provider style) ──
+# ── Secrets — pick exactly ONE provider ──
 # kubernetes: envFrom the one existing Opaque Secret, authguard-secrets, whose
 #             keys are the nested environment names used by ${...} references.
 # gcp / aws:  a single SecretProviderClass path whose secret CONTENT is the
