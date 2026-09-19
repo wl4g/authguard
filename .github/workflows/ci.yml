@@ -10,8 +10,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  quality:
-    name: quality
+  build-and-test:
+    name: Build and test
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -123,7 +123,7 @@ jobs:
 
   e2e:
     name: Full customer-growth E2E
-    needs: quality
+    needs: build-and-test
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
@@ -132,8 +132,8 @@ jobs:
     env:
       KUBECONFIG: /etc/rancher/k3s/k3s.yaml
       AUTHGUARD_E2E_USE_PREBUILT_IMAGES: "true"
-      AUTHGUARD_E2E_AUTHGUARD_IMAGE: ghcr.io/wl4g/authguard:${{ needs.quality.outputs.dirty_tag }}
-      AUTHGUARD_E2E_WEB_IMAGE: ghcr.io/wl4g/authguard-web:${{ needs.quality.outputs.dirty_tag }}
+      AUTHGUARD_E2E_AUTHGUARD_IMAGE: ghcr.io/wl4g/authguard:${{ needs.build-and-test.outputs.dirty_tag }}
+      AUTHGUARD_E2E_WEB_IMAGE: ghcr.io/wl4g/authguard-web:${{ needs.build-and-test.outputs.dirty_tag }}
     steps:
       - name: Reclaim ephemeral runner disk
         uses: jlumbroso/free-disk-space@v1.3.1
@@ -204,7 +204,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: customer-growth-e2e-${{ needs.quality.outputs.dirty_tag }}
+          name: customer-growth-e2e-${{ needs.build-and-test.outputs.dirty_tag }}
           path: use-cases/customer-growth-job-service/e2e/reports/
           if-no-files-found: warn
           retention-days: 14
