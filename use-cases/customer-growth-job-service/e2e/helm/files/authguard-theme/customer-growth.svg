@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Customer Growth">
+  <defs>
+    <linearGradient id="growth" x1="10" y1="54" x2="54" y2="10" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#20c997"/>
+      <stop offset="1" stop-color="#6f7cff"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="#0b1020"/>
+  <path d="M15 45V31m12 14V24m12 21V17m10 0v11M15 45h34" fill="none" stroke="url(#growth)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m42 17 7-7 7 7" fill="none" stroke="#94a3ff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

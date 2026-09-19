@@ -1,0 +1,19 @@
+{{- $authguard := index .Values "authguard-middleware" -}}
+{{- if $authguard.enabled -}}
+{{- $pattern := required "authguard-middleware.theme.files must contain a chart-relative glob" $authguard.theme.files -}}
+{{- $files := .Files.Glob $pattern -}}
+{{- if eq (len $files) 0 -}}
+{{- fail (printf "authguard-middleware.theme.files matched no files: %s" $pattern) -}}
+{{- end -}}
+{{- $nameTemplate := required "global.authguard.themeConfigMap is required" .Values.global.authguard.themeConfigMap -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ tpl $nameTemplate . | quote }}
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+    app.kubernetes.io/component: authguard-login-theme
+immutable: true
+data:
+{{ $files.AsConfig | indent 2 }}
+{{- end }}

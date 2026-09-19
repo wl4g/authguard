@@ -36,6 +36,7 @@ impl ApiError {
         Self { status: StatusCode::SERVICE_UNAVAILABLE, code: "service_unavailable", message }
     }
 
+    #[cfg(feature = "web3")]
     pub(crate) const fn not_implemented(code: &'static str, message: &'static str) -> Self {
         Self { status: StatusCode::NOT_IMPLEMENTED, code, message }
     }
@@ -73,6 +74,11 @@ impl ApiError {
             AuthenticationPipelineError::Token(_) => {
                 Self::internal("canonical token could not be issued")
             }
+            AuthenticationPipelineError::StepUpPrincipalMismatch => Self {
+                status: StatusCode::FORBIDDEN,
+                code: "step_up_rejected",
+                message: "step-up authentication does not match the current Principal",
+            },
         }
     }
 

@@ -18,7 +18,8 @@ pub use config::{
     PostgresProperties, RedisClusterProperties, SqliteProperties, StorageProperties,
 };
 pub use model::{
-    AuthenticatedPrincipalContext, IamPrincipalInfo, IdentityError, PrincipalKind, PrincipalStatus,
+    gateway_token, AuthenticatedPrincipalContext, IamPrincipalInfo, IdentityError, PrincipalKind,
+    PrincipalStatus,
 };
 pub use utils::{
     access_context_v1, epoch_seconds, AccessContext, AccessContextError, AccessContextInput,

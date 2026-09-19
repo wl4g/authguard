@@ -1,5 +1,6 @@
 {{- $ext := .Values.envoy_gateway.ext_authz -}}
 {{- $canonical := .Values.authguard.authn.canonical_jwt -}}
+{{- $selector := $ext.protectedRouteSelector -}}
 {{- if and $ext.enabled (not .Values.authguard.authz.enabled) }}
 {{- fail "envoy_gateway.ext_authz.enabled requires authguard.authz.enabled" }}
 {{- end }}
@@ -11,13 +12,17 @@ metadata:
   labels:
     {{- include "authguard.labels" . | nindent 4 }}
 spec:
-  targetRefs:
+  # Only labelled business HTTPRoutes receive jwt_authn + ext_authz. AuthN and
+  # Hosted Login routes stay reachable before a canonical token exists.
+  targetSelectors:
     - group: gateway.networking.k8s.io
-      kind: Gateway
-      name: {{ $ext.gateway.name }}
-      sectionName: protected
-  # Envoy verifies only AuthN's canonical JWT, then asks AuthZ for the
-  # resource decision. External IdP protocols never execute at the edge.
+      kind: HTTPRoute
+      matchLabels:
+        {{- toYaml $selector.matchLabels | nindent 8 }}
+      namespaces:
+        {{- toYaml $selector.namespaces | nindent 8 }}
+  # Envoy verifies only AuthN's canonical JWT, then asks AuthZ for the resource
+  # decision. External IdP protocols never execute at the edge.
   jwt:
     optional: false
     providers:
@@ -29,6 +34,8 @@ spec:
           headers:
             - name: authorization
               valuePrefix: "Bearer "
+          cookies:
+            - authguard_token
         {{- if $canonical.remote_jwks.uri }}
         remoteJWKS:
           uri: {{ $canonical.remote_jwks.uri | quote }}
@@ -50,6 +57,7 @@ spec:
     timeout: 2s
     headersToExtAuth:
       - authorization
+      - cookie
       - x-request-id
       - traceparent
       - tracestate

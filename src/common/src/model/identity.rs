@@ -63,25 +63,8 @@ impl AuthenticatedPrincipalContext {
         kind_claim: &str,
         groups_claim: &str,
     ) -> Result<Self, IdentityError> {
-        let configured = headers
-            .get(token_header)
-            .and_then(|value| value.to_str().ok())
-            .filter(|value| !value.is_empty())
-            .and_then(|value| {
-                token_header
-                    .eq_ignore_ascii_case("authorization")
-                    .then(|| bearer_value(value))
-                    .flatten()
-                    .or_else(|| {
-                        (!token_header.eq_ignore_ascii_case("authorization")).then_some(value)
-                    })
-            });
-        Self::from_verified_jwt_with_claims(
-            configured.ok_or(IdentityError::Missing)?,
-            principal_id_claim,
-            kind_claim,
-            groups_claim,
-        )
+        let token = gateway_token(headers, token_header).ok_or(IdentityError::Missing)?;
+        Self::from_verified_jwt_with_claims(token, principal_id_claim, kind_claim, groups_claim)
     }
 
     /// Decodes a JWT whose signature and standard claims were verified upstream.
@@ -161,6 +144,34 @@ impl AuthenticatedPrincipalContext {
     }
 }
 
+/// Returns the canonical JWT carried by a Gateway-verified request.
+///
+/// Bearer credentials remain the configured default. When the default is
+/// `authorization`, an `HttpOnly` `authguard_token` cookie is an equivalent
+/// browser transport. The caller must only use this after the Gateway has
+/// validated either transport; this helper deliberately performs no JWT
+/// cryptography itself.
+#[must_use]
+pub fn gateway_token<'a>(headers: &'a HeaderMap, token_header: &str) -> Option<&'a str> {
+    let configured = headers
+        .get(token_header)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty())
+        .and_then(|value| {
+            token_header
+                .eq_ignore_ascii_case("authorization")
+                .then(|| bearer_value(value))
+                .flatten()
+                .or_else(|| (!token_header.eq_ignore_ascii_case("authorization")).then_some(value))
+        });
+    configured.or_else(|| {
+        token_header
+            .eq_ignore_ascii_case("authorization")
+            .then(|| cookie_value(headers, "authguard_token"))
+            .flatten()
+    })
+}
+
 fn parse_principal_kind(value: &str) -> Option<PrincipalKind> {
     match value {
         "USER" => Some(PrincipalKind::User),
@@ -173,6 +184,15 @@ fn parse_principal_kind(value: &str) -> Option<PrincipalKind> {
 fn bearer_value(authorization: &str) -> Option<&str> {
     let (scheme, token) = authorization.split_once(' ')?;
     (scheme.eq_ignore_ascii_case("bearer") && !token.trim().is_empty()).then(|| token.trim())
+}
+
+fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get("cookie").and_then(|value| value.to_str().ok()).and_then(|cookies| {
+        cookies.split(';').find_map(|cookie| {
+            let (key, value) = cookie.trim().split_once('=')?;
+            (key == name && !value.is_empty()).then_some(value)
+        })
+    })
 }
 
 fn read_groups(value: Option<&Value>) -> Result<Vec<String>, IdentityError> {
@@ -248,6 +268,7 @@ fn is_boundary_claim(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use axum::http::{header, HeaderMap, HeaderValue};
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine as _;
 
@@ -265,6 +286,27 @@ mod tests {
         assert!(!context.trusted_claims.contains_key("provider"));
         assert_eq!(context.trusted_claims.get("tenant").map(String::as_str), Some("acme"));
         assert_eq!(context.trusted_claims.get("mfa").map(String::as_str), Some("true"));
+    }
+
+    #[test]
+    fn accepts_the_gateway_validated_browser_cookie_transport() {
+        let payload = URL_SAFE_NO_PAD
+            .encode(br#"{"principal_id":"P123","principal_kind":"USER","authguard_group_ids":[]}"#);
+        let token = format!("x.{payload}.x");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_str(&format!("theme=dark; authguard_token={token}")).expect("cookie"),
+        );
+        let context = AuthenticatedPrincipalContext::from_gateway_headers(
+            &headers,
+            "authorization",
+            "principal_id",
+            "principal_kind",
+            "authguard_group_ids",
+        )
+        .expect("cookie identity");
+        assert_eq!(context.principal_id, "P123");
     }
 }
 

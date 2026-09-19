@@ -21,7 +21,7 @@ trusted x-authguard-context
 The use case has two complementary execution modes. Portable mode requires no
 identity provider, Kubernetes cluster, or external database: `authguard-authz`
 evaluates the condition matrix, and each project tests the SDK-to-SQL boundary
-against SQLite or H2. Deployment mode starts the complete request path on k3s:
+against SQLite or H2. Deployment mode starts the complete request path on Kubernetes:
 Keycloak as an E2E-only external IdP, Envoy Gateway, `authguard-authn`, one
 `authguard-authz` replica, Redis Cluster, one shared
 PostgreSQL instance, an LDAP directory, Jaeger, and all five HTTP microservices.
@@ -51,7 +51,9 @@ customer-growth-job-service/
       python-sqlalchemy-service/       Python + SQLAlchemy + SQLite/PostgreSQL
       springboot-jdbc-service/         Spring Boot + JDBC + SQLite/PostgreSQL
       springboot-jpa-service/          Spring Boot + JPA + H2/PostgreSQL
-    helm/                              shared PostgreSQL and five workloads
+    helm/                              business umbrella Chart; AuthGuard is opt-in
+      charts/authguard-0.1.0.tgz       immutable vendored middleware dependency
+      files/authguard-theme/           local CSS/SVG packaged as a ConfigMap
     verifier/
       infra/s0x_*                      infrastructure and structure
       authn/**/s1x_*                   protocol-specific AuthN
@@ -103,7 +105,7 @@ python3 -m venv .venv
 .venv/bin/python use-cases/customer-growth-job-service/e2e/runner.py --rounds 3
 .venv/bin/python use-cases/customer-growth-job-service/e2e/runner.py --scenario 23
 .venv/bin/python use-cases/customer-growth-job-service/e2e/runner.py --list
-.venv/bin/python use-cases/customer-growth-job-service/e2e/runner.py --scenario 00,01,02,03,20,10,21,22,23,24,25,26,30,40 --cleanup-after-run
+.venv/bin/python use-cases/customer-growth-job-service/e2e/runner.py --scenario 00,01,02,03,20,10,21,22,23,24,25,26,30,31,40 --cleanup-after-run
 ```
 
 By default, every round removes project-local generated artifacts and performs
@@ -114,13 +116,19 @@ Kubernetes resources are retained by default for troubleshooting. Add
 `--cleanup-after-run` to uninstall all three E2E Helm releases and delete the
 isolated namespace after success, failure, or interruption.
 
-Run the real Kubernetes path on local k3s:
+Run the real Kubernetes path:
 
 ```bash
-HTTPS_PROXY=http://127.0.0.1:8800 make e2e-k3s
+HTTPS_PROXY=http://127.0.0.1:8800 make e2e-k8s
 ```
 
 Each round removes and recreates an `e2e-` namespace and three Helm releases.
+The normal Customer Growth support/workload release uses the business Chart's
+default `authguard.enabled=false`. A separate one-time release of that same
+Chart enables its vendored `charts/authguard-0.1.0.tgz`; `.Files.Glob` packages
+`files/authguard-theme/` into an immutable ConfigMap. This models normal
+business upgrades without rebuilding a theme image or owning the AuthGuard
+middleware lifecycle.
 Authguard first starts with the Action/Role catalog and no RoleBinding. A mock
 external social IdP then drives the real browser protocol through Envoy's
 public AuthN listener: authorize redirect, callback, POST token exchange,
@@ -213,7 +221,7 @@ runtime pins Envoy `distroless-v1.36.4`, Envoy Gateway `v1.9.0`, Redis Cluster
 Portable-mode prerequisites are the same local toolchains used by the
 repository: Rust/Cargo, Go, Python 3 with SQLAlchemy, Java 17/Maven, and their
 cached or reachable package repositories. Kubernetes mode additionally needs
-Docker, Helm, kubectl, and local k3s. The authentication verifiers use PyOTP as
+Docker, Helm, kubectl, and a local Kubernetes cluster. The authentication verifiers use PyOTP as
 an RFC 6238 authenticator-app oracle, FIDO2 CBOR plus `cryptography` for a real
 virtual ES256 WebAuthn ceremony, and `viem` for browser-wallet-equivalent
 EIP-191 signing. AuthGuard still performs every server-side verification.

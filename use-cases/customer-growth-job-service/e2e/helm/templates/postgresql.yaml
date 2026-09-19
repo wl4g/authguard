@@ -1,3 +1,4 @@
+{{- if .Values.support.enabled }}
 {{- $name := include "customer-growth-e2e.postgresqlName" . -}}
 apiVersion: v1
 kind: ConfigMap
@@ -7,7 +8,7 @@ metadata:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
 data:
   init.sql: |
-{{ required "postgresql.initSQL must contain the shared database fixture" .Values.postgresql.initSQL | nindent 4 }}
+{{ required "supportPostgresql.initSQL must contain the shared database fixture" .Values.supportPostgresql.initSQL | nindent 4 }}
 ---
 apiVersion: v1
 kind: Secret
@@ -17,20 +18,20 @@ metadata:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
 type: Opaque
 stringData:
-  admin-username: {{ .Values.postgresql.adminUsername | quote }}
-  admin-password: {{ .Values.postgresql.adminPassword | quote }}
-  superuser-password: {{ .Values.postgresql.superuserPassword | quote }}
-  authguard-username: {{ .Values.postgresql.authguardUsername | quote }}
-  authguard-password: {{ .Values.postgresql.authguardPassword | quote }}
-  authguard-schema: {{ .Values.postgresql.authguardSchema | quote }}
+  admin-username: {{ .Values.supportPostgresql.adminUsername | quote }}
+  admin-password: {{ .Values.supportPostgresql.adminPassword | quote }}
+  superuser-password: {{ .Values.supportPostgresql.superuserPassword | quote }}
+  authguard-username: {{ .Values.supportPostgresql.authguardUsername | quote }}
+  authguard-password: {{ .Values.supportPostgresql.authguardPassword | quote }}
+  authguard-schema: {{ .Values.supportPostgresql.authguardSchema | quote }}
   {{- range $component, $workload := .Values.workloads }}
   {{ $component }}-username: {{ $workload.databaseUsername | quote }}
   {{ $component }}-password: {{ $workload.databasePassword | quote }}
   {{ $component }}-schema: {{ $workload.schema | quote }}
   {{- if hasPrefix "spring-" $component }}
-  {{ $component }}-url: {{ printf "jdbc:postgresql://%s.%s.svc.cluster.local:5432/%s?sslmode=disable&currentSchema=%s" $name $.Release.Namespace $.Values.postgresql.database $workload.schema | quote }}
+  {{ $component }}-url: {{ printf "jdbc:postgresql://%s.%s.svc.cluster.local:5432/%s?sslmode=disable&currentSchema=%s" $name $.Release.Namespace $.Values.supportPostgresql.database $workload.schema | quote }}
   {{- else }}
-  {{ $component }}-url: {{ printf "postgresql://%s:%s@%s.%s.svc.cluster.local:5432/%s?sslmode=disable&options=-csearch_path%%3D%s" $workload.databaseUsername $workload.databasePassword $name $.Release.Namespace $.Values.postgresql.database $workload.schema | quote }}
+  {{ $component }}-url: {{ printf "postgresql://%s:%s@%s.%s.svc.cluster.local:5432/%s?sslmode=disable&options=-csearch_path%%3D%s" $workload.databaseUsername $workload.databasePassword $name $.Release.Namespace $.Values.supportPostgresql.database $workload.schema | quote }}
   {{- end }}
   {{- end }}
   10-e2e-authguard-init.sh: |
@@ -39,9 +40,9 @@ stringData:
     export PGPASSWORD="${POSTGRESQL_POSTGRES_PASSWORD}"
     psql --host=127.0.0.1 --username=postgres --dbname="${POSTGRESQL_DATABASE}" \
       --set=ON_ERROR_STOP=1 \
-      --set=role_name={{ .Values.postgresql.authguardUsername | quote }} \
-      --set=role_password={{ .Values.postgresql.authguardPassword | quote }} \
-      --set=schema_name={{ .Values.postgresql.authguardSchema | quote }} <<'SQL'
+      --set=role_name={{ .Values.supportPostgresql.authguardUsername | quote }} \
+      --set=role_password={{ .Values.supportPostgresql.authguardPassword | quote }} \
+      --set=schema_name={{ .Values.supportPostgresql.authguardSchema | quote }} <<'SQL'
     SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'role_name', :'role_password')
       WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'role_name') \gexec
     SELECT format('ALTER ROLE %I PASSWORD %L', :'role_name', :'role_password') \gexec
@@ -106,8 +107,8 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: postgresql
-          image: {{ .Values.postgresql.image | quote }}
-          imagePullPolicy: {{ .Values.postgresql.pullPolicy }}
+          image: {{ .Values.supportPostgresql.image | quote }}
+          imagePullPolicy: {{ .Values.supportPostgresql.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
@@ -115,7 +116,7 @@ spec:
             - { name: POSTGRESQL_USERNAME, valueFrom: { secretKeyRef: { name: {{ $name }}-credentials, key: admin-username } } }
             - { name: POSTGRESQL_PASSWORD, valueFrom: { secretKeyRef: { name: {{ $name }}-credentials, key: admin-password } } }
             - { name: POSTGRESQL_POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: {{ $name }}-credentials, key: superuser-password } } }
-            - { name: POSTGRESQL_DATABASE, value: {{ .Values.postgresql.database | quote }} }
+            - { name: POSTGRESQL_DATABASE, value: {{ .Values.supportPostgresql.database | quote }} }
           ports:
             - { name: postgresql, containerPort: 5432 }
           startupProbe:
@@ -126,7 +127,7 @@ spec:
             exec: { command: ["bash", "-ec", "PGPASSWORD=$POSTGRESQL_PASSWORD pg_isready -U $POSTGRESQL_USERNAME -d $POSTGRESQL_DATABASE"] }
             periodSeconds: 5
           resources:
-            {{- toYaml .Values.postgresql.resources | nindent 12 }}
+            {{- toYaml .Values.supportPostgresql.resources | nindent 12 }}
           volumeMounts:
             - { name: data, mountPath: /bitnami/postgresql }
             - { name: fixture, mountPath: /e2e-authguard-fixture/init.sql, subPath: init.sql, readOnly: true }
@@ -140,3 +141,4 @@ spec:
           secret:
             secretName: {{ $name }}-credentials
             defaultMode: 0550
+{{- end }}

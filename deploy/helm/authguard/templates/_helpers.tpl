@@ -69,6 +69,11 @@ app.kubernetes.io/component: web
 {{- default "redis-password" $redis.existingSecretPasswordKey -}}
 {{- end -}}
 
+{{- define "authguard.postgresqlFullname" -}}
+{{- $postgres := .Values.postgresql -}}
+{{- default (printf "%s-postgresql" .Release.Name | trunc 63 | trimSuffix "-") $postgres.fullnameOverride -}}
+{{- end -}}
+
 {{- define "authguard.joinPath" -}}
 {{- if eq .context "/" -}}
 {{- .path -}}
@@ -83,7 +88,8 @@ app.kubernetes.io/component: web
 {{- end -}}
 
 {{/* Vault Agent Injector annotations. The KV secret's data.env value must be
-    the multi-line "ENV KEY=VALUE" content consumed through AUTHGUARD_ENV_FILE. */}}
+    the multi-line "ENV KEY=VALUE" content consumed through
+    AUTHGUARD__SECRETS__ENV_FILE. */}}
 {{- define "authguard.vaultAnnotations" -}}
 vault.hashicorp.com/agent-inject: "true"
 vault.hashicorp.com/role: {{ required "secrets.vault.vaultRole is required when secrets.provider=vault" .Values.secrets.vault.vaultRole | quote }}

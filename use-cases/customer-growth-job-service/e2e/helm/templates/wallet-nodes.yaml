@@ -1,4 +1,4 @@
-{{- if .Values.anvil.enabled }}
+{{- if and .Values.support.enabled .Values.anvil.enabled }}
 {{- $name := include "customer-growth-e2e.anvilName" . -}}
 apiVersion: v1
 kind: Service
@@ -74,7 +74,7 @@ spec:
         - name: tmp
           emptyDir: {}
 {{- end }}
-{{- if .Values.solana.enabled }}
+{{- if and .Values.support.enabled .Values.solana.enabled }}
 {{- $name := include "customer-growth-e2e.solanaName" . }}
 ---
 apiVersion: v1
@@ -163,8 +163,10 @@ spec:
             - { name: tmp, mountPath: /tmp }
       volumes:
         - name: ledger
+          # Agave's compact local ledger settles slightly above 1 GiB. Keep a
+          # bounded margin without depending on a cluster storage provisioner.
           emptyDir:
-            sizeLimit: 1Gi
+            sizeLimit: 2Gi
         - name: tmp
           emptyDir: {}
 {{- end }}

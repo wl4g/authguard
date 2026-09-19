@@ -6,12 +6,15 @@ export default defineConfig(({ mode }) => {
   const authnTarget = env.AUTHGUARD_AUTHN_TARGET || 'http://127.0.0.1:8082'
   const authzTarget = env.AUTHGUARD_AUTHZ_TARGET || 'http://127.0.0.1:9090'
   return {
+    // The production gateway reserves this namespace for Hosted Login assets.
+    // Console routes continue to resolve from `/` in the same SPA.
+    base: '/auth/',
     plugins: [react()],
     server: {
       port: 4173,
       proxy: {
-        '/auth': authnTarget,
-        '/.well-known/authn.json': authnTarget,
+        '^/auth/(?!login(?:/|$)|account/security(?:/|$)|assets/)': authnTarget,
+        '/.well-known': authnTarget,
         '/api': authzTarget,
       },
     },

@@ -245,6 +245,23 @@
   ],
   "users": [
     {
+      "id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      "username": "authn-protocol-tester",
+      "enabled": true,
+      "firstName": "AuthN Protocol",
+      "lastName": "Tester",
+      "email": "authn-protocol-tester@example-corp.example",
+      "emailVerified": true,
+      "requiredActions": [],
+      "credentials": [
+        { "type": "password", "value": "authn-protocol-tester-password", "temporary": false }
+      ],
+      "attributes": {
+        "tenant_id": ["example-corp"],
+        "authguard_group_ids": []
+      }
+    },
+    {
       "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       "username": "direct-reader",
       "enabled": true,

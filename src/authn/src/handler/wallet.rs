@@ -48,6 +48,8 @@ pub(crate) struct WalletVerifyRequest {
     signature: String,
     #[serde(default)]
     verification_method: WalletVerificationMethod,
+    #[serde(default)]
+    return_to: String,
 }
 
 impl WalletHandler {
@@ -122,27 +124,33 @@ pub(crate) async fn challenge(
 
 pub(crate) async fn verify(
     State(state): State<WalletHandler>,
+    headers: HeaderMap,
     Json(request): Json<WalletVerifyRequest>,
-) -> Result<Json<LoginResponse>, ApiError> {
+) -> Result<LoginResponse, ApiError> {
+    let return_to = crate::route::application::ApplicationResolver::new(
+        authguard_common::config::AppConfig::get().get_authn(),
+        &headers,
+    )
+    .validate_return_to(&request.return_to)?;
     let authentication = state.verify_challenge(request).await?;
     let issued = state
         .pipeline
         .login(authentication, PrincipalKind::User)
         .await
         .map_err(ApiError::pipeline)?;
-    Ok(Json(LoginResponse::new(issued, String::new())))
+    Ok(LoginResponse::new(issued, return_to))
 }
 
 pub(crate) async fn link(
     State(state): State<WalletHandler>,
     headers: HeaderMap,
     Json(request): Json<WalletVerifyRequest>,
-) -> Result<Json<LoginResponse>, ApiError> {
+) -> Result<LoginResponse, ApiError> {
     let principal_id = state.pipeline.authenticate_token(&headers).map_err(ApiError::token)?;
     let authentication = state.verify_challenge(request).await?;
     let issued =
         state.pipeline.link(&principal_id, authentication).await.map_err(ApiError::pipeline)?;
-    Ok(Json(LoginResponse::new(issued, String::new())))
+    Ok(LoginResponse::new(issued, String::new()))
 }
 
 fn wallet_error(error: WalletProviderError) -> ApiError {

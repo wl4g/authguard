@@ -22,7 +22,7 @@ const resolveScopeMethod = "/authguard.access.v1.AccessContextService/ResolveSco
 const (
 	GRPCTargetEnv           = "AUTHGUARD_GRPC_TARGET"
 	GRPCTLSEnv              = "AUTHGUARD_GRPC_TLS"
-	AccessContextHMACKeyEnv = "AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY"
+	AccessContextHMACKeyEnv = "AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY"
 )
 
 var (

@@ -400,7 +400,10 @@ mod tests {
 
     #[test]
     fn signing_key_configuration_uses_standard_environment_name() {
-        assert_eq!(crate::access::ACCESS_CONTEXT_HMAC_KEY_ENV, "AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY");
+        assert_eq!(
+            crate::access::ACCESS_CONTEXT_HMAC_KEY_ENV,
+            "AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY"
+        );
     }
 
     fn restore_environment(name: &str, value: Option<std::ffi::OsString>) {

@@ -19,8 +19,8 @@ pub use credential::{
     StandaloneCredentialKind,
 };
 pub use identity::{
-    AuthenticatedPrincipalContext, AuthenticationResult, ExternalIdentity, ExternalIdentityKey,
-    IdentityError, IdentityModelError,
+    gateway_token, AuthenticatedPrincipalContext, AuthenticationResult, ExternalIdentity,
+    ExternalIdentityKey, IdentityError, IdentityModelError,
 };
 pub use policy::IamPolicyInfo;
 pub use principal::{IamPrincipalIdentityInfo, IamPrincipalInfo, PrincipalKind, PrincipalStatus};

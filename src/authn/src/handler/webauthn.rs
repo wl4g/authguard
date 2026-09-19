@@ -6,6 +6,7 @@ use authguard_common::model::{
     PrincipalKind, StandaloneCredentialKind,
 };
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::Json;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -44,6 +45,8 @@ pub(crate) struct RegistrationChallengeResponse {
 pub(crate) struct RegistrationVerifyRequest {
     challenge_id: String,
     credential: RegisterPublicKeyCredential,
+    #[serde(default)]
+    return_to: String,
 }
 
 #[derive(Deserialize)]
@@ -64,11 +67,14 @@ pub(crate) struct AuthenticationChallengeResponse {
 pub(crate) struct AuthenticationVerifyRequest {
     challenge_id: String,
     credential: PublicKeyCredential,
+    #[serde(default)]
+    return_to: String,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RegistrationChallenge {
+    principal_id: String,
     external_identity: ExternalIdentity,
     amr: Vec<String>,
     state: PasskeyRegistration,
@@ -83,17 +89,26 @@ struct AuthenticationChallenge {
 
 pub(crate) async fn webauthn_registration_challenge(
     State(handler): State<StandaloneHandler>,
+    headers: HeaderMap,
     Json(request): Json<RegistrationChallengeRequest>,
 ) -> Result<Json<RegistrationChallengeResponse>, ApiError> {
     let webauthn =
         handler.webauthn.as_ref().ok_or_else(|| ApiError::not_found("WebAuthn is not enabled"))?;
+    let principal_id =
+        handler.pipeline.authenticate_request_principal(&headers).map_err(ApiError::token)?;
     let authentication = handler
         .authenticate_credentials(LoginRequest {
             login: request.login,
             password: request.password,
             totp: request.totp,
+            return_to: String::new(),
         })
         .await?;
+    handler
+        .pipeline
+        .verify_step_up(&principal_id, &authentication, PrincipalKind::User)
+        .await
+        .map_err(ApiError::pipeline)?;
     let identity_key = authentication
         .external_identity
         .key()
@@ -123,6 +138,7 @@ pub(crate) async fn webauthn_registration_challenge(
         REGISTRATION_PURPOSE,
         &challenge_id,
         &RegistrationChallenge {
+            principal_id,
             external_identity: authentication.external_identity,
             amr: authentication.amr,
             state: registration,
@@ -136,10 +152,18 @@ pub(crate) async fn webauthn_registration_challenge(
 
 pub(crate) async fn webauthn_registration_verify(
     State(handler): State<StandaloneHandler>,
+    headers: HeaderMap,
     Json(request): Json<RegistrationVerifyRequest>,
-) -> Result<Json<LoginResponse>, ApiError> {
+) -> Result<LoginResponse, ApiError> {
+    let return_to = crate::route::application::ApplicationResolver::new(
+        authguard_common::config::AppConfig::get().get_authn(),
+        &headers,
+    )
+    .validate_return_to(&request.return_to)?;
     let webauthn =
         handler.webauthn.as_ref().ok_or_else(|| ApiError::not_found("WebAuthn is not enabled"))?;
+    let principal_id =
+        handler.pipeline.authenticate_request_principal(&headers).map_err(ApiError::token)?;
     let challenge = consume_json::<RegistrationChallenge>(
         handler.challenge_store()?,
         REGISTRATION_PURPOSE,
@@ -148,24 +172,16 @@ pub(crate) async fn webauthn_registration_verify(
     .await
     .map_err(ApiError::challenge)?
     .ok_or_else(|| ApiError::bad_request("invalid or expired WebAuthn challenge"))?;
+    if challenge.principal_id != principal_id {
+        return Err(ApiError::unauthorized("WebAuthn registration belongs to another Principal"));
+    }
     let (credential_key, credential_data) = webauthn
         .finish_registration(&request.credential, &challenge.state)
         .map_err(webauthn_error)?;
-    handler
-        .credentials
-        .create_credential(&IamStandaloneCredential {
-            id: format!("webauthn_{}", random_id()),
-            identity: challenge
-                .external_identity
-                .key()
-                .map_err(|_| ApiError::bad_request("invalid standalone identity"))?,
-            kind: StandaloneCredentialKind::Webauthn,
-            credential_key: Some(credential_key),
-            secret_data: None,
-            credential_data: Some(credential_data),
-        })
-        .await
-        .map_err(ApiError::credential)?;
+    let identity = challenge
+        .external_identity
+        .key()
+        .map_err(|_| ApiError::bad_request("invalid standalone identity"))?;
     let authentication = DomainAuthenticationResult::new(
         challenge.external_identity,
         challenge.amr.into_iter().chain(["webauthn".to_string()]),
@@ -174,10 +190,25 @@ pub(crate) async fn webauthn_registration_verify(
     );
     let issued = handler
         .pipeline
-        .login(authentication, PrincipalKind::User)
+        .complete_step_up(&principal_id, authentication, PrincipalKind::User)
         .await
         .map_err(ApiError::pipeline)?;
-    Ok(Json(LoginResponse::new(issued, String::new())))
+    // Resolve the fresh step-up proof to the current Principal before making
+    // the credential durable. A concurrent identity ownership change must not
+    // leave an orphaned passkey behind.
+    handler
+        .credentials
+        .create_credential(&IamStandaloneCredential {
+            id: format!("webauthn_{}", random_id()),
+            identity,
+            kind: StandaloneCredentialKind::Webauthn,
+            credential_key: Some(credential_key),
+            secret_data: None,
+            credential_data: Some(credential_data),
+        })
+        .await
+        .map_err(ApiError::credential)?;
+    Ok(LoginResponse::new(issued, return_to))
 }
 
 pub(crate) async fn webauthn_authentication_challenge(
@@ -218,8 +249,14 @@ pub(crate) async fn webauthn_authentication_challenge(
 
 pub(crate) async fn webauthn_authentication_verify(
     State(handler): State<StandaloneHandler>,
+    headers: HeaderMap,
     Json(request): Json<AuthenticationVerifyRequest>,
-) -> Result<Json<LoginResponse>, ApiError> {
+) -> Result<LoginResponse, ApiError> {
+    let return_to = crate::route::application::ApplicationResolver::new(
+        authguard_common::config::AppConfig::get().get_authn(),
+        &headers,
+    )
+    .validate_return_to(&request.return_to)?;
     let webauthn =
         handler.webauthn.as_ref().ok_or_else(|| ApiError::not_found("WebAuthn is not enabled"))?;
     let challenge = consume_json::<AuthenticationChallenge>(
@@ -268,7 +305,7 @@ pub(crate) async fn webauthn_authentication_verify(
         .login(authentication, PrincipalKind::User)
         .await
         .map_err(ApiError::pipeline)?;
-    Ok(Json(LoginResponse::new(issued, String::new())))
+    Ok(LoginResponse::new(issued, return_to))
 }
 
 fn webauthn_error(error: WebauthnProviderError) -> ApiError {

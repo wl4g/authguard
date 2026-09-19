@@ -17,7 +17,7 @@ pub use authguard_common::storage;
 pub use principal::jit as account_linking;
 
 pub use config::{
-    AccountLinkingProperties, AuthnProperties, BitcoinWalletChainProperties,
+    AccountLinkingProperties, ApplicationProperties, AuthnProperties, BitcoinWalletChainProperties,
     EvmWalletChainProperties, LinkingStrategy, OidcProviderProperties, ProviderProperties,
     StandaloneAuthnProperties, TokenProperties, WalletAuthnProperties, WalletChainsProperties,
     WebauthnProperties,

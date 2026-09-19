@@ -43,7 +43,8 @@
 {{- end -}}
 
 {{- define "customer-growth-e2e.accessContextSecretName" -}}
-{{- default (printf "%s-access-context" (include "customer-growth-e2e.name" .)) .Values.authguard.accessContext.secretName | trunc 63 | trimSuffix "-" -}}
+{{- $authguard := index .Values "authguard-middleware" -}}
+{{- default (printf "%s-access-context" (include "customer-growth-e2e.name" .)) $authguard.accessContext.secretName | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{- define "customer-growth-e2e.labels" -}}

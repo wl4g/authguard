@@ -21,7 +21,9 @@ class OidcAuthenticationVerifier(AuthnProtocolVerifier):
             external = self.scenario.step(
                 "OIDC: issue a real Keycloak user access token",
                 lambda: self._password_token(
-                    keycloak_port, "direct-reader", "direct-reader-password"
+                    keycloak_port,
+                    "authn-protocol-tester",
+                    "authn-protocol-tester-password",
                 ),
             )
             first = self.scenario.step(

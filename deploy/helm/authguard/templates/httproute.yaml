@@ -7,10 +7,11 @@ metadata:
   name: {{ $route.name }}
   labels:
     {{- include "authguard.labels" . | nindent 4 }}
+    authguard.io/protected: "true"
 spec:
   parentRefs:
     - name: {{ $ext.gateway.name }}
-      sectionName: protected
+      sectionName: http
   {{- with $route.hostnames }}
   hostnames:
     {{- toYaml . | nindent 4 }}
@@ -35,7 +36,7 @@ metadata:
 spec:
   parentRefs:
     - name: {{ $ext.gateway.name }}
-      sectionName: authn
+      sectionName: http
   {{- with $ext.authnRoute.hostnames }}
   hostnames:
     {{- toYaml . | nindent 4 }}
@@ -46,8 +47,8 @@ spec:
             type: PathPrefix
             value: /auth/
         - path:
-            type: Exact
-            value: /.well-known/authn.json
+            type: PathPrefix
+            value: /.well-known/
       backendRefs:
         - name: {{ include "authguard.fullname" . }}-authn
           port: {{ .Values.authguard.authn.service.port }}

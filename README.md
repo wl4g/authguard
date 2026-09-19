@@ -37,6 +37,11 @@ AuthGuard AuthZ is the PDP and never becomes a reverse proxy.
 - **One Principal and one token pipeline** — every successful login resolves a
   canonical `principal_id`; JWTs consistently carry `sub`, `amr`, `acr`,
   `auth_time`, `iat`, and `exp`.
+- **Hosted Login, not an SDK** — a single AuthGuard Web image serves
+  `/auth/login`, authenticated `/auth/account/security`, and `/auth/assets/*`
+  on each relying application's own host. `authn.applications` resolves trusted
+  host branding, static Theme Packs, and allow-listed `return_to` paths; no
+  iframe, copied UI, executable theme plugin, or browser token storage is needed.
 - **Envoy-native authorization** — Envoy Gateway performs `jwt_authn` and
   `ext_authz`; AuthGuard evaluates `principal_id + resource + action + context`
   and returns bounded resource scope.
@@ -172,9 +177,9 @@ curl -fsS http://127.0.0.1:8082/.well-known/authn.json | jq
 # Rust, React, SDK, use-case, and Helm checks.
 make test
 
-# Full disposable k3s matrix: infrastructure, AuthN, AuthZ, SDKs, Chromium UI,
+# Full disposable Kubernetes matrix: infrastructure, AuthN, AuthZ, SDKs, Chromium UI,
 # PostgreSQL, logs, metrics, and Jaeger evidence.
-HTTPS_PROXY=http://127.0.0.1:8800 make e2e-k3s
+HTTPS_PROXY=http://127.0.0.1:8800 make e2e-k8s
 ```
 
 The reproducible application and verifier suite lives in
@@ -188,25 +193,41 @@ The reproducible application and verifier suite lives in
 |---|---|---|
 | Runtime | `ghcr.io/wl4g/authguard:<version>` | `authn`, `authz`, and `console` commands |
 | Web UI | `ghcr.io/wl4g/authguard-web:<version>` | Static React control plane and login UI |
-| Helm chart | `oci://ghcr.io/wl4g/charts/authguard:<version>` | Envoy Gateway, AuthGuard, Redis, routes, and policies |
+| Helm chart | `oci://ghcr.io/wl4g/charts/authguard:<version>` | Envoy Gateway, AuthGuard, Redis Cluster, PostgreSQL, routes, and policies |
 
 `make release` builds and publishes exactly these two product images and the
 OCI chart, then pulls each artifact back for verification.
 
 ### Install with Helm
 
-Create the referenced Secret through your secret manager, then install an
-immutable chart version:
+Create the one `authguard-secrets` payload before installing. The placeholder
+file and cloud-provider variants are documented in the
+[Helm chart guide](deploy/helm/authguard/README.md#bootstrap-credentials).
+
+```bash
+export AUTHGUARD_NAMESPACE=authguard
+export AUTHGUARD_SECRET_FILE=authguard-secrets.env
+cp deploy/helm/authguard/bootstrap/authguard-secrets.env.example "$AUTHGUARD_SECRET_FILE"
+# Replace every placeholder with a production secret value.
+deploy/helm/authguard/bootstrap/k8s-secrets-setup.sh \
+  --namespace "$AUTHGUARD_NAMESPACE" --secret-file "$PWD/$AUTHGUARD_SECRET_FILE"
+```
+
+Then install an immutable chart version:
 
 ```bash
 helm upgrade --install authguard oci://ghcr.io/wl4g/charts/authguard \
   --version 0.1.0 \
-  --namespace authguard --create-namespace \
+  --namespace "$AUTHGUARD_NAMESPACE" \
   --set authguard.authn.image.repository=ghcr.io/wl4g/authguard \
   --set authguard.authz.image.repository=ghcr.io/wl4g/authguard \
   --set authguard.web.image.repository=ghcr.io/wl4g/authguard-web \
-  --set secrets.kubernetes.existingSecret=authguard-runtime
+  --set secrets.kubernetes.existingSecret=authguard-secrets
 ```
+
+For a single-host deployment without Kubernetes, use the
+[Docker Compose topology](deploy/docker/README.md). It uses the same
+`AUTHGUARD__...` secret keys as Helm.
 
 Choose the smallest topology that matches the application:
 
@@ -235,8 +256,8 @@ Both services mount the same `authguard.authguard-config`. Supply a production
 file with `--set-file authguard.authguard-config=authguard.yaml`; nested values
 may also be overridden with `AUTHGUARD__...` environment variables.
 
-- OAuth client secrets, signing keys, database passwords, TOTP encryption keys,
-  and RPC credentials belong in Kubernetes Secret or an external secret manager.
+- PostgreSQL, Redis, signing keys, TOTP encryption, provider credentials, and
+  optional RPC credentials belong in the one logical `authguard-secrets` payload.
 - Keycloak discovery uses a renewable service-account credential; LDAP uses a
   least-privilege bind credential; SCIM callers obtain their own workload token.
 - Wallet RPC URLs are server-configured per CAIP chain. Clients cannot submit an
@@ -256,15 +277,19 @@ The CLI calls the AuthZ management API, preserving validation, reference checks,
 cache invalidation, audit logs, metrics, and optimistic policy revisions.
 
 ```bash
-export AUTHGUARD_CONSOLE_ENDPOINT=http://authguard.authguard.svc:9091
-export AUTHGUARD_CONSOLE_TOKEN='<control-plane-secret>'
+agctl() {
+  authguard console \
+    --endpoint http://authguard.authguard.svc:9091 \
+    --token '<control-plane-secret>' \
+    "$@"
+}
 
 # Discover and materialize a federated identity before assigning policy.
-authguard console discover --file principal-search.json
-authguard console materialize --file principal-materialization.json
-authguard console create action --file action.json
-authguard console create role --file role.json
-authguard console create role-binding --file role-binding.json
+agctl discover --file principal-search.json
+agctl materialize --file principal-materialization.json
+agctl create action --file action.json
+agctl create role --file role.json
+agctl create role-binding --file role-binding.json
 
 authguard console list principals
 authguard console policy get
@@ -312,6 +337,52 @@ Rust, Go, Java, and Python integrations.
 - [Customer Growth reference application](use-cases/customer-growth-job-service/README.md)
 - [Helm values and deployment contract](deploy/helm/authguard/values.yaml)
 
+### Hosted Login integration
+
+Attach the AuthGuard public routes to the business Gateway, preserving the
+original Host header. The business owns `/api/*` and `/*`; AuthGuard owns only
+`/auth/login` (GET), `/auth/assets/*` (GET), `/.well-known/*`, and `/auth/*`.
+
+```yaml
+authn:
+  applications:
+    example-app:
+      hosts: [app.example.com]
+      displayName: Example App
+      logo: /auth/assets/themes/custom/example-app.svg
+      theme:
+        id: example-app
+        stylesheet: /auth/assets/themes/custom/example-app.css
+      returnUris: [https://app.example.com/**]
+```
+
+Unauthenticated business requests redirect to
+`/auth/login?return_to=/workflows/123`. AuthN validates that destination,
+places the unified JWT in an `HttpOnly; Secure; SameSite=Lax` cookie, and the
+Hosted Login returns the browser to the same host. See the authentication
+whitepaper for the complete Gateway route contract. Mark protected business
+`HTTPRoute` objects with `authguard.io/protected: "true"`; the Helm
+SecurityPolicy then attaches JWT and `ext_authz` to those routes only, leaving
+the public AuthGuard paths available on the same listener.
+
+Do not fork or rebuild AuthGuard Web for branding. A business umbrella Chart
+can package its local CSS/logo/font directory with `.Files.Glob`, create an
+immutable ConfigMap, and pass its templated name through
+`global.authguard.themeConfigMap`; no extra image is needed. The vendored
+AuthGuard tgz remains disabled by default and is best bootstrapped as a separate
+one-time Helm release, so normal business upgrades never touch it. The mounted
+theme contains static assets only; AuthGuard never loads theme JavaScript or
+arbitrary HTML. Applications that omit both `logo` and `theme`
+retain their Host-resolved display name and fall back to AuthGuard's built-in
+cyan trust-fabric visual without mounting assets.
+
+The repository includes an
+[`$authguard-chart-integrator`](.agents/skills/authguard-chart-integrator/SKILL.md)
+agent skill that discovers the latest stable GHCR Chart, vendors and pins that
+exact release, obtains the real business service domain, wires opt-in AuthGuard
+values, validates normal and middleware renders, and can run an explicitly
+targeted deployment smoke test. Hosted Login theming remains optional.
+
 ## License
 
 AuthGuard is licensed under the [Apache License 2.0](LICENSE).
@@ -341,8 +412,8 @@ AuthGuard builds on excellent open-source projects and standards communities:
 - [Alloy](https://github.com/alloy-rs/alloy) and
   [rust-bitcoin](https://github.com/rust-bitcoin/rust-bitcoin) — EVM and Bitcoin
   cryptographic primitives.
-- [SQLx](https://github.com/launchbadge/sqlx) and
-  [Redis](https://redis.io/) — durable IAM storage and atomic one-time state.
+- [SQLx](https://github.com/launchbadge/sqlx) — durable IAM storage; and
+  [Redis](https://redis.io/) — atomic one-time state and short-lived scope.
 - [React](https://react.dev/), [Vite](https://vite.dev/), and
   [Reown AppKit](https://docs.reown.com/appkit/overview) — control-plane UI and
   optional client-side wallet discovery/signing UX. Reown is not a server

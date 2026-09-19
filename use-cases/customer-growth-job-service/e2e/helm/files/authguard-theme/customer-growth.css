@@ -1,0 +1,245 @@
+:root[data-application-theme='customer-growth'] {
+  /* Business-owned presentation tokens; the AuthGuard Web image stays immutable. */
+  --authguard-application-theme: customer-growth;
+  --customer-growth-brand: #6f7cff;
+  --customer-growth-growth: #20c997;
+  --bg: #f4f6ff;
+  --panel: #ffffff;
+  --panel-2: #f0f2ff;
+  --text: #171a35;
+  --muted: #68708d;
+  --line: #dfe3f5;
+  --accent: #6f7cff;
+  --accent-2: #20c997;
+  --danger: #d94f70;
+  --shadow: 0 28px 80px rgba(46, 51, 112, .16);
+}
+
+:root[data-theme='dark'][data-application-theme='customer-growth'] {
+  --bg: #080b19;
+  --panel: #101428;
+  --panel-2: #171c35;
+  --text: #f3f5ff;
+  --muted: #9299ba;
+  --line: #293052;
+  --accent: #939cff;
+  --accent-2: #48dfb3;
+  --danger: #ff7895;
+  --shadow: 0 30px 90px rgba(0, 0, 0, .48);
+}
+
+/* Hosted Login composition. */
+:root[data-application-theme='customer-growth'] .login-page {
+  grid-template-columns: minmax(480px, 1.08fr) minmax(480px, .92fr);
+  background: var(--panel);
+}
+
+:root[data-application-theme='customer-growth'] .login-visual {
+  background:
+    radial-gradient(circle at 72% 24%, rgba(111, 124, 255, .38), transparent 32%),
+    radial-gradient(circle at 24% 76%, rgba(32, 201, 151, .24), transparent 36%),
+    linear-gradient(145deg, #111838 0%, #0a1027 48%, #071b25 100%);
+  isolation: isolate;
+}
+
+:root[data-application-theme='customer-growth'] .login-visual::before {
+  position: absolute;
+  inset: 18% -18% auto auto;
+  width: 440px;
+  height: 440px;
+  border: 1px solid rgba(147, 156, 255, .17);
+  border-radius: 38% 62% 58% 42%;
+  box-shadow: inset 0 0 90px rgba(111, 124, 255, .08);
+  content: '';
+  transform: rotate(18deg);
+}
+
+:root[data-application-theme='customer-growth'] .visual-grid {
+  opacity: .34;
+  background-image:
+    linear-gradient(rgba(147, 156, 255, .11) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(72, 223, 179, .08) 1px, transparent 1px);
+  background-size: 56px 56px;
+}
+
+:root[data-application-theme='customer-growth'] .visual-glow {
+  width: 520px;
+  height: 520px;
+  background: linear-gradient(135deg, #6f7cff, #20c997);
+  filter: blur(170px);
+  opacity: .18;
+}
+
+:root[data-application-theme='customer-growth'] .visual-brand {
+  width: max-content;
+  padding: 8px 14px 8px 9px;
+  border: 1px solid rgba(255, 255, 255, .13);
+  border-radius: 14px;
+  background: rgba(9, 14, 36, .52);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, .18);
+  backdrop-filter: blur(16px);
+}
+
+:root[data-application-theme='customer-growth'] .visual-brand img,
+:root[data-application-theme='customer-growth'] .mobile-brand img {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  box-shadow: 0 8px 22px rgba(32, 201, 151, .2);
+}
+
+:root[data-application-theme='customer-growth'] .visual-brand b,
+:root[data-application-theme='customer-growth'] .mobile-brand b {
+  letter-spacing: -.025em;
+}
+
+:root[data-application-theme='customer-growth'] .trust-orbit {
+  border-color: rgba(147, 156, 255, .34);
+  box-shadow:
+    0 0 120px rgba(111, 124, 255, .14),
+    inset 0 0 74px rgba(32, 201, 151, .08);
+}
+
+:root[data-application-theme='customer-growth'] .trust-orbit::before,
+:root[data-application-theme='customer-growth'] .trust-orbit::after {
+  border-color: rgba(72, 223, 179, .28);
+}
+
+:root[data-application-theme='customer-growth'] .trust-orbit > svg {
+  color: #aab1ff;
+  filter: drop-shadow(0 0 24px rgba(111, 124, 255, .62));
+}
+
+:root[data-application-theme='customer-growth'] .trust-orbit span {
+  background: #48dfb3;
+  box-shadow: 0 0 18px rgba(72, 223, 179, .9);
+}
+
+:root[data-application-theme='customer-growth'] .visual-copy h1 {
+  color: #f7f8ff;
+  text-wrap: balance;
+}
+
+:root[data-application-theme='customer-growth'] .visual-copy p {
+  color: #aeb6d2;
+}
+
+:root[data-application-theme='customer-growth'] .eyebrow {
+  color: #48dfb3;
+}
+
+:root[data-application-theme='customer-growth'] .protocol-strip span {
+  padding: 5px 8px;
+  border: 1px solid rgba(147, 156, 255, .14);
+  border-radius: 999px;
+  color: #828cab;
+  background: rgba(11, 16, 39, .42);
+}
+
+/* Authentication panel and controls. */
+:root[data-application-theme='customer-growth'] .login-panel {
+  background:
+    radial-gradient(circle at 95% 4%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 34%),
+    var(--panel);
+}
+
+:root[data-application-theme='customer-growth'] .login-card {
+  width: min(440px, 100%);
+  padding: 34px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  box-shadow: var(--shadow);
+}
+
+:root[data-application-theme='customer-growth'] .login-card > h2 {
+  font-size: 34px;
+  letter-spacing: -.045em;
+}
+
+:root[data-application-theme='customer-growth'] input,
+:root[data-application-theme='customer-growth'] textarea {
+  min-height: 46px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-2) 78%, var(--panel));
+}
+
+:root[data-application-theme='customer-growth'] input:focus,
+:root[data-application-theme='customer-growth'] textarea:focus {
+  border-color: var(--customer-growth-brand);
+  box-shadow: 0 0 0 4px rgba(111, 124, 255, .13);
+}
+
+:root[data-application-theme='customer-growth'] .primary {
+  min-height: 48px;
+  border-radius: 12px;
+  color: #fff;
+  background: linear-gradient(115deg, #6674f6, #7d6ff2 62%, #4dbeaa);
+  box-shadow: 0 14px 32px rgba(111, 124, 255, .26);
+}
+
+:root[data-application-theme='customer-growth'] .primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+
+:root[data-application-theme='customer-growth'] .auth-method,
+:root[data-application-theme='customer-growth'] .provider-grid button {
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-2) 42%, transparent);
+}
+
+:root[data-application-theme='customer-growth'] .auth-method:hover,
+:root[data-application-theme='customer-growth'] .provider-grid button:hover {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--line));
+  background: color-mix(in srgb, var(--accent) 9%, var(--panel));
+  transform: translateY(-1px);
+}
+
+:root[data-application-theme='customer-growth'] .proof-line span {
+  background: var(--customer-growth-growth);
+  box-shadow: 0 0 12px var(--customer-growth-growth);
+}
+
+:root[data-application-theme='customer-growth'] .preferences label {
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+/* Authenticated credential-management surface shares the business identity. */
+:root[data-application-theme='customer-growth'] .account-security-page {
+  background:
+    radial-gradient(circle at 12% 8%, rgba(111, 124, 255, .17), transparent 33%),
+    radial-gradient(circle at 88% 88%, rgba(32, 201, 151, .12), transparent 34%),
+    var(--bg);
+}
+
+:root[data-application-theme='customer-growth'] .security-card {
+  border-radius: 24px;
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--line));
+}
+
+:root[data-application-theme='customer-growth'] .principal-chip {
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel-2));
+}
+
+@media (max-width: 900px) {
+  :root[data-application-theme='customer-growth'] .login-page {
+    grid-template-columns: 1fr;
+  }
+
+  :root[data-application-theme='customer-growth'] .login-panel {
+    padding: 76px 22px 42px;
+  }
+
+  :root[data-application-theme='customer-growth'] .login-card {
+    padding: clamp(22px, 6vw, 34px);
+  }
+
+  :root[data-application-theme='customer-growth'] .mobile-brand {
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--line);
+  }
+}

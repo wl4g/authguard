@@ -93,6 +93,7 @@ AUTHGUARD_REQUIRED_PATHS = (
     "src/cmd/src/main.rs",
     "src/authn/src/server.rs",
     "src/authn/src/route/authentication.rs",
+    "src/authn/src/route/application.rs",
     "src/authn/src/handler/authentication.rs",
     "src/authn/src/principal/mod.rs",
     "src/authn/src/principal/jit.rs",
@@ -136,6 +137,17 @@ AUTHGUARD_REQUIRED_PATHS = (
     "src/authz/src/principal/scim/model.rs",
     "src/authz/src/principal/scim/scim.rs",
     "src/authz/src/principal/scim/tests.rs",
+    "use-cases/customer-growth-job-service/e2e/helm/Chart.lock",
+    "use-cases/customer-growth-job-service/e2e/helm/charts/authguard-0.1.0.tgz",
+    "use-cases/customer-growth-job-service/e2e/helm/templates/authguard-theme.yaml",
+    "use-cases/customer-growth-job-service/e2e/helm/files/authguard-theme/customer-growth.svg",
+    "use-cases/customer-growth-job-service/e2e/helm/files/authguard-theme/customer-growth.css",
+    ".agents/skills/authguard-chart-integrator/SKILL.md",
+    ".agents/skills/authguard-chart-integrator/agents/openai.yaml",
+    ".agents/skills/authguard-chart-integrator/scripts/validate.py",
+    ".agents/skills/authguard-chart-integrator/references/contract.md",
+    ".agents/skills/authguard-chart-integrator/assets/authguard-theme.yaml",
+    ".agents/skills/authguard-chart-integrator/assets/theme.css",
 )
 
 AUTHGUARD_FORBIDDEN_PATHS = (
@@ -165,8 +177,12 @@ AUTHGUARD_FORBIDDEN_PATHS = (
     "src/authz/src/route/scim",
     "src/authz/src/principal/custom.rs",
     "src/authz/src/principal/resign.rs",
+    "web/public/assets/branding/customer-growth.svg",
+    "web/public/assets/themes/customer-growth/theme.css",
+    "deploy/helm/authguard/theme-packs/customer-growth",
     "use-cases/customer-growth-job-service/e2e/deploy/mocksvc-service",
     "use-cases/customer-growth-job-service/e2e/deploy/scim-sync-agent-service",
+    "use-cases/customer-growth-job-service/e2e/deploy/customer-growth-theme-pack",
 )
 
 REAL_E2E_VERIFIERS = (
@@ -175,6 +191,7 @@ REAL_E2E_VERIFIERS = (
     "authz/other/s20_principal_preauthorization.py",
     "authz/other/s26_gateway_authorization.py",
     "web/s30_authguard_ui.py",
+    "web/s31_hosted_login.py",
     "jaeger/s40_runtime_evidence.py",
 )
 
@@ -263,8 +280,11 @@ def _verify(_context: RunContext) -> VerificationResult:
         )
     runner_source = (USE_CASE_DIR / "e2e/runner.py").read_text(encoding="utf-8")
     cleanup_contract = (
+        '"cleanup"',
+        '"--cleanup"',
         '"--cleanup-after-run"',
         "finally:",
+        "cleanup_requested",
         "cleanup_deployment(context)",
         "KubernetesE2E(context).cleanup()",
     )
@@ -272,6 +292,13 @@ def _verify(_context: RunContext) -> VerificationResult:
         errors.append(f"runner cleanup lifecycle is incomplete: {missing}")
     if "def cleanup(" not in kubernetes_source:
         errors.append("Kubernetes infrastructure must expose one cleanup lifecycle")
+    isolated_gateway_markers = (
+        "gateway_controller_name",
+        "config.envoyGateway.gateway.controllerName",
+        '"controllerName": self.gateway_controller_name',
+    )
+    if missing := [marker for marker in isolated_gateway_markers if marker not in kubernetes_source]:
+        errors.append(f"E2E Envoy Gateway controller isolation is incomplete: {missing}")
     for verifier in REAL_E2E_VERIFIERS:
         source = (verifier_dir / verifier).read_text(encoding="utf-8")
         if "class " not in source or "(BaseVerifier)" not in source:
@@ -333,19 +360,156 @@ def _verify(_context: RunContext) -> VerificationResult:
         errors.append("mock IdP must not implement successful Ethereum RPC")
     if "/fault/ethereum/<chain_id>/timeout" not in mock_idp_source:
         errors.append("mock IdP lacks the isolated contract-RPC timeout fixture")
-    web_verifier_source = (verifier_dir / "web/s30_authguard_ui.py").read_text(
-        encoding="utf-8"
+    # Browser device transports are cohesive reusable fixtures shared by the
+    # console and Hosted Login journeys; validate the complete Web verifier
+    # module rather than forcing those implementations back into one scenario.
+    web_verifier_source = "\n".join(
+        (verifier_dir / path).read_text(encoding="utf-8")
+        for path in (
+            "web/s30_authguard_ui.py",
+            "web/s31_hosted_login.py",
+            "web/fixtures.py",
+        )
     )
     browser_markers = (
         "sync_playwright",
         "WebAuthn.addVirtualAuthenticator",
         "navigator.credentials.create/get",
         "personal_sign",
+        "Customer Growth computed theme contract changed",
+        "missing custom theme falls back",
     )
     if missing := [
         marker for marker in browser_markers if marker not in web_verifier_source
     ]:
         errors.append(f"web E2E lacks real Chromium journeys: {missing}")
+
+    helm_web_source = (
+        PROJECT_ROOT / "deploy/helm/authguard/templates/web.yaml"
+    ).read_text(encoding="utf-8")
+    helm_values_source = (
+        PROJECT_ROOT / "deploy/helm/authguard/values.yaml"
+    ).read_text(encoding="utf-8")
+    helm_config_source = (
+        PROJECT_ROOT / "deploy/helm/authguard/templates/configmap.yaml"
+    ).read_text(encoding="utf-8")
+    theme_config_map_markers = (
+        "automountServiceAccountToken: false",
+        "readOnlyRootFilesystem: true",
+        "/usr/share/nginx/html/assets/themes/custom",
+        "global.authguard.themeConfigMap",
+        "existingConfigMap",
+        'set $authnConfig "applications" $applications',
+    )
+    theme_config_map_sources = (
+        helm_web_source + helm_values_source + helm_config_source + kubernetes_source
+    )
+    if missing := [
+        marker
+        for marker in theme_config_map_markers
+        if marker not in theme_config_map_sources
+    ]:
+        errors.append(f"Helm static theme ConfigMap boundary is incomplete: {missing}")
+    obsolete_theme_image_markers = (
+        "theme-pack-installer",
+        "themePack:",
+        "theme.pack",
+        "sourcePath: /opt/authguard/theme",
+    )
+    if present := [
+        marker
+        for marker in obsolete_theme_image_markers
+        if marker in helm_web_source + helm_values_source
+    ]:
+        errors.append(f"obsolete theme image delivery remains in Helm: {present}")
+
+    business_chart_root = USE_CASE_DIR / "e2e/helm"
+    business_chart_source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            business_chart_root / "Chart.yaml",
+            business_chart_root / "values.yaml",
+            business_chart_root / "templates/authguard-theme.yaml",
+            USE_CASE_DIR / "e2e/common/kubernetes.py",
+        )
+    )
+    business_chart_markers = (
+        "alias: authguard-middleware",
+        "condition: authguard-middleware.enabled",
+        "enabled: false",
+        ".Files.Glob",
+        "global.authguard.themeConfigMap",
+        'authguard_values["enabled"] = True',
+        '"authguard-middleware": authguard_values',
+        "str(self.support_chart)",
+    )
+    if missing := [
+        marker for marker in business_chart_markers if marker not in business_chart_source
+    ]:
+        errors.append(
+            f"business umbrella Chart optional AuthGuard integration is incomplete: {missing}"
+        )
+
+    skill_root = PROJECT_ROOT / ".agents/skills/authguard-chart-integrator"
+    skill_source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            skill_root / "SKILL.md",
+            skill_root / "references/contract.md",
+            skill_root / "scripts/validate.py",
+        )
+    )
+    skill_markers = (
+        "oci://ghcr.io/wl4g/charts",
+        "helm pull",
+        "helm dependency update",
+        "authguard-middleware.enabled: false",
+        "exactly one top-level `authguard-middleware:` map",
+        "--application-host",
+        "--deploy-release",
+        "--deploy-namespace",
+        "files/authguard-theme",
+        "/auth/assets/themes/custom/",
+        "app.kubernetes.io/component: authguard-login-theme",
+        "theme-pack-installer",
+    )
+    if missing := [marker for marker in skill_markers if marker not in skill_source]:
+        errors.append(f"AuthGuard Chart integration skill is incomplete: {missing}")
+
+    docker_root = PROJECT_ROOT / "deploy/docker"
+    docker_compose = docker_root / "docker-compose.yaml"
+    docker_env = docker_root / ".env.example"
+    docker_envoy = docker_root / "config/envoy.yaml"
+    docker_authguard_config = docker_root / "config/authguard.yaml"
+    for path in (docker_compose, docker_env, docker_envoy, docker_authguard_config):
+        if not path.is_file():
+            errors.append(f"Docker deployment is missing {path.relative_to(PROJECT_ROOT)}")
+    for obsolete in (docker_root / "compose.yaml", docker_root / "nginx.compose.conf"):
+        if obsolete.exists():
+            errors.append(f"Docker deployment retains obsolete {obsolete.relative_to(PROJECT_ROOT)}")
+    if docker_env.is_file():
+        for line in docker_env.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _value = line.split("=", 1)
+            if not key.startswith("AUTHGUARD__"):
+                errors.append(
+                    "Docker .env exposes a non-reflected runtime key: " + key
+                )
+    if docker_envoy.is_file():
+        envoy_source = docker_envoy.read_text(encoding="utf-8")
+        required_envoy_filters = (
+            "envoy.filters.http.jwt_authn",
+            "envoy.filters.http.ext_authz",
+            "authz_grpc",
+            "remote_jwks",
+            "/.well-known/jwks.json",
+        )
+        if missing := [
+            marker for marker in required_envoy_filters if marker not in envoy_source
+        ]:
+            errors.append(f"Docker Envoy PEP is incomplete: {missing}")
 
     telemetry_contracts = {
         "Helm workloads": (
@@ -409,7 +573,9 @@ def _verify(_context: RunContext) -> VerificationResult:
         "Real k3s phases are ordered 00 deployment -> 15 pre-authorization -> "
         "16 AuthN -> 17 Envoy/AuthZ/Biz -> 19 UI -> 21 runtime evidence; phase 20 is their "
         "shared fail-closed observability contract",
-        "Runner supports opt-in cleanup of all Helm releases and the isolated namespace",
+        "Runner supports one-shot and opt-in cleanup of all E2E Helm releases and the isolated namespace",
+        "Docker uses the same reflected AuthGuard secret keys and Envoy PEP filter order as Helm",
+        "Hosted Login theming uses an immutable Web image plus a business service Helm Chart local directory mounted as a ConfigMap",
     ]
     details.extend(errors)
     return VerificationResult(

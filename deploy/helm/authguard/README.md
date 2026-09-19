@@ -1,183 +1,188 @@
 # AuthGuard Helm chart
 
-This chart is the Kubernetes installation entry point for the default AuthGuard topology:
+Installs Envoy Gateway, AuthN, AuthZ, Web, Redis Cluster, and PostgreSQL.
+Keycloak remains an external OIDC or Principal-discovery integration.
 
-```text
-Envoy Gateway
-authguard-authn
-authguard-authz
-authguard-web
-```
+## 1. Prepare
 
-It does not deploy Keycloak and introduces no AuthGuard CRD or Controller. Disable the vendored Envoy Gateway only when the cluster already operates a compatible installation.
-
-## Install
+Require Helm 3, a writable StorageClass, and an existing Kubernetes cluster.
+Create one logical Secret payload; all active values must be single-line.
 
 ```bash
-helm dependency build deploy/helm/authguard
-helm upgrade --install authguard deploy/helm/authguard \
-  --namespace authguard \
-  --create-namespace
+cp deploy/helm/authguard/bootstrap/authguard-secrets.env.example authguard-secrets.env && \
+${EDITOR:-vi} authguard-secrets.env
 ```
 
-Default component settings:
+The required base keys are PostgreSQL, Redis, canonical JWT, AuthZ HMAC, and
+the AuthZ API token. Optional provider credentials use their matching
+`AUTHGUARD__...` path; see the template for examples.
 
-- `envoy_gateway.enabled=true`;
-- `authguard.authn.enabled=true`, two replicas;
-- `authguard.web.enabled=true`, two static-asset replicas;
-- `authguard.authz.replicaCount=1` for the SQLite AuthZ default;
-- Redis Cluster enabled for shared opaque scope-token contexts.
+## 2. Initialise the Secret source
 
-Select PostgreSQL before using independently replicated AuthN/AuthZ, and Redis
-before scaling AuthZ's opaque-scope delivery.
-
-The public values surface is intentionally grouped by product boundary:
-
-```yaml
-envoy_gateway:
-  deployment: {}
-  ext_authz: {}
-
-authguard:
-  authn: {}
-  web: {}
-  authz: {}
-  authguard-config: |-
-    # One shared authguard.yaml
-
-redis_cluster: {}
-secrets: {}
-```
-
-## One shared configuration file
-
-AuthN and AuthZ mount and read the same `/etc/authguard/authguard.yaml`. The complete content is held in `authguard.authguard-config`; do not create a second AuthN YAML.
-
-```yaml
-authguard:
-  authn:
-    # authguard-authn deployment settings
-  authz:
-    # authguard-authz deployment settings
-  authguard-config: |
-    authn:
-      providers: {}
-      accountLinking:
-        strategy: explicit
-        authoritativeProviders: []
-        allowLink: {}
-
-    server:
-      # authguard-authz runtime
-      # ...
-    authz:
-      identity:
-        token_header: authorization
-        principal_id_claim: principal_id
-        principal_kind_claim: principal_kind
-        groups_claim: authguard_group_ids
-```
-
-Both services deserialize the same strongly typed `AppConfigProperties` snapshot. Startup resolves only the service-owned secret subtree (`authn` or `authz`), so one `authguard.yaml` remains the source of truth without introducing a Provider-to-AuthZ dependency.
-
-Provider entries describe protocol mechanics only. `authoritativeProviders` and `allowLink` remain centralized under `accountLinking`; never repeat authoritative/secondary roles inside each Provider.
-
-`accountLinking.strategy` supports two modes:
-
-- `explicit` (default): only an authoritative Provider can create a Principal; another identity is linked with an already authenticated Principal token according to `allowLink`.
-- `first-login`: any previously unbound Provider identity creates a Principal and its identity binding, which is useful for 2C signup.
-
-`first-login` reuses an existing binding only for the same `(provider, issuer, subject)`. It never merges identities from different Providers by matching email; users link additional login methods through the authenticated explicit-link flow.
-
-## Envoy Gateway boundary
-
-Envoy Gateway is the common edge and PEP(Policy Enforcement Point). All standard OIDC and OAuth-like
-authorization, callback, token exchange, ID Token validation, UserInfo, and
-normalization run in AuthN. Envoy validates only the AuthN-issued canonical JWT;
-the request hot path is `jwt_authn -> ext_authz(authguard-authz)`.
-
-The managed Gateway uses a `protected` listener for business routes and a
-separate `authn` listener for `/auth/` authorize/callback routes. The
-SecurityPolicy targets only `sectionName: protected`, so a user can establish a
-token while every business request still requires canonical JWT verification
-and AuthZ. External IdP issuers are deliberately absent from this SecurityPolicy.
-
-The AuthN Service is `<release>-authguard-authn:8082`. The AuthZ Service exposes:
-
-- `8080`: Envoy `envoy.service.auth.v3.Authorization/Check`;
-- `8081`: workload `authguard.access.v1.AccessContextService/ResolveScope`;
-- `9091`: management, health, readiness, and metrics when enabled.
-
-NetworkPolicy admits AuthN and the AuthZ Check listener from Envoy-selected pods, the scope listener from `authguard.io/scope-client`, and management from `authguard.io/management-client`.
-
-## Identity and Principal contract
-
-AuthN resolves `(provider, issuer, subject)` through `iam_principal_identity` and produces only a canonical Principal context. AuthZ never consumes provider subjects or tokens.
-
-An unbound secondary Provider fails under the default `strategy: explicit`; equal email addresses never create a binding. Internet deployments may explicitly choose `first-login`.
-
-## Secrets
-
-Secrets remain in their owning configuration block and are injected through the selected Kubernetes, Vault, GCP Secret Manager, or AWS Secrets Manager mechanism. The chart does not create a second unified application-secret model.
-
-Common environment keys include:
-
-| Purpose | Configuration owner | Environment key |
-|---|---|---|
-| Redis scope cache | AuthZ cache | `AUTHGUARD__CACHE__REDIS__PASSWORD` (Kubernetes) or `AUTHGUARD_REDIS_PASSWORD` (env-file reference) |
-| PostgreSQL | shared IAM storage | `AUTHGUARD__STORAGE__POSTGRES__URL`, `AUTHGUARD__STORAGE__POSTGRES__USERNAME`, `AUTHGUARD__STORAGE__POSTGRES__PASSWORD` |
-| AuthN canonical-token key | AuthN | `AUTHGUARD_AUTHN_TOKEN_PRIVATE_KEY` when referenced by `authn.token.privateKey` |
-| Provider credentials | AuthN | deployment-defined keys referenced by `${...}` in the Provider entry |
-| Keycloak discovery service account | optional AuthZ integration | `AUTHGUARD_KEYCLOAK_CLIENT_SECRET` |
-| LDAP discovery bind | optional AuthZ integration | `AUTHGUARD_LDAP_BIND_PASSWORD` |
-| Direct access-context HMAC | AuthZ and workloads | `AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY` |
-| AuthZ resign key | AuthZ delivery | `AUTHGUARD__AUTHZ__RESIGN__PRIVATE_KEY_B64` |
-
-Provider client secrets for AuthN are likewise secret-injected and must not be committed in Provider YAML. Keycloak secrets are needed only when the optional Keycloak integration is enabled.
-
-### Access-context signing
-
-AuthZ and each workload share a high-entropy HMAC key through
-`AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY`. Put that key in the selected top-level
-`secrets` provider; for the default Kubernetes provider, the referenced Opaque
-Secret exposes it directly as an environment key:
-
-```yaml
-secrets:
-  provider: kubernetes
-  kubernetes:
-    existingSecret: authguard-secrets
-```
-
-### Optional resign token
-
-When `authz.resign.enabled=true`, AuthZ reads the base64 PKCS#8 key directly,
-then replaces the upstream authorization header with a short-lived RS256 token.
-Its expiry is bounded by both `max_ttl` and the source canonical JWT's remaining
-lifetime. There is no key-decoding init container.
-
-```yaml
-authguard:
-  authguard-config: |
-    authn:
-      providers: {}
-      accountLinking: { strategy: explicit }
-    authz:
-      resign:
-        enabled: true
-        max_ttl: 60s
-        private_key_b64: "${AUTHGUARD__AUTHZ__RESIGN__PRIVATE_KEY_B64}"
-```
-
-## Keycloak
-
-Keycloak is supported, never required. The chart contains no Keycloak workload. Existing enterprises can configure Keycloak as an external OIDC Provider and optionally enable Keycloak Admin API Principal discovery.
-
-## Render verification
+Kubernetes Secret is the default and works with bundled PostgreSQL and Redis:
 
 ```bash
-helm lint deploy/helm/authguard
-helm template authguard deploy/helm/authguard --namespace authguard >/tmp/authguard-rendered.yaml
+deploy/helm/authguard/bootstrap/k8s-secrets-setup.sh \
+  --secret-file "$PWD/authguard-secrets.env"
 ```
 
-The repository defaults to mirrored images suitable for mainland-China environments. If dependency or build access is blocked by GFW, use `HTTPS_PROXY=http://127.0.0.1:8800`.
+For a managed Secret store, run one setup command and keep the generated values
+file for step 3:
+
+| Source | Setup command | Values file |
+| --- | --- | --- |
+| GCP | `gcp-secrets-setup.sh --project PROJECT --account ACCOUNT --secret-file FILE` | `authguard-gcp-values.yaml` |
+| AWS | `aws-secrets-setup.sh --profile PROFILE --region REGION --cluster EKS_CLUSTER --secret-file FILE` | `authguard-aws-values.yaml` |
+| Vault | `vault-secrets-setup.sh --secret-file FILE` | `authguard-vault-values.yaml` |
+
+Use `--help` on a setup script for common flags. Optional IaC templates are
+generated without cloud writes via `gcp-secrets-setup.sh --write-replication-policy FILE`
+or `aws-secrets-setup.sh --write-kms-key-policy FILE`.
+
+## 3. Install or upgrade
+
+```bash
+helm upgrade --install authguard oci://ghcr.io/wl4g/charts/authguard \
+  --version 0.1.0 \
+  --namespace authguard --create-namespace \
+  --set secrets.kubernetes.existingSecret=authguard-secrets \
+  --set authguard.authn.image.repository=ghcr.io/wl4g/authguard \
+  --set authguard.authz.image.repository=ghcr.io/wl4g/authguard \
+  --set authguard.web.image.repository=ghcr.io/wl4g/authguard-web
+```
+
+For GCP, AWS, or Vault append `-f authguard-<provider>-values.yaml`. Do not put
+Secret values in Helm `--set` arguments. Bundled middleware defaults to Aliyun
+mirrors; product image paths above may be replaced with an approved registry.
+
+## 4. Verify and configure
+
+```bash
+kubectl -n authguard rollout status deployment/authguard-authn && \
+kubectl -n authguard rollout status deployment/authguard && \
+kubectl -n authguard get pods
+```
+
+AuthN and AuthZ share the typed `authguard.yaml` in
+[`values.yaml`](values.yaml). Envoy Gateway is the PEP: protected routes use
+canonical JWT validation followed by `ext_authz`; AuthZ receives only Principal,
+resource, action, and context. Configure providers, wallet RPC mappings, and
+external storage by overriding that one runtime configuration block.
+
+For Hosted Login, set `authguard.authn.applications` with each
+trusted business host, display name, optional `/auth/assets/...` logo/theme,
+and HTTPS `returnUris`. The chart overlays that map onto the runtime
+configuration, including when `authguard.authguard-config` is replaced. Keep
+the AuthGuard Web image immutable.
+
+The simplest business integration needs no extra image. Vendor the immutable
+AuthGuard tgz, keep CSS/SVG/font files inside the business Chart, and create a
+ConfigMap with `.Files.Glob`:
+
+```yaml
+# business/Chart.yaml
+dependencies:
+  - name: authguard
+    alias: authguard-middleware
+    version: 0.1.0
+    repository: oci://ghcr.io/wl4g/charts
+    condition: authguard-middleware.enabled
+```
+
+```yaml
+# business/values.yaml
+global:
+  authguard:
+    themeRevision: v1
+    themeConfigMap: '{{ .Release.Name }}-authguard-theme-{{ .Values.global.authguard.themeRevision }}'
+authguard-middleware:
+  enabled: false
+  theme:
+    files: files/authguard-theme/*
+  authguard:
+    authn:
+      applications:
+        example-app:
+          hosts: [app.example.com]
+          displayName: Example App
+          logo: /auth/assets/themes/custom/example-app.svg
+          theme:
+            id: example-app
+            stylesheet: /auth/assets/themes/custom/example-app.css
+          returnUris: [https://app.example.com/**]
+```
+
+```yaml
+# business/templates/authguard-theme.yaml
+{{- $authguard := index .Values "authguard-middleware" }}
+{{- if $authguard.enabled }}
+{{- $files := .Files.Glob $authguard.theme.files }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ tpl .Values.global.authguard.themeConfigMap . }}
+immutable: true
+data:
+{{ $files.AsConfig | indent 2 }}
+{{- end }}
+```
+
+Put uniquely named files under `business/files/authguard-theme/`; Helm packages
+the directory into the business tgz and AuthGuard mounts it read-only at
+`/auth/assets/themes/custom/`. `.Files` can only read files inside the Chart,
+not an arbitrary host directory outside its package. Keep ConfigMap-backed
+assets below Kubernetes' object-size limit (approximately 1 MiB), so CSS, SVG,
+and fonts should remain compact. To update an immutable theme, increment
+`global.authguard.themeRevision`; custom URLs are revalidated, while hashed Web
+bundles retain their immutable cache policy.
+
+Use a separate one-time middleware release from the same business Chart. This
+is important: disabling a dependency in a later upgrade of the *same* release
+would delete resources previously owned by that release.
+
+```bash
+helm upgrade --install business-authguard ./business \
+  --set application.enabled=false \
+  --set authguard-middleware.enabled=true \
+  --set-string 'authguard-middleware.theme.files=files/authguard-theme/*'
+
+# Frequent application releases keep authguard-middleware.enabled=false and therefore
+# never create, upgrade, or remove the separate middleware release.
+helm upgrade --install business ./business
+```
+
+`application.enabled` represents the business Chart's own workload gate; use
+its actual name. The Customer Growth reference uses `support.enabled=false`.
+
+The complete executable reference is
+[`use-cases/customer-growth-job-service/e2e/helm`](../../../use-cases/customer-growth-job-service/e2e/helm):
+its default business release disables AuthGuard, while a second release enables
+the vendored tgz and packages `files/authguard-theme/`. The real Chromium E2E
+verifies both that ConfigMap mount and the no-theme fallback.
+
+Repository-aware coding agents can use
+[`$authguard-chart-integrator`](../../../.agents/skills/authguard-chart-integrator/SKILL.md)
+to discover the latest stable GHCR Chart, vendor and pin that exact release,
+obtain the real business service domain, wire the complete opt-in dependency
+values, validate disabled/enabled renders, and run an explicitly targeted
+deployment smoke test. A scoped local Hosted Login theme remains optional.
+
+Both `logo` and `theme` are optional per Application. If neither is configured,
+Hosted Login still replaces the product name from Host-resolved metadata while
+rendering the built-in AuthGuard mark and cyan trust-fabric visual. No asset
+volume is required for that fallback.
+The chart never loads theme JavaScript or arbitrary HTML. The Web HTTPRoute owns only
+`GET /auth/login`, `GET /auth/account/security`, and `GET /auth/assets/*`; the
+AuthN HTTPRoute owns `/.well-known/*` and the remaining `/auth/*`. This leaves
+an application's `/api/*` and `/*` routes to its own chart. Enable
+`authguard-middleware.authguard.web.route.console` only on a dedicated AuthGuard Console hostname.
+
+The Gateway has one listener, so Hosted Login remains on the application's
+browser origin. Label each protected business `HTTPRoute` with
+`authguard.io/protected: "true"`; the chart's route-scoped SecurityPolicy then
+applies canonical JWT validation and fail-closed `ext_authz` only there. The
+selector is same-namespace by default. For a business route in another
+namespace, set `envoy_gateway.ext_authz.protectedRouteSelector.namespaces.from=All`
+and create the required Gateway API `ReferenceGrant` in that namespace.
+
+For a local non-Kubernetes deployment, use the [Docker Compose guide](../../docker/README.md).

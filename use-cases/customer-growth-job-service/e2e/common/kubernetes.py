@@ -39,8 +39,16 @@ ALIYUN_POSTGRES_IMAGE = (
 )
 ALIYUN_ANVIL_IMAGE = "registry.cn-shenzhen.aliyuncs.com/wl4g/foundry_anvil:1.7.1"
 ALIYUN_SOLANA_IMAGE = "registry.cn-shenzhen.aliyuncs.com/wl4g/anza_solana:3.1.14"
-AUTHGUARD_IMAGE = "registry.cn-shenzhen.aliyuncs.com/wl4g/authguard:e2e-local"
-AUTHGUARD_WEB_IMAGE = "registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-web:e2e-local"
+DEFAULT_AUTHGUARD_IMAGE = (
+    "registry.cn-shenzhen.aliyuncs.com/wl4g/authguard:e2e-local"
+)
+DEFAULT_AUTHGUARD_WEB_IMAGE = (
+    "registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-web:e2e-local"
+)
+AUTHGUARD_IMAGE = os.getenv("AUTHGUARD_E2E_AUTHGUARD_IMAGE", DEFAULT_AUTHGUARD_IMAGE)
+AUTHGUARD_WEB_IMAGE = os.getenv(
+    "AUTHGUARD_E2E_WEB_IMAGE", DEFAULT_AUTHGUARD_WEB_IMAGE
+)
 AUTHGUARD_API_TOKEN = "e2e-authguard-api-token"
 E2E_KEYS_DIR = CONFIG_DIR / "e2e-jwt-keys"
 MOCK_IDP_IMAGE = (
@@ -65,6 +73,8 @@ WORKLOAD_HOSTS = {
     for component in WORKLOAD_IMAGES
 }
 AUTHN_HOST = "e2e-authguard-authn.customer-growth.local"
+CUSTOMER_GROWTH_HOST = "customer-growth.local"
+CUSTOMER_GROWTH_FALLBACK_HOST = "customer-growth-default.local"
 # WebAuthn is available only in a trustworthy browser context. Chromium treats
 # HTTP localhost as trustworthy, so browser ceremonies use this additional
 # route host while protocol/API scenarios retain the descriptive AuthN host.
@@ -150,6 +160,11 @@ class KubernetesE2E:
     def authguard_web_route(self) -> str:
         return "e2e-authguard-customer-growth-web"
 
+    @property
+    def gateway_controller_name(self) -> str:
+        """Controller identity dedicated to this isolated E2E GatewayClass."""
+        return f"e2e.authguard.io/{self.gateway_name}"
+
     def workload_service(self, component: str) -> str:
         return f"{self.support_release}-{component}"
 
@@ -174,6 +189,7 @@ class KubernetesE2E:
 
     def redeploy(self) -> None:
         self._run(("helm", "dependency", "list", str(self.helm_chart)))
+        self._run(("helm", "dependency", "list", str(self.support_chart)))
         if self.context.clean:
             self.cleanup()
         self._run(("kubectl", "create", "namespace", self.namespace), allowed_codes={0, 1})
@@ -182,21 +198,24 @@ class KubernetesE2E:
         self._prepare_external_images()
         self._install_envoy_gateway()
         self._remove_mutable_cluster_images()
-        self._install_support_services()
-        # Create the consumer Pods first, then import each mutable local image.
-        # Under image-GC pressure an unreferenced image can disappear while the
-        # remaining large images are still being imported. Pending Pods pin the
-        # image as soon as it becomes available and remove that race.
+        # Workload Pods deliberately use imagePullPolicy: Never. Import every
+        # mutable local image before their Helm release creates a consumer so a
+        # kubelet never records an ErrImageNeverPull before that tag exists.
         self._prepare_workload_images()
+        self._install_support_services()
         # Support Pods now reference their immutable images. Re-check after the
         # mutable imports so k3s image GC cannot remove a large, previously idle
         # chain image in the interval between the first import and Pod startup.
         self._prepare_external_images()
         self._wait_for_support_services()
         self._import_image(AUTHGUARD_IMAGE)
-        # Redis is installed by the Authguard chart with pullPolicy=Never. Import it
-        # immediately before Helm creates the StatefulSet so k3s image GC cannot
-        # collect an unreferenced image while the support services are starting.
+        # The Web Pod is created by the AuthGuard chart, not the support chart.
+        # Re-import immediately before Helm creates that consumer so k3s image
+        # GC cannot collect the unreferenced local image during support startup.
+        self._import_image(AUTHGUARD_WEB_IMAGE)
+        # Import Redis immediately before Helm creates the StatefulSet. The chart
+        # still uses IfNotPresent so kubelet can recover from image GC by pulling
+        # the same immutable Aliyun tag in constrained CI environments.
         self._import_image(ALIYUN_REDIS_IMAGE)
         self._install_authguard()
         self._wait_for_resources()
@@ -269,42 +288,57 @@ class KubernetesE2E:
                 "--build-arg",
                 f"MAVEN_PROXY_PORT={parsed_proxy.port}",
             )
-        self._run(
-            (
-                "docker",
-                "build",
-                "--network=host",
-                "--pull=false",
-                *build_args,
-                "-f",
-                str(PROJECT_ROOT / "deploy" / "docker" / "Dockerfile"),
-                "--build-arg",
-                "AUTHGUARD_CARGO_FEATURES=web3",
-                "-t",
-                AUTHGUARD_IMAGE,
-                ".",
-            ),
-            cwd=PROJECT_ROOT,
-        )
-        ui_dir = PROJECT_ROOT / "web"
-        reown_project_id = os.getenv("VITE_REOWN_PROJECT_ID", "")
-        self._run(
-            (
-                "docker",
-                "build",
-                "--network=host",
-                "--pull=false",
-                *build_args,
-                "-f",
-                str(ui_dir / "Dockerfile"),
-                "--build-arg",
-                f"VITE_REOWN_PROJECT_ID={reown_project_id}",
-                "-t",
-                AUTHGUARD_WEB_IMAGE,
-                str(ui_dir),
-            ),
-            cwd=PROJECT_ROOT,
-        )
+        use_prebuilt_images = os.getenv(
+            "AUTHGUARD_E2E_USE_PREBUILT_IMAGES", "false"
+        ).lower() in {"1", "true", "yes"}
+        if use_prebuilt_images:
+            if (
+                AUTHGUARD_IMAGE == DEFAULT_AUTHGUARD_IMAGE
+                or AUTHGUARD_WEB_IMAGE == DEFAULT_AUTHGUARD_WEB_IMAGE
+            ):
+                raise ValueError(
+                    "prebuilt E2E mode requires AUTHGUARD_E2E_AUTHGUARD_IMAGE "
+                    "and AUTHGUARD_E2E_WEB_IMAGE"
+                )
+            self._run(("docker", "pull", AUTHGUARD_IMAGE))
+            self._run(("docker", "pull", AUTHGUARD_WEB_IMAGE))
+        else:
+            self._run(
+                (
+                    "docker",
+                    "build",
+                    "--network=host",
+                    "--pull=false",
+                    *build_args,
+                    "-f",
+                    str(PROJECT_ROOT / "deploy" / "docker" / "Dockerfile"),
+                    "--build-arg",
+                    "AUTHGUARD_CARGO_FEATURES=web3",
+                    "-t",
+                    AUTHGUARD_IMAGE,
+                    ".",
+                ),
+                cwd=PROJECT_ROOT,
+            )
+            ui_dir = PROJECT_ROOT / "web"
+            reown_project_id = os.getenv("VITE_REOWN_PROJECT_ID", "")
+            self._run(
+                (
+                    "docker",
+                    "build",
+                    "--network=host",
+                    "--pull=false",
+                    *build_args,
+                    "-f",
+                    str(ui_dir / "Dockerfile"),
+                    "--build-arg",
+                    f"VITE_REOWN_PROJECT_ID={reown_project_id}",
+                    "-t",
+                    AUTHGUARD_WEB_IMAGE,
+                    str(ui_dir),
+                ),
+                cwd=PROJECT_ROOT,
+            )
         for component, image in WORKLOAD_IMAGES.items():
             service_dir = self.deploy_dir / WORKLOAD_DIRECTORIES[component]
             self._run(
@@ -372,12 +406,20 @@ class KubernetesE2E:
         # e2e-local tags are intentionally mutable. Import them immediately before
         # creating their Pods so k3s image GC cannot collect an unreferenced image
         # while an earlier Helm release is still becoming ready.
-        for image in (*WORKLOAD_IMAGES.values(), MOCK_IDP_IMAGE, AUTHGUARD_WEB_IMAGE):
+        for image in (
+            *WORKLOAD_IMAGES.values(),
+            MOCK_IDP_IMAGE,
+            AUTHGUARD_WEB_IMAGE,
+        ):
             self._import_image(image)
 
     def _remove_mutable_cluster_images(self) -> None:
         """Prevent a recreated Pod from starting an obsolete mutable E2E image tag."""
-        for image in (*WORKLOAD_IMAGES.values(), MOCK_IDP_IMAGE, AUTHGUARD_WEB_IMAGE):
+        for image in (
+            *WORKLOAD_IMAGES.values(),
+            MOCK_IDP_IMAGE,
+            AUTHGUARD_WEB_IMAGE,
+        ):
             self._run(
                 (*self._k3s_command(), "ctr", "-n", "k8s.io", "images", "remove", image),
                 allowed_codes={0, 1},
@@ -449,6 +491,8 @@ class KubernetesE2E:
                 f"global.images.envoyProxy.image={ALIYUN_ENVOY_IMAGE}",
                 "--set",
                 "global.images.envoyProxy.pullPolicy=Never",
+                "--set-string",
+                f"config.envoyGateway.gateway.controllerName={self.gateway_controller_name}",
                 "--wait",
                 f"--timeout={self.context.timeout_seconds}s",
             )
@@ -468,7 +512,7 @@ class KubernetesE2E:
                 "--set-file",
                 f"keycloak.realm={CONFIG_DIR / 'keycloak-realm.json'}",
                 "--set-file",
-                f"postgresql.initSQL={CONFIG_DIR / 'init.sql'}",
+                f"supportPostgresql.initSQL={CONFIG_DIR / 'init.sql'}",
                 "--set-file",
                 f"keycloak.realmSigningPrivateKey={E2E_KEYS_DIR / 'realm-signing-key.pem'}",
                 "--set-file",
@@ -480,7 +524,7 @@ class KubernetesE2E:
                 "--set-file",
                 f"keycloak.resignJwtPublicKey={E2E_KEYS_DIR / 'resign-jwt-key.pub.pem'}",
                 "--set",
-                f"authguard.grpcTarget={grpc_target}",
+                f"authguard-middleware.grpcTarget={grpc_target}",
                 "--set",
                 f"gateway.name={self.gateway_name}",
             )
@@ -511,7 +555,24 @@ class KubernetesE2E:
             )
 
     def _install_authguard(self) -> None:
-        values = self._authguard_values()
+        # Install the optional vendored subchart from the same business Chart,
+        # but under a distinct release. Normal business upgrades use the
+        # default authguard-middleware.enabled=false and cannot mutate it.
+        authguard_values = self._authguard_values()
+        authguard_values["enabled"] = True
+        values = {
+            "support": {"enabled": False},
+            "authguard-middleware": authguard_values,
+            "global": {
+                "authguard": {
+                    "themeRevision": "v1",
+                    "themeConfigMap": (
+                        "{{ .Release.Name }}-authguard-theme-"
+                        "{{ .Values.global.authguard.themeRevision }}"
+                    ),
+                }
+            },
+        }
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as values_file:
             json.dump(values, values_file)
             values_file.flush()
@@ -521,7 +582,7 @@ class KubernetesE2E:
                     "upgrade",
                     "--install",
                     self.authguard_release,
-                    str(self.helm_chart),
+                    str(self.support_chart),
                     "-n",
                     self.namespace,
                     "-f",
@@ -551,13 +612,19 @@ class KubernetesE2E:
                         "create": True,
                         "className": self.gateway_name,
                         "name": self.gateway_name,
+                        "listenerPort": 8082,
+                        "controllerName": self.gateway_controller_name,
                     },
                     "authguardRoute": {"enabled": False},
                     "authnRoute": {
                         "enabled": True,
                         "name": "e2e-authguard-customer-growth-authn",
-                        "listenerPort": 8082,
-                        "hostnames": [AUTHN_HOST, AUTHN_BROWSER_HOST],
+                        "hostnames": [
+                            AUTHN_HOST,
+                            AUTHN_BROWSER_HOST,
+                            CUSTOMER_GROWTH_HOST,
+                            CUSTOMER_GROWTH_FALLBACK_HOST,
+                        ],
                     },
                     "tracing": {
                         "enabled": True,
@@ -568,17 +635,23 @@ class KubernetesE2E:
             },
             "redis_cluster": {
                 "enabled": True,
-                "nameOverride": "redis-cluster",
+                # Keep the StatefulSet controller-revision label below the
+                # Kubernetes 63-character limit even when the E2E release
+                # name is intentionally descriptive.
+                "fullnameOverride": "e2e-redis-cluster",
                 "image": {
                     "registry": "registry.cn-shenzhen.aliyuncs.com",
                     "repository": "wl4g-k8s/bitnami_redis-cluster",
                     "tag": "7.0.14",
-                    "pullPolicy": "Never",
+                    "pullPolicy": "IfNotPresent",
                 },
-                "password": "e2e-authguard-redis-password",
+                "existingSecret": self.principal_discovery_secret,
+                "existingSecretPasswordKey": "AUTHGUARD__CACHE__REDIS__PASSWORD",
                 "cluster": {"nodes": 6, "replicas": 1},
                 "persistence": {"enabled": False},
             },
+            # The E2E support chart owns its dedicated PostgreSQL instance.
+            "postgresql": {"enabled": False},
             "fullnameOverride": self.authguard_release,
             "secrets": {
                 # kubernetes provider: the support-chart Secret is injected
@@ -625,7 +698,17 @@ class KubernetesE2E:
                     "route": {
                         "enabled": True,
                         "name": self.authguard_web_route,
-                        "hostnames": [AUTHN_HOST, AUTHN_BROWSER_HOST],
+                        "hostnames": [
+                            AUTHN_HOST,
+                            AUTHN_BROWSER_HOST,
+                            CUSTOMER_GROWTH_HOST,
+                            CUSTOMER_GROWTH_FALLBACK_HOST,
+                        ],
+                        "console": {
+                            "enabled": True,
+                            "name": f"{self.authguard_web_route}-console",
+                            "hostnames": [AUTHN_HOST, AUTHN_BROWSER_HOST],
+                        },
                     },
                 },
                 "authz": {
@@ -645,7 +728,7 @@ class KubernetesE2E:
                         ),
                     },
                 },
-                # The COMPLETE main configuration (flowgent-chart style) is
+                # The complete main configuration is
                 # rendered by Helm tpl into the authguard ConfigMap. Policy
                 # data is deliberately absent: authorization policies are
                 # imported into the Authguard storage as the post-deploy
@@ -671,7 +754,7 @@ class KubernetesE2E:
         )
         solana_reference = self.solana_chain_reference()
         redis_node = (
-            f"redis://{self.authguard_release}-redis-cluster."
+            "redis://e2e-redis-cluster."
             f"{self.namespace}.svc.cluster.local:6379"
         )
         iam_postgres_url = (
@@ -687,7 +770,7 @@ class KubernetesE2E:
                 "      type: oauth2",
                 "      issuer: https://github.com",
                 "      clientId: e2e-authguard-github-client",
-                '      clientSecret: "${AUTHGUARD_GITHUB_CLIENT_SECRET}"',
+                '      clientSecret: "${AUTHGUARD__AUTHN__PROVIDERS__GITHUB__CLIENT_SECRET}"',
                 f"      callbackUrl: http://{AUTHN_BROWSER_HOST}:8082/auth/oauth2/github/callback",
                 "      authorization:",
                 f"        endpoint: {mock_idp_url + '/github/login/oauth/authorize'!r}",
@@ -706,7 +789,7 @@ class KubernetesE2E:
                 "      type: oauth2",
                 "      issuer: https://accounts.google.com",
                 "      clientId: e2e-authguard-google-client",
-                '      clientSecret: "${AUTHGUARD_GOOGLE_CLIENT_SECRET}"',
+                '      clientSecret: "${AUTHGUARD__AUTHN__PROVIDERS__GOOGLE__CLIENT_SECRET}"',
                 f"      callbackUrl: http://{AUTHN_BROWSER_HOST}:8082/auth/oauth2/google/callback",
                 "      authorization:",
                 f"        endpoint: {mock_idp_url + '/google/o/oauth2/v2/auth'!r}",
@@ -723,7 +806,7 @@ class KubernetesE2E:
                 "      type: oidc",
                 f"      issuer: {keycloak_base + '/realms/example-corp'!r}",
                 "      clientId: e2e-authguard-principal-discovery",
-                '      clientSecret: "${AUTHGUARD_KEYCLOAK_CLIENT_SECRET}"',
+                '      clientSecret: "${AUTHGUARD__AUTHN__PROVIDERS__E2E_AUTHGUARD_KEYCLOAK__CLIENT_SECRET}"',
                 f"      callbackUrl: http://{AUTHN_BROWSER_HOST}:8082/auth/oauth2/e2e-authguard-keycloak/callback",
                 "      scopes: [openid, profile, email]",
                 "      userinfo: true",
@@ -741,7 +824,7 @@ class KubernetesE2E:
                 "      type: oauth2-like",
                 "      issuer: https://open.weixin.qq.com",
                 "      clientId: e2e-authguard-wechat-app",
-                '      clientSecret: "${AUTHGUARD_WECHAT_CLIENT_SECRET}"',
+                '      clientSecret: "${AUTHGUARD__AUTHN__PROVIDERS__WECHAT__CLIENT_SECRET}"',
                 f"      callbackUrl: http://{AUTHN_BROWSER_HOST}:8082/auth/oauth2/wechat/callback",
                 "      authorization:",
                 f"        endpoint: {mock_idp_url + '/wechat/connect/qrconnect'!r}",
@@ -762,7 +845,7 @@ class KubernetesE2E:
                 "      type: oauth2-like",
                 "      issuer: https://graph.qq.com",
                 "      clientId: e2e-authguard-qq-app",
-                '      clientSecret: "${AUTHGUARD_QQ_CLIENT_SECRET}"',
+                '      clientSecret: "${AUTHGUARD__AUTHN__PROVIDERS__QQ__CLIENT_SECRET}"',
                 f"      callbackUrl: http://{AUTHN_BROWSER_HOST}:8082/auth/oauth2/qq/callback",
                 "      authorization:",
                 f"        endpoint: {mock_idp_url + '/qq/oauth2.0/authorize'!r}",
@@ -784,7 +867,7 @@ class KubernetesE2E:
                 "  standalone:",
                 "    enabled: true",
                 "    issuer: urn:authguard:e2e:standalone",
-                '    credentialEncryptionKey: "${AUTHGUARD_STANDALONE_CREDENTIAL_KEY}"',
+                '    credentialEncryptionKey: "${AUTHGUARD__AUTHN__STANDALONE__CREDENTIAL_ENCRYPTION_KEY}"',
                 "    password:",
                 "      minLength: 12",
                 "    totp:",
@@ -828,7 +911,7 @@ class KubernetesE2E:
                 f"    issuer: {self.authn_issuer!r}",
                 "    audience: customer-growth-job-service",
                 "    ttl: 5m",
-                '    privateKey: "${AUTHGUARD_AUTHN_TOKEN_PRIVATE_KEY}"',
+                '    privateKeyB64: "${AUTHGUARD__AUTHN__TOKEN__PRIVATE_KEY_B64}"',
                 "server:",
                 "  service_name: authguard-authz",
                 "  host: 0.0.0.0",
@@ -872,6 +955,7 @@ class KubernetesE2E:
                 "  scope_delivery:",
                 "    direct_urn_limit: 1",
                 "    max_direct_header_bytes: 8192",
+                '    direct_context_hmac_key: "${AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY}"',
                 "    context_ttl: 30s",
                 "    scope_token_ttl: 30s",
                 "  principal_discovery:",
@@ -883,7 +967,7 @@ class KubernetesE2E:
                 f"        issuer: {self.issuer!r}",
                 "        auth:",
                 "          client_id: e2e-authguard-principal-discovery",
-                '          client_secret: "${AUTHGUARD_KEYCLOAK_CLIENT_SECRET}"',
+                '          client_secret: "${AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__KEYCLOAK__INDEX_0__AUTH__CLIENT_SECRET}"',
                 "        connect_timeout: 3s",
                 "        request_timeout: 10s",
                 "        max_page_size: 100",
@@ -896,7 +980,7 @@ class KubernetesE2E:
                 '        base_dn: "dc=example,dc=org"',
                 "        auth:",
                 '          bind_dn: "cn=svc-authguard,ou=Users,dc=example,dc=org"',
-                '          bind_password: "${AUTHGUARD_LDAP_BIND_PASSWORD}"',
+                '          bind_password: "${AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__LDAP__INDEX_0__AUTH__BIND_PASSWORD}"',
                 "        user:",
                 "          search_base: \"\"",
                 '          object_filter: "(objectClass=posixAccount)"',
@@ -924,7 +1008,7 @@ class KubernetesE2E:
                 "    enabled: true",
                 "    max_ttl: 60s",
                 '    private_key_b64: "${AUTHGUARD__AUTHZ__RESIGN__PRIVATE_KEY_B64}"',
-                '  api_token: "${AUTHGUARD_SCIM_API_PASSWORD}"',
+                '  api_token: "${AUTHGUARD__AUTHZ__API_TOKEN}"',
                 "storage:",
                 "  provider: Postgres",
                 "  bootstrap_policy: null",
@@ -1091,37 +1175,49 @@ class KubernetesE2E:
             yield port
 
     @contextmanager
-    def _forward_service(
-        self, service: str, remote_port: int, *, local_port: int | None = None
-    ) -> Iterator[int]:
-        with self._forward_resource(
-            f"service/{service}", remote_port, local_port=local_port
-        ) as port:
+    def _forward_service(self, service: str, remote_port: int) -> Iterator[int]:
+        with self._forward_resource(f"service/{service}", remote_port) as port:
             yield port
 
     @contextmanager
-    def _forward_resource(
-        self, resource: str, remote_port: int, *, local_port: int | None = None
-    ) -> Iterator[int]:
-        local_port = _free_port() if local_port is None else _require_free_port(local_port)
-        process = subprocess.Popen(
-            (
-                "kubectl",
-                "port-forward",
-                "--address=127.0.0.1",
-                "-n",
-                self.namespace,
-                resource,
-                f"{local_port}:{remote_port}",
-            ),
-            cwd=PROJECT_ROOT,
-            env={**os.environ, **self.environment},
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+    def _forward_resource(self, resource: str, remote_port: int) -> Iterator[int]:
+        process: subprocess.Popen | None = None
+        forwarded_port = 0
+        failures: list[str] = []
+        for attempt in range(1, 4):
+            forwarded_port = _free_port()
+            process = subprocess.Popen(
+                (
+                    "kubectl",
+                    "port-forward",
+                    "--address=127.0.0.1",
+                    "-n",
+                    self.namespace,
+                    resource,
+                    f"{forwarded_port}:{remote_port}",
+                ),
+                cwd=PROJECT_ROOT,
+                env={**os.environ, **self.environment},
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            try:
+                _wait_for_port(process, forwarded_port)
+                break
+            except RuntimeError as error:
+                process.terminate()
+                stderr = process.communicate(timeout=5)[1].strip()
+                failures.append(f"attempt {attempt}: {error}; {stderr or 'no stderr'}")
+                process = None
+                time.sleep(0.2)
+        if process is None:
+            raise RuntimeError(
+                f"kubectl port-forward {resource}:{remote_port} failed after 3 attempts: "
+                + " | ".join(failures)
+            )
         try:
-            _wait_for_port(process, local_port)
-            yield local_port
+            yield forwarded_port
         finally:
             process.terminate()
             try:
@@ -1175,15 +1271,6 @@ def _free_port() -> int:
                 continue
             return port
     raise RuntimeError("no free E2E host port remains in 28800-28899")
-
-
-def _require_free_port(port: int) -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        try:
-            listener.bind(("127.0.0.1", port))
-        except OSError as error:
-            raise RuntimeError(f"required E2E host port is unavailable: {port}") from error
-    return port
 
 
 def _has_true_condition(conditions: list[dict], condition_type: str) -> bool:

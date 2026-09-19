@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import sys
 from urllib.parse import urlparse
 
 
@@ -93,7 +94,7 @@ PROJECTS = {
         setup_commands=(),
         clean_commands=(),
         test_command=(
-            "python3",
+            sys.executable,
             "-m",
             "unittest",
             "discover",
@@ -182,6 +183,10 @@ OPTIONAL_SCENARIOS = {
     "30": (
         "Web: real Chromium authentication and control-plane journeys",
         "verifier.web.s30_authguard_ui",
+    ),
+    "31": (
+        "Web: hosted login application branding and return-target safety",
+        "verifier.web.s31_hosted_login",
     ),
     "40": (
         "Observability: PostgreSQL, logs, metrics, Jaeger, and runtime health",
