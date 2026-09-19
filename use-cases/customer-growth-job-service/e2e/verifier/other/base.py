@@ -253,6 +253,26 @@ class BaseVerifier:
         headers: dict[str, str] | None = None,
         json_body: dict | None = None,
     ) -> tuple[int, str]:
+        status, response_body, _ = self._http_response(
+            port,
+            host,
+            path,
+            method=method,
+            headers=headers,
+            json_body=json_body,
+        )
+        return status, response_body
+
+    def _http_response(
+        self,
+        port: int,
+        host: str,
+        path: str,
+        *,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+        json_body: dict | None = None,
+    ) -> tuple[int, str, object]:
         body = json.dumps(json_body).encode() if json_body is not None else None
         outgoing_headers = {"Host": host, **(headers or {})}
         if json_body is not None:
@@ -265,9 +285,17 @@ class BaseVerifier:
         )
         try:
             with request.urlopen(outgoing, timeout=15) as response:
-                status, response_body = response.status, response.read().decode()
+                status, response_body, response_headers = (
+                    response.status,
+                    response.read().decode(),
+                    response.headers,
+                )
         except error.HTTPError as failure:
-            status, response_body = failure.code, failure.read().decode()
+            status, response_body, response_headers = (
+                failure.code,
+                failure.read().decode(),
+                failure.headers,
+            )
         if self._active_case_id is not None:
             parsed = parse.urlsplit(path)
             self._active_exchanges.append(
@@ -283,7 +311,7 @@ class BaseVerifier:
                     "responseBodySha256": hashlib.sha256(response_body.encode()).hexdigest(),
                 }
             )
-        return status, response_body
+        return status, response_body, response_headers
 
     def _api_http(
         self,

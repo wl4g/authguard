@@ -146,6 +146,15 @@ class HostedLoginVerifier(BaseVerifier):
             raise RuntimeError(
                 f"default visual branding metadata mismatch: {fallback_application}"
             )
+        status, body = self._http(
+            self.gateway_port,
+            CUSTOMER_GROWTH_FALLBACK_HOST,
+            "/.well-known/authn.json",
+            headers={"X-Forwarded-Host": CUSTOMER_GROWTH_HOST},
+        )
+        self._expect_status("ignore untrusted forwarded host", status, 200)
+        if json.loads(body).get("application", {}).get("id") != "customer-growth-default":
+            raise RuntimeError("X-Forwarded-Host changed the trusted Application resolution")
 
         status, body = self._http(
             self.gateway_port,
@@ -155,12 +164,17 @@ class HostedLoginVerifier(BaseVerifier):
         self._expect_status("Customer Growth logo static asset", status, 200)
         if "<svg" not in body:
             raise RuntimeError("Customer Growth hosted-logo response was not SVG content")
-        status, body = self._http(
+        status, body, headers = self._http_response(
             self.gateway_port,
             CUSTOMER_GROWTH_HOST,
             "/auth/assets/themes/custom/customer-growth.css",
         )
         self._expect_status("Customer Growth theme stylesheet", status, 200)
+        cache_control = headers.get("Cache-Control", "")
+        if "no-cache" not in cache_control or "immutable" in cache_control:
+            raise RuntimeError(
+                f"business theme must be revalidated instead of cached immutably: {cache_control!r}"
+            )
         stylesheet_contract = (
             "data-application-theme='customer-growth'",
             "--customer-growth-brand: #6f7cff",
@@ -175,7 +189,12 @@ class HostedLoginVerifier(BaseVerifier):
 
         # Validation precedes password verification, so no credential fixture is
         # required to prove that cross-origin and scheme-relative URLs fail closed.
-        for target in ("https://attacker.example/", "//attacker.example/"):
+        for target in (
+            "https://attacker.example/",
+            "//attacker.example/",
+            f"http://{CUSTOMER_GROWTH_HOST}/workflows/123",
+            f"https://{CUSTOMER_GROWTH_HOST}/workflows/123#fragment",
+        ):
             status, body = self._http(
                 self.gateway_port,
                 CUSTOMER_GROWTH_HOST,
@@ -198,7 +217,18 @@ class HostedLoginVerifier(BaseVerifier):
         for attribute in ("authguard_token=", "HttpOnly", "Secure", "SameSite=Lax", "Path=/"):
             if attribute not in cookie:
                 raise RuntimeError(f"canonical-token cookie lacks {attribute!r}: {cookie!r}")
-        self.details.append("Password AuthN issued the same canonical JWT in an HttpOnly/Secure/Lax host-only cookie")
+        status, payload, _ = self._login_response(
+            f"https://{CUSTOMER_GROWTH_HOST}/workflows/absolute?tab=allowed"
+        )
+        self._expect_status("absolute allow-listed return target", status, 200)
+        if payload.get("returnUri") != "/workflows/absolute?tab=allowed":
+            raise RuntimeError(
+                f"absolute same-origin return_to was not normalized: {payload}"
+            )
+        self.details.append(
+            "Password AuthN issued the same canonical JWT in an HttpOnly/Secure/Lax "
+            "host-only cookie and normalized relative/absolute allow-listed return targets"
+        )
 
     def _branded_pages(self) -> None:
         for case_id, host in (
@@ -206,6 +236,11 @@ class HostedLoginVerifier(BaseVerifier):
             ("HL-08", AUTHN_BROWSER_HOST),
         ):
             page = self.browser_page
+            page.set_viewport_size(
+                {"width": 1280, "height": 1000}
+                if case_id == "HL-07"
+                else {"width": 390, "height": 844}
+            )
             page.goto(f"http://{host}:8082/auth/login?return_to=/workflows/123", wait_until="domcontentloaded")
             expect(page.get_by_role("heading", name="Sign in to Customer Growth")).to_be_visible()
             expect(page.locator(".visual-brand")).to_contain_text("Customer Growth")
@@ -247,7 +282,29 @@ class HostedLoginVerifier(BaseVerifier):
                 raise RuntimeError(
                     f"Customer Growth computed theme contract changed: {computed_theme}"
                 )
+            if case_id == "HL-07":
+                page.get_by_test_id("locale-select").select_option("zh_CN")
+                expect(
+                    page.get_by_role("heading", name="登录 Customer Growth")
+                ).to_be_visible()
+                page.get_by_test_id("theme-select").select_option("dark")
+                expect(page.locator("html")).to_have_attribute("data-theme", "dark")
+                dark_panel = page.evaluate(
+                    "getComputedStyle(document.documentElement)"
+                    ".getPropertyValue('--panel').trim()"
+                )
+                if dark_panel != "#101428":
+                    raise RuntimeError(
+                        f"Customer Growth dark theme was not applied: {dark_panel!r}"
+                    )
+                self._screenshot("HL-07-dark", "Customer Growth dark zh_CN hosted login")
+                page.get_by_test_id("locale-select").select_option("en_US")
+                page.get_by_test_id("theme-select").select_option("light")
+            else:
+                expect(page.locator(".login-visual")).to_be_hidden()
+                expect(page.locator(".mobile-brand")).to_be_visible()
             self._screenshot(case_id, f"Customer Growth hosted login on {host}")
+        self.browser_page.set_viewport_size({"width": 1280, "height": 1000})
 
     def _fallback_brand(self) -> None:
         page = self.browser_page

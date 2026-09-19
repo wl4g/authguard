@@ -206,9 +206,9 @@ class KubernetesE2E:
         # Re-import immediately before Helm creates that consumer so k3s image
         # GC cannot collect the unreferenced local image during support startup.
         self._import_image(AUTHGUARD_WEB_IMAGE)
-        # Redis is installed by the Authguard chart with pullPolicy=Never. Import it
-        # immediately before Helm creates the StatefulSet so k3s image GC cannot
-        # collect an unreferenced image while the support services are starting.
+        # Import Redis immediately before Helm creates the StatefulSet. The chart
+        # still uses IfNotPresent so kubelet can recover from image GC by pulling
+        # the same immutable Aliyun tag in constrained CI environments.
         self._import_image(ALIYUN_REDIS_IMAGE)
         self._install_authguard()
         self._wait_for_resources()
@@ -502,7 +502,7 @@ class KubernetesE2E:
                 "--set-file",
                 f"keycloak.resignJwtPublicKey={E2E_KEYS_DIR / 'resign-jwt-key.pub.pem'}",
                 "--set",
-                f"authguard.grpcTarget={grpc_target}",
+                f"authguard-middleware.grpcTarget={grpc_target}",
                 "--set",
                 f"gateway.name={self.gateway_name}",
             )
@@ -535,16 +535,21 @@ class KubernetesE2E:
     def _install_authguard(self) -> None:
         # Install the optional vendored subchart from the same business Chart,
         # but under a distinct release. Normal business upgrades use the
-        # default authguard.enabled=false and cannot mutate this middleware.
+        # default authguard-middleware.enabled=false and cannot mutate it.
+        authguard_values = self._authguard_values()
+        authguard_values["enabled"] = True
         values = {
             "support": {"enabled": False},
-            "authguard": {"enabled": True},
+            "authguard-middleware": authguard_values,
             "global": {
                 "authguard": {
-                    "themeConfigMap": "{{ .Release.Name }}-authguard-theme"
+                    "themeRevision": "v1",
+                    "themeConfigMap": (
+                        "{{ .Release.Name }}-authguard-theme-"
+                        "{{ .Values.global.authguard.themeRevision }}"
+                    ),
                 }
             },
-            "authguard-middleware": self._authguard_values(),
         }
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as values_file:
             json.dump(values, values_file)
@@ -616,7 +621,7 @@ class KubernetesE2E:
                     "registry": "registry.cn-shenzhen.aliyuncs.com",
                     "repository": "wl4g-k8s/bitnami_redis-cluster",
                     "tag": "7.0.14",
-                    "pullPolicy": "Never",
+                    "pullPolicy": "IfNotPresent",
                 },
                 "existingSecret": self.principal_discovery_secret,
                 "existingSecretPasswordKey": "AUTHGUARD__CACHE__REDIS__PASSWORD",
@@ -738,19 +743,6 @@ class KubernetesE2E:
         return "\n".join(
             [
                 "authn:",
-                "  applications:",
-                "    customer-growth:",
-                f"      hosts: [{AUTHN_BROWSER_HOST}, {CUSTOMER_GROWTH_HOST}]",
-                "      displayName: Customer Growth",
-                "      logo: /auth/assets/themes/custom/customer-growth.svg",
-                "      theme:",
-                "        id: customer-growth",
-                "        stylesheet: /auth/assets/themes/custom/customer-growth.css",
-                f"      returnUris: [https://localhost/**, https://{CUSTOMER_GROWTH_HOST}/**]",
-                "    customer-growth-default:",
-                f"      hosts: [{CUSTOMER_GROWTH_FALLBACK_HOST}]",
-                "      displayName: Customer Growth",
-                f"      returnUris: [https://{CUSTOMER_GROWTH_FALLBACK_HOST}/**]",
                 "  providers:",
                 "    github:",
                 "      type: oauth2",

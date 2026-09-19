@@ -69,9 +69,11 @@ canonical JWT validation followed by `ext_authz`; AuthZ receives only Principal,
 resource, action, and context. Configure providers, wallet RPC mappings, and
 external storage by overriding that one runtime configuration block.
 
-For Hosted Login, set `authguard.authguard-config.authn.applications` with each
+For Hosted Login, set `authguard.authn.applications` with each
 trusted business host, display name, optional `/auth/assets/...` logo/theme,
-and HTTPS `returnUris`. Keep the AuthGuard Web image immutable.
+and HTTPS `returnUris`. The chart overlays that map onto the runtime
+configuration, including when `authguard.authguard-config` is replaced. Keep
+the AuthGuard Web image immutable.
 
 The simplest business integration needs no extra image. Vendor the immutable
 AuthGuard tgz, keep CSS/SVG/font files inside the business Chart, and create a
@@ -84,24 +86,37 @@ dependencies:
     alias: authguard-middleware
     version: 0.1.0
     repository: oci://ghcr.io/wl4g/charts
-    condition: authguard.enabled
+    condition: authguard-middleware.enabled
 ```
 
 ```yaml
 # business/values.yaml
 global:
   authguard:
-    themeConfigMap: '{{ .Release.Name }}-authguard-theme'
-authguard:
+    themeRevision: v1
+    themeConfigMap: '{{ .Release.Name }}-authguard-theme-{{ .Values.global.authguard.themeRevision }}'
+authguard-middleware:
   enabled: false
   theme:
     files: files/authguard-theme/*
+  authguard:
+    authn:
+      applications:
+        example-app:
+          hosts: [app.example.com]
+          displayName: Example App
+          logo: /auth/assets/themes/custom/example-app.svg
+          theme:
+            id: example-app
+            stylesheet: /auth/assets/themes/custom/example-app.css
+          returnUris: [https://app.example.com/**]
 ```
 
 ```yaml
 # business/templates/authguard-theme.yaml
-{{- if .Values.authguard.enabled }}
-{{- $files := .Files.Glob .Values.authguard.theme.files }}
+{{- $authguard := index .Values "authguard-middleware" }}
+{{- if $authguard.enabled }}
+{{- $files := .Files.Glob $authguard.theme.files }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -117,8 +132,9 @@ the directory into the business tgz and AuthGuard mounts it read-only at
 `/auth/assets/themes/custom/`. `.Files` can only read files inside the Chart,
 not an arbitrary host directory outside its package. Keep ConfigMap-backed
 assets below Kubernetes' object-size limit (approximately 1 MiB), so CSS, SVG,
-and fonts should remain compact. To update an immutable theme, publish a new
-ConfigMap name through `global.authguard.themeConfigMap`.
+and fonts should remain compact. To update an immutable theme, increment
+`global.authguard.themeRevision`; custom URLs are revalidated, while hashed Web
+bundles retain their immutable cache policy.
 
 Use a separate one-time middleware release from the same business Chart. This
 is important: disabling a dependency in a later upgrade of the *same* release
@@ -127,10 +143,10 @@ would delete resources previously owned by that release.
 ```bash
 helm upgrade --install business-authguard ./business \
   --set application.enabled=false \
-  --set authguard.enabled=true \
-  --set-string 'authguard.theme.files=files/authguard-theme/*'
+  --set authguard-middleware.enabled=true \
+  --set-string 'authguard-middleware.theme.files=files/authguard-theme/*'
 
-# Frequent application releases keep authguard.enabled=false and therefore
+# Frequent application releases keep authguard-middleware.enabled=false and therefore
 # never create, upgrade, or remove the separate middleware release.
 helm upgrade --install business ./business
 ```
@@ -144,6 +160,13 @@ its default business release disables AuthGuard, while a second release enables
 the vendored tgz and packages `files/authguard-theme/`. The real Chromium E2E
 verifies both that ConfigMap mount and the no-theme fallback.
 
+Repository-aware coding agents can use
+[`$authguard-chart-integrator`](../../../.agents/skills/authguard-chart-integrator/SKILL.md)
+to discover the latest stable GHCR Chart, vendor and pin that exact release,
+obtain the real business service domain, wire the complete opt-in dependency
+values, validate disabled/enabled renders, and run an explicitly targeted
+deployment smoke test. A scoped local Hosted Login theme remains optional.
+
 Both `logo` and `theme` are optional per Application. If neither is configured,
 Hosted Login still replaces the product name from Host-resolved metadata while
 rendering the built-in AuthGuard mark and cyan trust-fabric visual. No asset
@@ -152,7 +175,7 @@ The chart never loads theme JavaScript or arbitrary HTML. The Web HTTPRoute owns
 `GET /auth/login`, `GET /auth/account/security`, and `GET /auth/assets/*`; the
 AuthN HTTPRoute owns `/.well-known/*` and the remaining `/auth/*`. This leaves
 an application's `/api/*` and `/*` routes to its own chart. Enable
-`authguard.web.route.console` only on a dedicated AuthGuard Console hostname.
+`authguard-middleware.authguard.web.route.console` only on a dedicated AuthGuard Console hostname.
 
 The Gateway has one listener, so Hosted Login remains on the application's
 browser origin. Label each protected business `HTTPRoute` with

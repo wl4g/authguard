@@ -100,21 +100,23 @@ GET  /.well-known/authn.json
 
 业务系统只需把 `GET /auth/login`、认证后的 `GET /auth/account/security` 和
 `GET /auth/assets/*` 路由到 AuthGuard Web；`/.well-known/*` 与其余 `/auth/*`
-仍路由到 AuthN。`authn.applications` 根据 Gateway 保留的可信 Host 解析
+仍路由到 AuthN。`authn.applications` 根据 Gateway 保留的可信 Host 唯一解析
 `application_id`、显示名、logo、静态 Theme Pack 和 HTTPS `returnUris` 白名单。
 Hosted Login 读取 `/.well-known/authn.json` 后显示该业务品牌，并继续调用既有
 Password/TOTP、WebAuthn、OAuth 和 Wallet endpoint。
 
 Theme Pack 只允许使用 `/auth/assets/themes/` 下的同源 CSS 与静态资源，可覆盖
 展示变量和布局 selector，但不能注入 HTML 或 JavaScript。业务 umbrella Chart
-可把自己的本地静态目录打包为 ConfigMap，AuthGuard tgz 与 Web image 保持不可变。
+可把自己的本地静态目录打包为 ConfigMap，AuthGuard tgz 与 Web image 保持不可变；
+自定义资源始终重新校验缓存，而带 hash 的 Web bundle 保持 immutable cache。
 未配置 `logo` 和
 `theme` 的 Application 仍显示基于 Host 解析的业务名称，并自动回退到 AuthGuard
 内置图标与青绿色 trust-fabric 样式，无需挂载资源。未认证登录页不再提供
 WebAuthn 注册；Account Security 必须同时验证 canonical Principal Cookie 与
 Password/TOTP step-up，并确保两份证明解析到同一 Principal 后才能添加 Passkey。
 
-`return_to` 只接受已配置的同 Host URI 或安全相对路径；AuthN 成功后统一归一化为
+`return_to` 必须来自已配置的 Application Host，只接受该 Host 的白名单 URI 或安全相对路径；
+AuthN 成功后统一归一化为
 path，把同一份 AuthGuard JWT 写入 `HttpOnly; Secure; SameSite=Lax` Cookie，并在
 OAuth callback 直接重定向或向浏览器 API 返回安全 path。不需要 npm SDK、iframe、
 token localStorage，业务系统也不复制 wallet/WebAuthn/OAuth 前端逻辑。AuthGuard
@@ -145,7 +147,7 @@ authn:
     example-app:
       hosts: [app.example.com]
       displayName: Example App
-      logo: /auth/assets/branding/example-app.svg
+      logo: /auth/assets/themes/custom/example-app.svg
       theme:
         id: example-app
         stylesheet: /auth/assets/themes/custom/example-app.css
@@ -205,3 +207,21 @@ src/authn/src/
 新增协议应实现独立、高内聚 provider，验证成功后返回 `AuthenticationResult`；不得新增
 平行 linking/token pipeline。WebAuthn authenticator、同步 Passkey 和安全密钥继续使用
 `kind=webauthn`；ERC-6492 和后续链 verifier 通过 wallet provider 内部扩展。
+
+## 8. 发布验证
+
+Customer Growth reference 是可执行的架构契约：
+
+| 边界 | 真实 verifier 覆盖 |
+| --- | --- |
+| OAuth2/OIDC 规范化与 linking | `s10 -> s11/s12` / OAuth `OA-*`、OIDC `OI-*` |
+| Password 与 RFC 6238 TOTP | `s10 -> s13` / `ST-01..18` |
+| WebAuthn 平台/安全密钥 ceremony | `s10 -> s14` / `WA-01..17`、Chromium `s30`/`s31` |
+| CAIP/SIWX EVM、Solana、Bitcoin 与 ERC-1271 | `s10 -> s15` / `WL-01..28` |
+| Hosted Login、品牌、return 安全与 Cookie handoff | `s31` / `HL-01..16` |
+| Helm opt-in、本地主题 ConfigMap 与仅 Web 挂载 | `s00` |
+| 协议无关 Principal/JWT/AuthZ | `s10`、`s20`、`s26` |
+
+`make e2e-k3s` 按顺序运行部署、AuthN、AuthZ、SDK、Chromium 与可观测性矩阵。
+发布证据同时包含 API 断言、数据库状态、trace 与截图；禁止使用测试专用的成功 IdP
+或区块链签名 mock。

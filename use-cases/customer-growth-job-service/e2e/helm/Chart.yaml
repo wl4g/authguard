@@ -11,4 +11,4 @@ dependencies:
     alias: authguard-middleware
     version: 0.1.0
     repository: file://../../../../deploy/helm/authguard
-    condition: authguard.enabled
+    condition: authguard-middleware.enabled

@@ -234,7 +234,7 @@ pub struct ApplicationProperties {
     #[serde(rename = "displayName")]
     pub display_name: String,
     /// Optional same-origin static asset served by `AuthGuard` Web. An empty
-    /// value uses the built-in AuthGuard mark without disabling text branding.
+    /// value uses the built-in `AuthGuard` mark without disabling text branding.
     pub logo: String,
     /// Optional same-origin presentation pack applied only to Hosted Login and
     /// account-security surfaces. Authentication remains protocol-independent.
@@ -1522,8 +1522,14 @@ fn validate_authn(authn: &AuthnProperties, cache: &CacheProperties) -> anyhow::R
     if authn.challenge_ttl.is_zero() || authn.challenge_ttl > Duration::from_secs(15 * 60) {
         bail!("authn.challengeTtl must be between 1 second and 15 minutes");
     }
+    let mut application_hosts = BTreeSet::new();
     for (id, application) in &authn.applications {
         validate_application(id, application)?;
+        for host in &application.hosts {
+            if !application_hosts.insert(host) {
+                bail!("authn.applications hosts must belong to exactly one application");
+            }
+        }
     }
     let needs_challenge_store = !authn.providers.is_empty()
         || authn.wallet.enabled
@@ -2381,10 +2387,10 @@ wallet:
             ApplicationProperties {
                 hosts: BTreeSet::from(["app.example.com".to_string()]),
                 display_name: "Example App".to_string(),
-                logo: "/auth/assets/branding/example-app.svg".to_string(),
+                logo: "/auth/assets/themes/custom/example-app.svg".to_string(),
                 theme: Some(ApplicationThemeProperties {
                     id: "example-app".to_string(),
-                    stylesheet: "/auth/assets/themes/example-app/theme.css".to_string(),
+                    stylesheet: "/auth/assets/themes/custom/example-app.css".to_string(),
                 }),
                 return_uris: vec!["https://app.example.com/**".to_string()],
             },
@@ -2415,9 +2421,25 @@ wallet:
             .theme
             .as_mut()
             .expect("theme")
-            .stylesheet = "/auth/assets/themes/example-app/theme.css".to_string();
+            .stylesheet = "/auth/assets/themes/custom/example-app.css".to_string();
         authn.applications.get_mut("example-app").expect("application").return_uris =
             vec!["http://app.example.com/**".to_string()];
+        assert!(validate_authn(&authn, &CacheProperties::default()).is_err());
+    }
+
+    #[test]
+    fn hosted_login_host_must_belong_to_one_application() {
+        let application = ApplicationProperties {
+            hosts: BTreeSet::from(["app.example.com".to_string()]),
+            display_name: "Example App".to_string(),
+            logo: String::new(),
+            theme: None,
+            return_uris: vec!["https://app.example.com/**".to_string()],
+        };
+        let mut authn = AuthnProperties::default();
+        authn.applications.insert("first-app".to_string(), application.clone());
+        authn.applications.insert("second-app".to_string(), application);
+
         assert!(validate_authn(&authn, &CacheProperties::default()).is_err());
     }
 

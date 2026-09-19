@@ -107,7 +107,7 @@ GET  /.well-known/authn.json
 `GET /auth/assets/*` are the only AuthGuard Web routes that a relying application
 needs. `/.well-known/*` and the remaining `/auth/*` remain AuthN
 routes. A trusted `authn.applications` entry resolves the Gateway-preserved
-Host to an `application_id`, display name, logo, static Theme Pack, and HTTPS
+Host to one unique `application_id`, display name, logo, static Theme Pack, and HTTPS
 `returnUris` allow list. The Hosted Login reads `/.well-known/authn.json`, renders that brand, and
 submits the existing Password/TOTP, WebAuthn, OAuth, and Wallet endpoints.
 
@@ -115,13 +115,15 @@ Theme Packs are same-origin CSS and static assets under `/auth/assets/themes/`.
 They can override presentation variables and layout selectors but cannot inject
 HTML or JavaScript. A business umbrella Chart may package its local asset
 directory into a ConfigMap while the AuthGuard tgz and Web image remain
-immutable. An Application without `logo` or `theme` still receives its
+immutable. Custom assets are revalidated instead of receiving the immutable
+cache policy used by hashed Web bundles. An Application without `logo` or `theme` still receives its
 Host-resolved display name and falls back to the built-in AuthGuard mark and
 cyan trust-fabric CSS without an asset mount. WebAuthn enrollment is absent from the unauthenticated login
 page: Account Security requires a canonical Principal cookie plus password/TOTP
 step-up and verifies both proofs resolve to the same Principal.
 
-`return_to` accepts a configured same-host URI or a safe relative path. AuthN
+`return_to` requires a configured Application Host and accepts a configured
+same-host URI or a safe relative path. AuthN
 normalizes successful values to a path, stores the unified JWT in an
 `HttpOnly; Secure; SameSite=Lax` cookie, and redirects (OAuth) or returns the
 safe path (browser API flows). No SDK, iframe, token localStorage, or business
@@ -156,7 +158,7 @@ authn:
     example-app:
       hosts: [app.example.com]
       displayName: Example App
-      logo: /auth/assets/branding/example-app.svg
+      logo: /auth/assets/themes/custom/example-app.svg
       theme:
         id: example-app
         stylesheet: /auth/assets/themes/custom/example-app.css
@@ -217,3 +219,21 @@ src/authn/src/
 New protocols add cohesive providers that return `AuthenticationResult`; they must not add a
 parallel linking or token pipeline. Platform authenticators, synced passkeys, and security keys
 remain `kind=webauthn`. ERC-6492 and future chain verifiers extend only the wallet provider.
+
+## 8. Release verification
+
+The Customer Growth reference is the executable architecture contract:
+
+| Boundary | Real verifier coverage |
+| --- | --- |
+| OAuth2/OIDC normalization and linking | `s10 -> s11/s12` / OAuth `OA-*`, OIDC `OI-*` |
+| Password and RFC 6238 TOTP | `s10 -> s13` / `ST-01..18` |
+| WebAuthn platform/security-key ceremonies | `s10 -> s14` / `WA-01..17`, Chromium `s30`/`s31` |
+| CAIP/SIWX EVM, Solana, Bitcoin and ERC-1271 | `s10 -> s15` / `WL-01..28` |
+| Hosted Login, branding, return safety and cookie handoff | `s31` / `HL-01..16` |
+| Helm opt-in, local theme ConfigMap and Web-only mount | `s00` |
+| Protocol-independent Principal/JWT/AuthZ | `s10`, `s20`, `s26` |
+
+`make e2e-k3s` runs the ordered deployment, AuthN, AuthZ, SDK, Chromium, and observability
+matrix. Release evidence includes API assertions, database state, traces, and screenshots;
+test-only successful IdP or blockchain-signature mocks are forbidden.

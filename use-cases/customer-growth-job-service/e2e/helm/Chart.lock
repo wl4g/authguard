@@ -2,5 +2,5 @@ dependencies:
 - name: authguard
   repository: file://../../../../deploy/helm/authguard
   version: 0.1.0
-digest: sha256:e2de2cad2a1791ed45c7762e90354af560d67a54d730aca66fc2bc4a478205d0
-generated: "2026-09-18T21:48:56.949716817+08:00"
+digest: sha256:c5f00b46274caee39204db4dbdda2a00a54adbf08b776a6bba6332d3afd874ca
+generated: "2026-09-19T11:02:28.626175106+08:00"

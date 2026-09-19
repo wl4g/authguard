@@ -11,7 +11,8 @@ kind: ConfigMap
 metadata:
   name: {{ tpl $nameTemplate . | quote }}
   labels:
-    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ .Chart.Name | quote }}
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
     app.kubernetes.io/component: authguard-login-theme
 immutable: true
 data:

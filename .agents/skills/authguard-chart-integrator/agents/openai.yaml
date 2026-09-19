@@ -1,0 +1,4 @@
+interface:
+  display_name: "AuthGuard Chart Integrator"
+  short_description: "Integrate AuthGuard into business service Helm Charts"
+  default_prompt: "Use $authguard-chart-integrator to fetch and integrate the latest AuthGuard Chart; ask me for the real business service domain before configuring and validating it."

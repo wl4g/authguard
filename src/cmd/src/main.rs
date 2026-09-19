@@ -52,16 +52,15 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Authn(options) => run_authn(&cli.config, options),
+        Command::Authn(options) => run_authn(&cli.config, options.bind),
         Command::Authz => run_authz(&cli.config),
         Command::Console(options) => runtime(2)?.block_on(options.run()),
     }
 }
 
-fn run_authn(config_file: &std::path::Path, options: AuthnOptions) -> anyhow::Result<()> {
+fn run_authn(config_file: &std::path::Path, bind: SocketAddr) -> anyhow::Result<()> {
     let config = AppConfig::load_authn(config_file)?;
-    runtime(config.server.performance.worker_threads)?
-        .block_on(authguard_authn::server::run(options.bind))
+    runtime(config.server.performance.worker_threads)?.block_on(authguard_authn::server::run(bind))
 }
 
 fn run_authz(config_file: &std::path::Path) -> anyhow::Result<()> {

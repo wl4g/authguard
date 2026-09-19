@@ -349,7 +349,7 @@ authn:
     example-app:
       hosts: [app.example.com]
       displayName: Example App
-      logo: /auth/assets/branding/example-app.svg
+      logo: /auth/assets/themes/custom/example-app.svg
       theme:
         id: example-app
         stylesheet: /auth/assets/themes/custom/example-app.css
@@ -375,6 +375,13 @@ theme contains static assets only; AuthGuard never loads theme JavaScript or
 arbitrary HTML. Applications that omit both `logo` and `theme`
 retain their Host-resolved display name and fall back to AuthGuard's built-in
 cyan trust-fabric visual without mounting assets.
+
+The repository includes an
+[`$authguard-chart-integrator`](.agents/skills/authguard-chart-integrator/SKILL.md)
+agent skill that discovers the latest stable GHCR Chart, vendors and pins that
+exact release, obtains the real business service domain, wires opt-in AuthGuard
+values, validates normal and middleware renders, and can run an explicitly
+targeted deployment smoke test. Hosted Login theming remains optional.
 
 ## License
 

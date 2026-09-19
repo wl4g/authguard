@@ -167,11 +167,14 @@ async fn prepare_authorization(
 ) -> Result<Redirect, ApiError> {
     let started = Instant::now();
     let result = async {
-        let return_uri = crate::route::application::ApplicationResolver::new(
-            authguard_common::config::AppConfig::get().get_authn(),
-            headers,
-        )
-        .validate_return_to(&return_uri)?;
+        let application = authguard_common::config::AppConfig::get();
+        let resolver =
+            crate::route::application::ApplicationResolver::new(application.get_authn(), headers);
+        let return_uri = if redirect_after_login {
+            resolver.validate_return_to(&return_uri)?
+        } else {
+            resolver.validate_response_return_uri(&return_uri)?
+        };
         let runtime = state
             .providers
             .get(provider)

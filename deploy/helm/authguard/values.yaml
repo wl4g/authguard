@@ -91,6 +91,10 @@ authguard:
   authn:
     enabled: true
     replicaCount: 2
+    # Trusted relying applications rendered into the default authguard.yaml.
+    # Umbrella Charts can configure Hosted Login without replacing the complete
+    # authguard-config block.
+    applications: {}
     image:
       repository: ghcr.io/wl4g/authguard
       # Empty pins the image to this chart's appVersion.

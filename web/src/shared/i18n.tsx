@@ -5,7 +5,7 @@ export type Locale = 'zh_CN' | 'en_US'
 const messages = {
   en_US: {
     product: 'AuthGuard', tagline: 'Identity control plane', loginTitle: 'Enter the trust fabric',
-    loginHint: 'One Principal. One token. Every authentication protocol.', login: 'Sign in',
+    loginHint: 'One Principal. One token. Every authentication protocol.', login: 'Sign in', signInTo: 'Sign in to',
     loginId: 'Email or login ID', password: 'Password', totp: 'TOTP code (optional)',
     passkey: 'Continue with passkey', registerPasskey: 'Add passkey', wallet: 'Continue with wallet', connecting: 'Connecting…',
     orFederated: 'or continue with', notEnabled: 'This method is not enabled by the server.',
@@ -28,7 +28,7 @@ const messages = {
   },
   zh_CN: {
     product: 'AuthGuard', tagline: '身份与授权控制平面', loginTitle: '进入可信身份网络',
-    loginHint: '统一 Principal、统一 Token，认证协议彼此独立。', login: '登录',
+    loginHint: '统一 Principal、统一 Token，认证协议彼此独立。', login: '登录', signInTo: '登录',
     loginId: '邮箱或登录标识', password: '密码', totp: 'TOTP 验证码（可选）',
     passkey: '使用通行密钥', registerPasskey: '添加通行密钥', wallet: '使用钱包登录', connecting: '正在连接…',
     orFederated: '或使用以下方式', notEnabled: '服务端尚未启用此认证方式。',

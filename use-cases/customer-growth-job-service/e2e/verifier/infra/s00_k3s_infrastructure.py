@@ -63,7 +63,7 @@ class InfrastructureVerifier(BaseVerifier):
 
     def _verify_business_chart_authguard_integration(self) -> None:
         """Prove one business Chart owns local theme files and an optional subchart."""
-        default_theme_name = f"{self.support_release}-authguard-theme"
+        default_theme_name = f"{self.support_release}-authguard-theme-v1"
         default_theme = self._run(
             (
                 "kubectl",
@@ -82,7 +82,7 @@ class InfrastructureVerifier(BaseVerifier):
                 "the normal business release rendered AuthGuard theme resources by default"
             )
 
-        theme_name = f"{self.authguard_release}-authguard-theme"
+        theme_name = f"{self.authguard_release}-authguard-theme-v1"
         theme = json.loads(
             self._run(
                 (
@@ -139,10 +139,38 @@ class InfrastructureVerifier(BaseVerifier):
             raise RuntimeError(
                 "AuthGuard Web did not mount the business ConfigMap directly or added an unexpected init container"
             )
+        deployments = json.loads(
+            self._run(
+                (
+                    "kubectl",
+                    "get",
+                    "deployment",
+                    self.authguard_release,
+                    f"{self.authguard_release}-authn",
+                    "-n",
+                    self.namespace,
+                    "-o",
+                    "json",
+                )
+            ).output
+        )["items"]
+        for deployment in deployments:
+            spec = deployment["spec"]["template"]["spec"]
+            if any(
+                volume.get("name") == "custom-themes"
+                for volume in spec.get("volumes", [])
+            ) or any(
+                mount.get("name") == "custom-themes"
+                for container in spec.get("containers", [])
+                for mount in container.get("volumeMounts", [])
+            ):
+                raise RuntimeError(
+                    f"theme assets leaked into non-Web deployment {deployment['metadata']['name']}"
+                )
         self.details.append(
             "normal business Helm release left authguard.enabled=false; the separate opt-in "
             "middleware release rendered the vendored AuthGuard tgz and mounted two local "
-            "Chart files without building a theme image"
+            "Chart files only in AuthGuard Web, without building a theme image"
         )
 
     def _verify_identity_middleware_initialization(self) -> None:

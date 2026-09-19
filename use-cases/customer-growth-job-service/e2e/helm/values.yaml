@@ -1,14 +1,15 @@
 support:
-  # Normal business releases keep this enabled and leave authguard.enabled
+  # Normal business releases keep this enabled and leave authguard-middleware.enabled
   # false. AuthGuard is bootstrapped as a separate release from this same
   # Chart, so frequent application upgrades cannot remove or mutate it.
   enabled: true
 
 global:
   authguard:
-    # The business Chart creates this ConfigMap from authguard.theme.files.
+    # The business Chart creates this ConfigMap from authguard-middleware.theme.files.
     # AuthGuard's immutable subchart evaluates the template in release scope.
-    themeConfigMap: '{{ .Release.Name }}-authguard-theme'
+    themeRevision: v1
+    themeConfigMap: '{{ .Release.Name }}-authguard-theme-{{ .Values.global.authguard.themeRevision }}'
 
 keycloak:
   image: registry.cn-shenzhen.aliyuncs.com/wl4g/keycloak:26.7.0
@@ -93,9 +94,9 @@ solana:
     requests: { cpu: 50m, memory: 512Mi }
     limits: { cpu: 250m, memory: 1536Mi }
 
-authguard:
+authguard-middleware:
   # Disabled for every normal business release. The E2E bootstrap installs the
-  # vendored authguard_middleware dependency as a separate Helm release.
+  # vendored AuthGuard dependency as a separate Helm release.
   enabled: false
   theme:
     # Chart-relative glob; Helm packages these local files with the business
@@ -108,6 +109,28 @@ authguard:
     secretName: ""
     key: hmac-key
     signingKey: e2e-authguard-access-context-hmac-key
+  # Static child Chart values share this single top-level AuthGuard map. Runtime
+  # infrastructure values are added by the E2E bootstrap, while the Application
+  # contract stays reviewable here exactly as it would in a real integration.
+  authguard:
+    authn:
+      applications:
+        customer-growth:
+          hosts:
+            - localhost
+            - customer-growth.local
+          displayName: Customer Growth
+          logo: /auth/assets/themes/custom/customer-growth.svg
+          theme:
+            id: customer-growth
+            stylesheet: /auth/assets/themes/custom/customer-growth.css
+          returnUris:
+            - https://localhost/**
+            - https://customer-growth.local/**
+        customer-growth-default:
+          hosts: [customer-growth-default.local]
+          displayName: Customer Growth
+          returnUris: [https://customer-growth-default.local/**]
 
 workloads:
   go-sqlx:

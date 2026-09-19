@@ -93,7 +93,7 @@ export function LoginPage() {
       <div className="login-tools"><Preferences/></div>
       <div className="login-card">
         <div className="mobile-brand">{brand?.logo ? <img src={brand.logo} alt=""/> : <Fingerprint/>}<b>{brandName}</b></div>
-        <h2>{hosted && brand ? `Sign in to ${brandName}` : t('login')}</h2><p>{t('authenticatedAs')} <code>canonical principal</code></p>
+        <h2>{hosted && brand ? `${t('signInTo')} ${brandName}` : t('login')}</h2><p>{t('authenticatedAs')} <code>canonical principal</code></p>
         <form onSubmit={passwordLogin}>
           <label>{t('loginId')}<input data-testid="login-id" autoComplete="username" value={login} onChange={event => setLogin(event.target.value)} required /></label>
           <label>{t('password')}<input data-testid="login-password" type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required /></label>

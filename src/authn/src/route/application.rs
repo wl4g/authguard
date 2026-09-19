@@ -61,26 +61,48 @@ impl<'a> ApplicationResolver<'a> {
     /// and URI allow-list match. This keeps the response redirect independent of
     /// a browser-supplied scheme or authority and prevents open redirects.
     pub(crate) fn validate_return_to(&self, return_to: &str) -> Result<String, ApiError> {
-        if return_to.is_empty() {
+        self.validate_destination(return_to, true)
+    }
+
+    /// Validates the legacy non-redirecting JSON response field.
+    ///
+    /// A dedicated `AuthN` host may use a safe relative value because the server
+    /// never redirects to it. Absolute values still require an Application.
+    pub(crate) fn validate_response_return_uri(
+        &self,
+        return_uri: &str,
+    ) -> Result<String, ApiError> {
+        self.validate_destination(return_uri, false)
+    }
+
+    fn validate_destination(
+        &self,
+        destination: &str,
+        require_application: bool,
+    ) -> Result<String, ApiError> {
+        if destination.is_empty() {
             return Ok(String::new());
         }
         let host =
             self.request_host()?.ok_or_else(|| ApiError::bad_request("Host header is required"))?;
         let application = self.resolve()?;
-        let candidate = if return_to.starts_with('/') {
-            if return_to.starts_with("//")
-                || return_to.contains('\\')
-                || return_to.bytes().any(|value| value.is_ascii_control())
+        if require_application && application.is_none() {
+            return Err(ApiError::bad_request("return_to requires a configured application host"));
+        }
+        let candidate = if destination.starts_with('/') {
+            if destination.starts_with("//")
+                || destination.contains('\\')
+                || destination.bytes().any(|value| value.is_ascii_control())
             {
                 return Err(ApiError::bad_request("return_to must be a same-origin path"));
             }
-            reqwest::Url::parse(&format!("https://{host}{return_to}"))
+            reqwest::Url::parse(&format!("https://{host}{destination}"))
                 .map_err(|_| ApiError::bad_request("return_to is invalid"))?
         } else {
             let application = application.as_ref().ok_or_else(|| {
                 ApiError::bad_request("absolute return_to requires a configured application")
             })?;
-            let parsed = reqwest::Url::parse(return_to)
+            let parsed = reqwest::Url::parse(destination)
                 .map_err(|_| ApiError::bad_request("return_to is invalid"))?;
             if parsed.scheme() != "https"
                 || parsed.host_str() != Some(host.as_str())
@@ -176,10 +198,10 @@ mod tests {
                     ApplicationProperties {
                         hosts: BTreeSet::from(["app.example.com".to_string()]),
                         display_name: "Example App".to_string(),
-                        logo: "/auth/assets/branding/example-app.svg".to_string(),
+                        logo: "/auth/assets/themes/custom/example-app.svg".to_string(),
                         theme: Some(ApplicationThemeProperties {
                             id: "example-app".to_string(),
-                            stylesheet: "/auth/assets/themes/example-app/theme.css".to_string(),
+                            stylesheet: "/auth/assets/themes/custom/example-app.css".to_string(),
                         }),
                         return_uris: vec!["https://app.example.com/**".to_string()],
                     },
@@ -204,7 +226,7 @@ mod tests {
         assert_eq!(application.id, "example-app");
         assert_eq!(
             application.theme.expect("theme").stylesheet,
-            "/auth/assets/themes/example-app/theme.css"
+            "/auth/assets/themes/custom/example-app.css"
         );
         assert_eq!(
             resolver
@@ -221,5 +243,21 @@ mod tests {
         let resolver = ApplicationResolver::new(&config, &headers);
         assert!(resolver.validate_return_to("https://attacker.example/").is_err());
         assert!(resolver.validate_return_to("//attacker.example/").is_err());
+    }
+
+    #[test]
+    fn rejects_return_target_for_an_unknown_application_host() {
+        let config = TestFixture::config();
+        let headers = TestFixture::headers("unknown.example.com");
+        let resolver = ApplicationResolver::new(&config, &headers);
+
+        assert!(resolver.validate_return_to("/workflows/123").is_err());
+        assert_eq!(
+            resolver
+                .validate_response_return_uri("/customer-growth/jobs")
+                .expect("safe non-redirecting response URI"),
+            "/customer-growth/jobs"
+        );
+        assert!(resolver.validate_response_return_uri("//attacker.example/").is_err());
     }
 }

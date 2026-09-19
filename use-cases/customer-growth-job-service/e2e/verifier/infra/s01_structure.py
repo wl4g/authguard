@@ -142,6 +142,12 @@ AUTHGUARD_REQUIRED_PATHS = (
     "use-cases/customer-growth-job-service/e2e/helm/templates/authguard-theme.yaml",
     "use-cases/customer-growth-job-service/e2e/helm/files/authguard-theme/customer-growth.svg",
     "use-cases/customer-growth-job-service/e2e/helm/files/authguard-theme/customer-growth.css",
+    ".agents/skills/authguard-chart-integrator/SKILL.md",
+    ".agents/skills/authguard-chart-integrator/agents/openai.yaml",
+    ".agents/skills/authguard-chart-integrator/scripts/validate.py",
+    ".agents/skills/authguard-chart-integrator/references/contract.md",
+    ".agents/skills/authguard-chart-integrator/assets/authguard-theme.yaml",
+    ".agents/skills/authguard-chart-integrator/assets/theme.css",
 )
 
 AUTHGUARD_FORBIDDEN_PATHS = (
@@ -359,13 +365,19 @@ def _verify(_context: RunContext) -> VerificationResult:
     # module rather than forcing those implementations back into one scenario.
     web_verifier_source = "\n".join(
         (verifier_dir / path).read_text(encoding="utf-8")
-        for path in ("web/s30_authguard_ui.py", "web/fixtures.py")
+        for path in (
+            "web/s30_authguard_ui.py",
+            "web/s31_hosted_login.py",
+            "web/fixtures.py",
+        )
     )
     browser_markers = (
         "sync_playwright",
         "WebAuthn.addVirtualAuthenticator",
         "navigator.credentials.create/get",
         "personal_sign",
+        "Customer Growth computed theme contract changed",
+        "missing custom theme falls back",
     )
     if missing := [
         marker for marker in browser_markers if marker not in web_verifier_source
@@ -378,14 +390,20 @@ def _verify(_context: RunContext) -> VerificationResult:
     helm_values_source = (
         PROJECT_ROOT / "deploy/helm/authguard/values.yaml"
     ).read_text(encoding="utf-8")
+    helm_config_source = (
+        PROJECT_ROOT / "deploy/helm/authguard/templates/configmap.yaml"
+    ).read_text(encoding="utf-8")
     theme_config_map_markers = (
         "automountServiceAccountToken: false",
         "readOnlyRootFilesystem: true",
         "/usr/share/nginx/html/assets/themes/custom",
         "global.authguard.themeConfigMap",
         "existingConfigMap",
+        'set $authnConfig "applications" $applications',
     )
-    theme_config_map_sources = helm_web_source + helm_values_source + kubernetes_source
+    theme_config_map_sources = (
+        helm_web_source + helm_values_source + helm_config_source + kubernetes_source
+    )
     if missing := [
         marker
         for marker in theme_config_map_markers
@@ -417,11 +435,12 @@ def _verify(_context: RunContext) -> VerificationResult:
     )
     business_chart_markers = (
         "alias: authguard-middleware",
-        "condition: authguard.enabled",
+        "condition: authguard-middleware.enabled",
         "enabled: false",
         ".Files.Glob",
         "global.authguard.themeConfigMap",
-        '"authguard-middleware": self._authguard_values()',
+        'authguard_values["enabled"] = True',
+        '"authguard-middleware": authguard_values',
         "str(self.support_chart)",
     )
     if missing := [
@@ -430,6 +449,32 @@ def _verify(_context: RunContext) -> VerificationResult:
         errors.append(
             f"business umbrella Chart optional AuthGuard integration is incomplete: {missing}"
         )
+
+    skill_root = PROJECT_ROOT / ".agents/skills/authguard-chart-integrator"
+    skill_source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            skill_root / "SKILL.md",
+            skill_root / "references/contract.md",
+            skill_root / "scripts/validate.py",
+        )
+    )
+    skill_markers = (
+        "oci://ghcr.io/wl4g/charts",
+        "helm pull",
+        "helm dependency update",
+        "authguard-middleware.enabled: false",
+        "exactly one top-level `authguard-middleware:` map",
+        "--application-host",
+        "--deploy-release",
+        "--deploy-namespace",
+        "files/authguard-theme",
+        "/auth/assets/themes/custom/",
+        "app.kubernetes.io/component: authguard-login-theme",
+        "theme-pack-installer",
+    )
+    if missing := [marker for marker in skill_markers if marker not in skill_source]:
+        errors.append(f"AuthGuard Chart integration skill is incomplete: {missing}")
 
     docker_root = PROJECT_ROOT / "deploy/docker"
     docker_compose = docker_root / "docker-compose.yaml"
@@ -530,7 +575,7 @@ def _verify(_context: RunContext) -> VerificationResult:
         "shared fail-closed observability contract",
         "Runner supports one-shot and opt-in cleanup of all E2E Helm releases and the isolated namespace",
         "Docker uses the same reflected AuthGuard secret keys and Envoy PEP filter order as Helm",
-        "Hosted Login branding uses an immutable Web image plus a business-Chart local directory mounted as a ConfigMap",
+        "Hosted Login theming uses an immutable Web image plus a business service Helm Chart local directory mounted as a ConfigMap",
     ]
     details.extend(errors)
     return VerificationResult(
