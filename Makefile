@@ -1,4 +1,4 @@
-.PHONY: help build build-web build-image build-runtime-image build-web-image docker-up docker-down docker-logs fmt fmt-rust lint lint-rust lint-web lint-helm test test-rust test-web test-go test-python test-java test-helm e2e-python e2e-prepare e2e e2e-k3s e2e-cleanup package-chart release release-push release-verify clean
+.PHONY: help build build-web build-image build-runtime-image build-web-image docker-up docker-down docker-logs fmt fmt-rust lint lint-rust lint-web lint-helm test test-rust test-web test-go test-python test-python-deps test-java test-helm e2e-python e2e-prepare e2e e2e-k3s e2e-cleanup package-chart release release-push release-verify clean
 
 CARGO ?= cargo
 GO ?= go
@@ -24,6 +24,8 @@ E2E_DEPLOY_DIR := $(USE_CASE_DIR)/e2e/deploy
 E2E_DIR := $(USE_CASE_DIR)/e2e
 E2E_VENV_DIR ?= $(E2E_DIR)/.venv
 E2E_PYTHON := $(E2E_VENV_DIR)/bin/python
+PYTHON_TEST_VENV_DIR ?= target/python-test-venv
+PYTHON_TEST := $(PYTHON_TEST_VENV_DIR)/bin/python
 E2E_K3S_SCENARIOS ?= 00,01,02,03,20,10,21,22,23,24,25,26,30,31,40
 E2E_K3S_ARGS ?=
 WEB_DIR := web
@@ -143,9 +145,14 @@ test-go:
 	cd src/adapters/golang && $(GO_NETWORK_ENV) $(GO) test ./...
 	cd $(E2E_DEPLOY_DIR)/golang-sqlx-service && $(GO_NETWORK_ENV) $(GO) test ./...
 
-test-python:
-	PYTHONPATH="$(CURDIR)/src/adapters/python" $(PYTHON) -m unittest discover -s "$(CURDIR)/src/adapters/python/tests" -v
-	PYTHONPATH="$(CURDIR)/src/adapters/python:$(CURDIR)/$(E2E_DEPLOY_DIR)/python-sqlalchemy-service" $(PYTHON) -m unittest discover -s "$(CURDIR)/$(E2E_DEPLOY_DIR)/python-sqlalchemy-service/tests" -v
+test-python: test-python-deps
+	PYTHONPATH="$(CURDIR)/src/adapters/python" $(PYTHON_TEST) -m unittest discover -s "$(CURDIR)/src/adapters/python/tests" -v
+	PYTHONPATH="$(CURDIR)/src/adapters/python:$(CURDIR)/$(E2E_DEPLOY_DIR)/python-sqlalchemy-service" $(PYTHON_TEST) -m unittest discover -s "$(CURDIR)/$(E2E_DEPLOY_DIR)/python-sqlalchemy-service/tests" -v
+
+test-python-deps:
+	@test -x $(PYTHON_TEST) || $(PYTHON) -m venv $(PYTHON_TEST_VENV_DIR)
+	$(PYTHON_TEST) -m pip install --disable-pip-version-check -r src/adapters/python/requirements.txt
+	$(PYTHON_TEST) -m pip install --disable-pip-version-check -r $(E2E_DEPLOY_DIR)/python-sqlalchemy-service/requirements.txt
 
 test-java:
 	$(MAVEN) $(MAVEN_FLAGS) -f src/adapters/java/pom.xml install
