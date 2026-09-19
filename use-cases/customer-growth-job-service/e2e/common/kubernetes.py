@@ -39,8 +39,16 @@ ALIYUN_POSTGRES_IMAGE = (
 )
 ALIYUN_ANVIL_IMAGE = "registry.cn-shenzhen.aliyuncs.com/wl4g/foundry_anvil:1.7.1"
 ALIYUN_SOLANA_IMAGE = "registry.cn-shenzhen.aliyuncs.com/wl4g/anza_solana:3.1.14"
-AUTHGUARD_IMAGE = "registry.cn-shenzhen.aliyuncs.com/wl4g/authguard:e2e-local"
-AUTHGUARD_WEB_IMAGE = "registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-web:e2e-local"
+DEFAULT_AUTHGUARD_IMAGE = (
+    "registry.cn-shenzhen.aliyuncs.com/wl4g/authguard:e2e-local"
+)
+DEFAULT_AUTHGUARD_WEB_IMAGE = (
+    "registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-web:e2e-local"
+)
+AUTHGUARD_IMAGE = os.getenv("AUTHGUARD_E2E_AUTHGUARD_IMAGE", DEFAULT_AUTHGUARD_IMAGE)
+AUTHGUARD_WEB_IMAGE = os.getenv(
+    "AUTHGUARD_E2E_WEB_IMAGE", DEFAULT_AUTHGUARD_WEB_IMAGE
+)
 AUTHGUARD_API_TOKEN = "e2e-authguard-api-token"
 E2E_KEYS_DIR = CONFIG_DIR / "e2e-jwt-keys"
 MOCK_IDP_IMAGE = (
@@ -281,42 +289,57 @@ class KubernetesE2E:
                 "--build-arg",
                 f"MAVEN_PROXY_PORT={parsed_proxy.port}",
             )
-        self._run(
-            (
-                "docker",
-                "build",
-                "--network=host",
-                "--pull=false",
-                *build_args,
-                "-f",
-                str(PROJECT_ROOT / "deploy" / "docker" / "Dockerfile"),
-                "--build-arg",
-                "AUTHGUARD_CARGO_FEATURES=web3",
-                "-t",
-                AUTHGUARD_IMAGE,
-                ".",
-            ),
-            cwd=PROJECT_ROOT,
-        )
-        ui_dir = PROJECT_ROOT / "web"
-        reown_project_id = os.getenv("VITE_REOWN_PROJECT_ID", "")
-        self._run(
-            (
-                "docker",
-                "build",
-                "--network=host",
-                "--pull=false",
-                *build_args,
-                "-f",
-                str(ui_dir / "Dockerfile"),
-                "--build-arg",
-                f"VITE_REOWN_PROJECT_ID={reown_project_id}",
-                "-t",
-                AUTHGUARD_WEB_IMAGE,
-                str(ui_dir),
-            ),
-            cwd=PROJECT_ROOT,
-        )
+        use_prebuilt_images = os.getenv(
+            "AUTHGUARD_E2E_USE_PREBUILT_IMAGES", "false"
+        ).lower() in {"1", "true", "yes"}
+        if use_prebuilt_images:
+            if (
+                AUTHGUARD_IMAGE == DEFAULT_AUTHGUARD_IMAGE
+                or AUTHGUARD_WEB_IMAGE == DEFAULT_AUTHGUARD_WEB_IMAGE
+            ):
+                raise ValueError(
+                    "prebuilt E2E mode requires AUTHGUARD_E2E_AUTHGUARD_IMAGE "
+                    "and AUTHGUARD_E2E_WEB_IMAGE"
+                )
+            self._run(("docker", "pull", AUTHGUARD_IMAGE))
+            self._run(("docker", "pull", AUTHGUARD_WEB_IMAGE))
+        else:
+            self._run(
+                (
+                    "docker",
+                    "build",
+                    "--network=host",
+                    "--pull=false",
+                    *build_args,
+                    "-f",
+                    str(PROJECT_ROOT / "deploy" / "docker" / "Dockerfile"),
+                    "--build-arg",
+                    "AUTHGUARD_CARGO_FEATURES=web3",
+                    "-t",
+                    AUTHGUARD_IMAGE,
+                    ".",
+                ),
+                cwd=PROJECT_ROOT,
+            )
+            ui_dir = PROJECT_ROOT / "web"
+            reown_project_id = os.getenv("VITE_REOWN_PROJECT_ID", "")
+            self._run(
+                (
+                    "docker",
+                    "build",
+                    "--network=host",
+                    "--pull=false",
+                    *build_args,
+                    "-f",
+                    str(ui_dir / "Dockerfile"),
+                    "--build-arg",
+                    f"VITE_REOWN_PROJECT_ID={reown_project_id}",
+                    "-t",
+                    AUTHGUARD_WEB_IMAGE,
+                    str(ui_dir),
+                ),
+                cwd=PROJECT_ROOT,
+            )
         for component, image in WORKLOAD_IMAGES.items():
             service_dir = self.deploy_dir / WORKLOAD_DIRECTORIES[component]
             self._run(

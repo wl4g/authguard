@@ -25,6 +25,7 @@ E2E_DIR := $(USE_CASE_DIR)/e2e
 E2E_VENV_DIR ?= $(E2E_DIR)/.venv
 E2E_PYTHON := $(E2E_VENV_DIR)/bin/python
 E2E_K3S_SCENARIOS ?= 00,01,02,03,20,10,21,22,23,24,25,26,30,31,40
+E2E_K3S_ARGS ?=
 WEB_DIR := web
 DOCKER_COMPOSE_FILE := deploy/docker/docker-compose.yaml
 DOCKER_ENV_FILE := deploy/docker/.env
@@ -170,7 +171,7 @@ e2e: e2e-prepare
 	$(E2E_PYTHON) $(E2E_DIR)/runner.py
 
 e2e-k3s: e2e-prepare
-	$(E2E_PYTHON) $(E2E_DIR)/runner.py --scenario $(E2E_K3S_SCENARIOS) --timeout 1800
+	$(E2E_PYTHON) $(E2E_DIR)/runner.py --scenario $(E2E_K3S_SCENARIOS) --timeout 1800 $(E2E_K3S_ARGS)
 
 e2e-cleanup: e2e-python
 	$(E2E_PYTHON) $(E2E_DIR)/runner.py --cleanup --timeout 1800

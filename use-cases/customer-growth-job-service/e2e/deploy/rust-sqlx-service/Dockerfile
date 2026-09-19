@@ -1,5 +1,7 @@
 FROM registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-rust-builder:1.94-bookworm AS builder
 WORKDIR /workspace
+COPY rust-toolchain.toml ./
+RUN cargo --version
 COPY . .
 RUN cargo build --release --locked --package authguard-customer-growth-job-rust-service --bin authguard-customer-growth-job-rust-service
 
