@@ -15,11 +15,11 @@ jobs:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
-      create_tag: ${{ steps.version.outputs.create_tag }}
+      should_release: ${{ steps.version.outputs.should_release }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,34 +31,57 @@ jobs:
         shell: bash
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
+          if grep -qiE '^refactor:' <<< "${PR_TITLE}"; then
+            bump=major
+          elif grep -qiE '^feat:' <<< "${PR_TITLE}"; then
+            bump=minor
+          elif grep -qiE '^fix:' <<< "${PR_TITLE}"; then
+            bump=patch
+          else
+            echo "PR title does not trigger a release (only refactor:, feat:, fix:)."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           head_tag=$(git tag --points-at HEAD -l 'v[0-9]*' --sort=-v:refname | head -1)
           if [[ -n "${head_tag}" ]]; then
             echo "version=${head_tag#v}" >> "$GITHUB_OUTPUT"
             echo "tag=${head_tag}" >> "$GITHUB_OUTPUT"
-            echo "create_tag=false" >> "$GITHUB_OUTPUT"
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           latest=$(git tag -l 'v[0-9]*' --sort=-v:refname | head -1)
           latest=${latest:-v0.0.0}
           IFS=. read -r major minor patch <<< "${latest#v}"
-          if grep -Eq '^[^:]+!:' <<< "${PR_TITLE}" \
-            || grep -q 'BREAKING CHANGE' <<< "${PR_BODY}"; then
-            major=$((major + 1)); minor=0; patch=0
-          elif grep -Eq '^feat(\([^)]+\))?:' <<< "${PR_TITLE}"; then
-            minor=$((minor + 1)); patch=0
-          else
-            patch=$((patch + 1))
-          fi
+          case "${bump}" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+          esac
           echo "version=${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
           echo "tag=v${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
-          echo "create_tag=true" >> "$GITHUB_OUTPUT"
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+
+      - name: Tag release commit
+        if: steps.version.outputs.should_release == 'true' && steps.version.outputs.tag != ''
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "Release tag ${TAG} already exists."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "${TAG}"
 
   publish:
     name: Publish official artifacts
     needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
@@ -67,7 +90,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          ref: ${{ needs.prepare.outputs.tag }}
           fetch-depth: 0
 
       - uses: docker/setup-qemu-action@v3
@@ -95,7 +118,7 @@ jobs:
             ghcr.io/wl4g/authguard:${{ needs.prepare.outputs.version }}
             ghcr.io/wl4g/authguard:latest
           cache-from: type=gha,scope=authguard-runtime
-          cache-to: type=gha,mode=max,scope=authguard-runtime
+          cache-to: type=gha,mode=max,scope=authguard-runtime,ignore-error=true
 
       - name: Build and publish web image
         uses: docker/build-push-action@v6
@@ -111,7 +134,7 @@ jobs:
             ghcr.io/wl4g/authguard-web:${{ needs.prepare.outputs.version }}
             ghcr.io/wl4g/authguard-web:latest
           cache-from: type=gha,scope=authguard-web
-          cache-to: type=gha,mode=max,scope=authguard-web
+          cache-to: type=gha,mode=max,scope=authguard-web,ignore-error=true
 
       - name: Install Helm
         uses: azure/setup-helm@v4
@@ -131,16 +154,6 @@ jobs:
           helm push "dist/authguard-${VERSION}.tgz" oci://ghcr.io/wl4g/charts
           helm pull oci://ghcr.io/wl4g/charts/authguard --version "${VERSION}" --destination verify
           helm show chart "verify/authguard-${VERSION}.tgz" >/dev/null
-
-      - name: Tag release commit
-        if: needs.prepare.outputs.create_tag == 'true'
-        env:
-          TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${TAG}" -m "Release ${TAG}"
-          git push origin "${TAG}"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
