@@ -27,4 +27,4 @@ The index below is organized by document purpose. The whitepaper is the canonica
 
 ### Use cases
 
-- [Customer growth job authorization](../use-cases/customer-growth-job-service/README.md): one enterprise growth-team scenario implemented as independent Go, Rust, Python, Spring JDBC, and Spring JPA services with a shared 53-case authorization contract and full k3s deployment verifier.
+- [Customer growth job authorization](../use-cases/customer-growth-job-service/README.md): one enterprise growth-team scenario implemented as independent Go, Rust, Python, Spring JDBC, and Spring JPA services with a shared 53-case authorization contract and full Kubernetes deployment verifier.

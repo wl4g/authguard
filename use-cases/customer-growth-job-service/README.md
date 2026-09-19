@@ -21,7 +21,7 @@ trusted x-authguard-context
 The use case has two complementary execution modes. Portable mode requires no
 identity provider, Kubernetes cluster, or external database: `authguard-authz`
 evaluates the condition matrix, and each project tests the SDK-to-SQL boundary
-against SQLite or H2. Deployment mode starts the complete request path on k3s:
+against SQLite or H2. Deployment mode starts the complete request path on Kubernetes:
 Keycloak as an E2E-only external IdP, Envoy Gateway, `authguard-authn`, one
 `authguard-authz` replica, Redis Cluster, one shared
 PostgreSQL instance, an LDAP directory, Jaeger, and all five HTTP microservices.
@@ -116,10 +116,10 @@ Kubernetes resources are retained by default for troubleshooting. Add
 `--cleanup-after-run` to uninstall all three E2E Helm releases and delete the
 isolated namespace after success, failure, or interruption.
 
-Run the real Kubernetes path on local k3s:
+Run the real Kubernetes path:
 
 ```bash
-HTTPS_PROXY=http://127.0.0.1:8800 make e2e-k3s
+HTTPS_PROXY=http://127.0.0.1:8800 make e2e-k8s
 ```
 
 Each round removes and recreates an `e2e-` namespace and three Helm releases.
@@ -221,7 +221,7 @@ runtime pins Envoy `distroless-v1.36.4`, Envoy Gateway `v1.9.0`, Redis Cluster
 Portable-mode prerequisites are the same local toolchains used by the
 repository: Rust/Cargo, Go, Python 3 with SQLAlchemy, Java 17/Maven, and their
 cached or reachable package repositories. Kubernetes mode additionally needs
-Docker, Helm, kubectl, and local k3s. The authentication verifiers use PyOTP as
+Docker, Helm, kubectl, and a local Kubernetes cluster. The authentication verifiers use PyOTP as
 an RFC 6238 authenticator-app oracle, FIDO2 CBOR plus `cryptography` for a real
 virtual ES256 WebAuthn ceremony, and `viem` for browser-wallet-equivalent
 EIP-191 signing. AuthGuard still performs every server-side verification.

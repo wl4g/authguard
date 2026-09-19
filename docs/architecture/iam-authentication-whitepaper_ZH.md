@@ -222,6 +222,6 @@ Customer Growth reference 是可执行的架构契约：
 | Helm opt-in、本地主题 ConfigMap 与仅 Web 挂载 | `s00` |
 | 协议无关 Principal/JWT/AuthZ | `s10`、`s20`、`s26` |
 
-`make e2e-k3s` 按顺序运行部署、AuthN、AuthZ、SDK、Chromium 与可观测性矩阵。
+`make e2e-k8s` 按顺序运行部署、AuthN、AuthZ、SDK、Chromium 与可观测性矩阵。
 发布证据同时包含 API 断言、数据库状态、trace 与截图；禁止使用测试专用的成功 IdP
 或区块链签名 mock。

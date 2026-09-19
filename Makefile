@@ -1,4 +1,4 @@
-.PHONY: help build build-web build-image build-runtime-image build-web-image docker-up docker-down docker-logs fmt fmt-rust lint lint-rust lint-web lint-helm test test-rust test-web test-go test-python test-python-deps test-java test-helm e2e-python e2e-prepare e2e e2e-k3s e2e-cleanup package-chart release release-push release-verify clean
+.PHONY: help build build-web build-image build-runtime-image build-web-image docker-up docker-down docker-logs fmt fmt-rust lint lint-rust lint-web lint-helm test test-rust test-web test-go test-python test-python-deps test-java test-helm e2e-python e2e-prepare e2e e2e-k8s e2e-cleanup package-chart release release-push release-verify clean
 
 CARGO ?= cargo
 GO ?= go
@@ -26,8 +26,8 @@ E2E_VENV_DIR ?= $(E2E_DIR)/.venv
 E2E_PYTHON := $(E2E_VENV_DIR)/bin/python
 PYTHON_TEST_VENV_DIR ?= target/python-test-venv
 PYTHON_TEST := $(PYTHON_TEST_VENV_DIR)/bin/python
-E2E_K3S_SCENARIOS ?= 00,01,02,03,20,10,21,22,23,24,25,26,30,31,40
-E2E_K3S_ARGS ?=
+E2E_K8S_SCENARIOS ?= 00,01,02,03,20,10,21,22,23,24,25,26,30,31,40
+E2E_K8S_ARGS ?=
 WEB_DIR := web
 DOCKER_COMPOSE_FILE := deploy/docker/docker-compose.yaml
 DOCKER_ENV_FILE := deploy/docker/.env
@@ -73,7 +73,7 @@ help:
 	@echo "    make test-java     Run Java adapter and Spring Boot use-case tests."
 	@echo "    make test-helm     Verify vendored dependencies, lint, and render Helm manifests."
 	@echo "    make e2e           Run the portable cross-language verifier groups."
-	@echo "    make e2e-k3s       Clean-deploy and run the complete AuthN/AuthZ/UI/observability matrix."
+	@echo "    make e2e-k8s       Clean-deploy and run the complete AuthN/AuthZ/UI/observability matrix."
 	@echo "    make e2e-cleanup   Remove only the E2E-managed Helm releases and namespace."
 	@echo "    make release       Build, package, publish, and pull-verify image/chart artifacts."
 	@echo ""
@@ -170,15 +170,17 @@ test-helm:
 e2e-python:
 	test -x $(E2E_PYTHON) || $(PYTHON) -m venv $(E2E_VENV_DIR)
 	$(E2E_PYTHON) -m pip install --disable-pip-version-check -r $(E2E_DIR)/requirements.txt
+	$(E2E_PYTHON) -m pip install --disable-pip-version-check -r $(E2E_DEPLOY_DIR)/python-sqlalchemy-service/requirements.txt
 
 e2e-prepare: e2e-python
+	cd $(WEB_DIR) && $(NPM) ci
 	$(E2E_PYTHON) -m playwright install chromium
 
 e2e: e2e-prepare
 	$(E2E_PYTHON) $(E2E_DIR)/runner.py
 
-e2e-k3s: e2e-prepare
-	$(E2E_PYTHON) $(E2E_DIR)/runner.py --scenario $(E2E_K3S_SCENARIOS) --timeout 1800 $(E2E_K3S_ARGS)
+e2e-k8s: e2e-prepare
+	$(E2E_PYTHON) $(E2E_DIR)/runner.py --scenario $(E2E_K8S_SCENARIOS) --timeout 1800 $(E2E_K8S_ARGS)
 
 e2e-cleanup: e2e-python
 	$(E2E_PYTHON) $(E2E_DIR)/runner.py --cleanup --timeout 1800

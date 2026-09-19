@@ -177,9 +177,9 @@ curl -fsS http://127.0.0.1:8082/.well-known/authn.json | jq
 # Rust, React, SDK, use-case, and Helm checks.
 make test
 
-# Full disposable k3s matrix: infrastructure, AuthN, AuthZ, SDKs, Chromium UI,
+# Full disposable Kubernetes matrix: infrastructure, AuthN, AuthZ, SDKs, Chromium UI,
 # PostgreSQL, logs, metrics, and Jaeger evidence.
-HTTPS_PROXY=http://127.0.0.1:8800 make e2e-k3s
+HTTPS_PROXY=http://127.0.0.1:8800 make e2e-k8s
 ```
 
 The reproducible application and verifier suite lives in

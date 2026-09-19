@@ -198,12 +198,11 @@ class KubernetesE2E:
         self._prepare_external_images()
         self._install_envoy_gateway()
         self._remove_mutable_cluster_images()
-        self._install_support_services()
-        # Create the consumer Pods first, then import each mutable local image.
-        # Under image-GC pressure an unreferenced image can disappear while the
-        # remaining large images are still being imported. Pending Pods pin the
-        # image as soon as it becomes available and remove that race.
+        # Workload Pods deliberately use imagePullPolicy: Never. Import every
+        # mutable local image before their Helm release creates a consumer so a
+        # kubelet never records an ErrImageNeverPull before that tag exists.
         self._prepare_workload_images()
+        self._install_support_services()
         # Support Pods now reference their immutable images. Re-check after the
         # mutable imports so k3s image GC cannot remove a large, previously idle
         # chain image in the interval between the first import and Pod startup.

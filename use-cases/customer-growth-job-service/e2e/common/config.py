@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import sys
 from urllib.parse import urlparse
 
 
@@ -93,7 +94,7 @@ PROJECTS = {
         setup_commands=(),
         clean_commands=(),
         test_command=(
-            "python3",
+            sys.executable,
             "-m",
             "unittest",
             "discover",

@@ -246,9 +246,9 @@ codec/URN/SQL**。客户增长业务用例另有一份跨五种实现共享的 5
 ```bash
 make test
 make e2e
-make e2e-k3s
+make e2e-k8s
 ```
 
 `make test` 覆盖 Rust workspace、四语言 SDK、五个业务实现与 Helm lint/template；
-`make e2e` 在本地数据库执行共享业务契约；`make e2e-k3s` 负责完整清理、重新部署并通过
+`make e2e` 在本地数据库执行共享业务契约；`make e2e-k8s` 负责完整清理、重新部署并通过
 Envoy Gateway 校验真实 HTTP 结果。
