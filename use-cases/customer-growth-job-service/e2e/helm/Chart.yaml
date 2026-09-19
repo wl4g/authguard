@@ -1,6 +1,14 @@
 apiVersion: v2
 name: e2e-authguard-customer-growth-job-service
-description: Self-contained LDAP, Keycloak, Jaeger, PostgreSQL, and five customer growth workloads for Authguard k3s E2E
+description: Self-contained LDAP, Keycloak, Jaeger, PostgreSQL, and five customer growth workloads for Authguard Kubernetes E2E
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
+dependencies:
+  # Real business-chart integration: the immutable AuthGuard tgz is vendored
+  # below charts/ and rendered only for the explicit middleware release.
+  - name: authguard
+    alias: authguard-middleware
+    version: 0.1.0
+    repository: file://../../../../deploy/helm/authguard
+    condition: authguard-middleware.enabled

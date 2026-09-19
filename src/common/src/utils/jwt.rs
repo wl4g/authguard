@@ -52,6 +52,13 @@ pub fn public_key_pem(key: &JwtSigningKey) -> Result<String, JwtError> {
         .map_err(|_| JwtError::InvalidSigningKey)
 }
 
+/// Returns unsigned big-endian RSA modulus and exponent bytes for a public JWKS.
+#[must_use]
+pub fn public_key_jwk_components(key: &JwtSigningKey) -> (Vec<u8>, Vec<u8>) {
+    let public = RsaPublicKey::from(key.0.as_ref());
+    (public.n().to_bytes_be(), public.e().to_bytes_be())
+}
+
 /// Signs payload bytes as a compact RS256 JWT.
 ///
 /// # Errors

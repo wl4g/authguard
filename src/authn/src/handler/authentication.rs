@@ -37,6 +37,8 @@ pub(crate) enum AuthenticationPipelineError {
     Linking(#[from] AccountLinkingError),
     #[error(transparent)]
     Token(#[from] TokenError),
+    #[error("step-up identity does not belong to the authenticated Principal")]
+    StepUpPrincipalMismatch,
 }
 
 impl AuthenticationPipeline {
@@ -76,6 +78,55 @@ impl AuthenticationPipeline {
         self.tokens.authenticate_bearer(headers)
     }
 
+    pub(crate) fn authenticate_browser_cookie(
+        &self,
+        headers: &axum::http::HeaderMap,
+    ) -> Result<AuthenticatedPrincipalContext, TokenError> {
+        self.tokens.authenticate_cookie(headers)
+    }
+
+    /// Authenticates the canonical Principal carried by either an API bearer or
+    /// the Hosted Login `HttpOnly` cookie. Protocol handlers use only the stable
+    /// Principal ID and never infer ownership from a login identifier.
+    pub(crate) fn authenticate_request_principal(
+        &self,
+        headers: &axum::http::HeaderMap,
+    ) -> Result<String, TokenError> {
+        if headers.contains_key(axum::http::header::AUTHORIZATION) {
+            self.tokens.authenticate_bearer(headers)
+        } else {
+            self.tokens.authenticate_cookie(headers).map(|principal| principal.principal_id)
+        }
+    }
+
+    /// Proves that a fresh protocol-specific authentication belongs to the
+    /// already authenticated canonical Principal before credential enrollment.
+    pub(crate) async fn verify_step_up(
+        &self,
+        principal_id: &str,
+        authentication: &AuthenticationResult,
+        kind: PrincipalKind,
+    ) -> Result<(), AuthenticationPipelineError> {
+        self.resolve_step_up(principal_id, authentication, kind).await?;
+        Ok(())
+    }
+
+    /// Re-resolves the step-up identity and issues the one canonical JWT after
+    /// a credential ceremony completes.
+    pub(crate) async fn complete_step_up(
+        &self,
+        principal_id: &str,
+        authentication: AuthenticationResult,
+        kind: PrincipalKind,
+    ) -> Result<IssuedAuthentication, AuthenticationPipelineError> {
+        let principal = self.resolve_step_up(principal_id, &authentication, kind).await?;
+        self.issue(&authentication, principal)
+    }
+
+    pub(crate) fn jwks(&self) -> Result<Value, TokenError> {
+        self.tokens.jwks()
+    }
+
     pub(crate) async fn rollback_identity_binding(
         &self,
         principal_id: &str,
@@ -97,6 +148,19 @@ impl AuthenticationPipeline {
             expires_in: self.tokens.ttl().as_secs(),
             principal,
         })
+    }
+
+    async fn resolve_step_up(
+        &self,
+        principal_id: &str,
+        authentication: &AuthenticationResult,
+        kind: PrincipalKind,
+    ) -> Result<AuthenticatedPrincipalContext, AuthenticationPipelineError> {
+        let principal = self.linking.resolve_login(authentication, kind).await?;
+        if principal.principal_id != principal_id {
+            return Err(AuthenticationPipelineError::StepUpPrincipalMismatch);
+        }
+        Ok(principal)
     }
 }
 

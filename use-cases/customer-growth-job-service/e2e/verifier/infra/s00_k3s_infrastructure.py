@@ -17,6 +17,7 @@ from common.kubernetes import (
     ALIYUN_REDIS_IMAGE,
     ALIYUN_SOLANA_IMAGE,
     AUTHGUARD_IMAGE,
+    AUTHGUARD_WEB_IMAGE,
     E2E_KEYS_DIR,
     WORKLOAD_IMAGES,
     _has_true_condition,
@@ -42,6 +43,10 @@ class InfrastructureVerifier(BaseVerifier):
             self.infrastructure.redeploy,
         )
         self.step(
+            "verify the business Chart keeps AuthGuard opt-in and mounts its local theme files",
+            self._verify_business_chart_authguard_integration,
+        )
+        self.step(
             "wait for accepted Gateway API resources",
             self._wait_for_gateway_api_acceptance,
         )
@@ -56,6 +61,118 @@ class InfrastructureVerifier(BaseVerifier):
         self.step("verify Redis Cluster health", self._verify_redis_cluster)
         self.step("verify immutable running images", self._verify_running_images)
         self.step("verify zero container restarts", self._verify_zero_container_restarts)
+
+    def _verify_business_chart_authguard_integration(self) -> None:
+        """Prove one business Chart owns local theme files and an optional subchart."""
+        default_theme_name = f"{self.support_release}-authguard-theme-v1"
+        default_theme = self._run(
+            (
+                "kubectl",
+                "get",
+                "configmap",
+                default_theme_name,
+                "-n",
+                self.namespace,
+                "--ignore-not-found",
+                "-o",
+                "name",
+            )
+        ).output.strip()
+        if default_theme:
+            raise RuntimeError(
+                "the normal business release rendered AuthGuard theme resources by default"
+            )
+
+        theme_name = f"{self.authguard_release}-authguard-theme-v1"
+        theme = json.loads(
+            self._run(
+                (
+                    "kubectl",
+                    "get",
+                    "configmap",
+                    theme_name,
+                    "-n",
+                    self.namespace,
+                    "-o",
+                    "json",
+                )
+            ).output
+        )
+        if theme.get("immutable") is not True or set(theme.get("data", {})) != {
+            "customer-growth.css",
+            "customer-growth.svg",
+        }:
+            raise RuntimeError(
+                "business Chart did not package the exact local login-theme directory"
+            )
+        if (
+            theme.get("metadata", {})
+            .get("annotations", {})
+            .get("meta.helm.sh/release-name")
+            != self.authguard_release
+        ):
+            raise RuntimeError("local Theme ConfigMap is not owned by the middleware release")
+
+        web = json.loads(
+            self._run(
+                (
+                    "kubectl",
+                    "get",
+                    "deployment",
+                    self.authguard_web_service,
+                    "-n",
+                    self.namespace,
+                    "-o",
+                    "json",
+                )
+            ).output
+        )
+        pod_spec = web["spec"]["template"]["spec"]
+        custom_theme = next(
+            (
+                volume.get("configMap", {}).get("name")
+                for volume in pod_spec.get("volumes", [])
+                if volume.get("name") == "custom-themes"
+            ),
+            None,
+        )
+        if custom_theme != theme_name or pod_spec.get("initContainers"):
+            raise RuntimeError(
+                "AuthGuard Web did not mount the business ConfigMap directly or added an unexpected init container"
+            )
+        deployments = json.loads(
+            self._run(
+                (
+                    "kubectl",
+                    "get",
+                    "deployment",
+                    self.authguard_release,
+                    f"{self.authguard_release}-authn",
+                    "-n",
+                    self.namespace,
+                    "-o",
+                    "json",
+                )
+            ).output
+        )["items"]
+        for deployment in deployments:
+            spec = deployment["spec"]["template"]["spec"]
+            if any(
+                volume.get("name") == "custom-themes"
+                for volume in spec.get("volumes", [])
+            ) or any(
+                mount.get("name") == "custom-themes"
+                for container in spec.get("containers", [])
+                for mount in container.get("volumeMounts", [])
+            ):
+                raise RuntimeError(
+                    f"theme assets leaked into non-Web deployment {deployment['metadata']['name']}"
+                )
+        self.details.append(
+            "normal business Helm release left authguard.enabled=false; the separate opt-in "
+            "middleware release rendered the vendored AuthGuard tgz and mounted two local "
+            "Chart files only in AuthGuard Web, without building a theme image"
+        )
 
     def _verify_identity_middleware_initialization(self) -> None:
         """Verify that enterprise directories and OAuth test IdPs initialized."""
@@ -105,14 +222,15 @@ class InfrastructureVerifier(BaseVerifier):
             f"url: 'ldap://{self.ldap_service}",
             "discovery_id: e2e-authguard-keycloak",
             "discovery_id: e2e-authguard-direct-ldap",
-            "${AUTHGUARD_KEYCLOAK_CLIENT_SECRET}",
-            "${AUTHGUARD_LDAP_BIND_PASSWORD}",
-            "${AUTHGUARD_GITHUB_CLIENT_SECRET}",
-            "${AUTHGUARD_GOOGLE_CLIENT_SECRET}",
-            "${AUTHGUARD_WECHAT_CLIENT_SECRET}",
-            "${AUTHGUARD_QQ_CLIENT_SECRET}",
+            "${AUTHGUARD__AUTHN__PROVIDERS__E2E_AUTHGUARD_KEYCLOAK__CLIENT_SECRET}",
+            "${AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__KEYCLOAK__INDEX_0__AUTH__CLIENT_SECRET}",
+            "${AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__LDAP__INDEX_0__AUTH__BIND_PASSWORD}",
+            "${AUTHGUARD__AUTHN__PROVIDERS__GITHUB__CLIENT_SECRET}",
+            "${AUTHGUARD__AUTHN__PROVIDERS__GOOGLE__CLIENT_SECRET}",
+            "${AUTHGUARD__AUTHN__PROVIDERS__WECHAT__CLIENT_SECRET}",
+            "${AUTHGUARD__AUTHN__PROVIDERS__QQ__CLIENT_SECRET}",
             "${AUTHGUARD__STORAGE__POSTGRES__PASSWORD}",
-            "${AUTHGUARD_SCIM_API_PASSWORD}",
+            "${AUTHGUARD__AUTHZ__API_TOKEN}",
         )
         if missing := [value for value in required if value not in runtime]:
             raise RuntimeError(f"AuthZ discovery runtime configuration is incomplete: {missing}")
@@ -156,37 +274,23 @@ class InfrastructureVerifier(BaseVerifier):
         )
         expected = {
             "AUTHGUARD__STORAGE__POSTGRES__PASSWORD",
-            "AUTHGUARD_GITHUB_CLIENT_SECRET",
-            "AUTHGUARD_GOOGLE_CLIENT_SECRET",
-            "AUTHGUARD_WECHAT_CLIENT_SECRET",
-            "AUTHGUARD_QQ_CLIENT_SECRET",
-            "AUTHGUARD_KEYCLOAK_CLIENT_SECRET",
-            "AUTHGUARD_STANDALONE_CREDENTIAL_KEY",
-            "AUTHGUARD_LDAP_BIND_PASSWORD",
-            "AUTHGUARD_SCIM_API_PASSWORD",
+            "AUTHGUARD__CACHE__REDIS__PASSWORD",
+            "AUTHGUARD__AUTHN__PROVIDERS__GITHUB__CLIENT_SECRET",
+            "AUTHGUARD__AUTHN__PROVIDERS__GOOGLE__CLIENT_SECRET",
+            "AUTHGUARD__AUTHN__PROVIDERS__WECHAT__CLIENT_SECRET",
+            "AUTHGUARD__AUTHN__PROVIDERS__QQ__CLIENT_SECRET",
+            "AUTHGUARD__AUTHN__PROVIDERS__E2E_AUTHGUARD_KEYCLOAK__CLIENT_SECRET",
+            "AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__KEYCLOAK__INDEX_0__AUTH__CLIENT_SECRET",
+            "AUTHGUARD__AUTHN__STANDALONE__CREDENTIAL_ENCRYPTION_KEY",
+            "AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__LDAP__INDEX_0__AUTH__BIND_PASSWORD",
+            "AUTHGUARD__AUTHZ__API_TOKEN",
+            "AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY",
         }
         if missing := expected - keys:
             raise RuntimeError(f"external integration Secret lacks keys: {sorted(missing)}")
-        redis_secret = f"{self.authguard_release}-redis-cluster"
-        redis_keys = set(
-            self._run(
-                (
-                    "kubectl",
-                    "get",
-                    "secret",
-                    redis_secret,
-                    "-n",
-                    self.namespace,
-                    "-o",
-                    f"go-template={template}",
-                )
-            ).output.splitlines()
-        )
-        if "redis-password" not in redis_keys:
-            raise RuntimeError("Redis Secret lacks redis-password")
         self.details.append(
-            "verified key-only wiring for nine external credential classes: PostgreSQL, "
-            "Redis, GitHub, Google, WeChat, QQ, Keycloak, LDAP, and SCIM; no value was read"
+            "verified one key-only Secret for PostgreSQL, Redis, GitHub, Google, WeChat, QQ, "
+            "Keycloak, LDAP, SCIM, standalone encryption, and direct scope signing; no value was read"
         )
 
     def _wait_for_gateway_api_acceptance(self) -> None:
@@ -247,8 +351,8 @@ class InfrastructureVerifier(BaseVerifier):
                     raise RuntimeError("accepted SecurityPolicy payload is unavailable")
                 self._verify_security_policy_contract(accepted_policy)
                 self.details.append(
-                    "Gateway, five protected business routes, public AuthN/UI routes, and "
-                    "listener-scoped SecurityPolicy are accepted"
+                    "Gateway, five labelled protected business routes, and same-origin public "
+                    "AuthN/UI routes are accepted"
                 )
                 return
             last_state = (
@@ -260,13 +364,16 @@ class InfrastructureVerifier(BaseVerifier):
 
     def _verify_security_policy_contract(self, policy: dict) -> None:
         spec = policy.get("spec", {})
-        targets = spec.get("targetRefs", [])
+        selectors = spec.get("targetSelectors", [])
         if not any(
-            target.get("name") == self.gateway_name
-            and target.get("sectionName") == "protected"
-            for target in targets
+            selector.get("group") == "gateway.networking.k8s.io"
+            and selector.get("kind") == "HTTPRoute"
+            and selector.get("matchLabels", {}).get("authguard.io/protected") == "true"
+            for selector in selectors
         ):
-            raise RuntimeError("SecurityPolicy must target only the protected listener")
+            raise RuntimeError(
+                "SecurityPolicy must target explicitly labelled protected HTTPRoutes"
+            )
         ext_auth = spec.get("extAuth", {})
         grpc = ext_auth.get("grpc", {})
         backends = grpc.get("backendRefs", [])
@@ -284,7 +391,13 @@ class InfrastructureVerifier(BaseVerifier):
             raise RuntimeError(
                 "SecurityPolicy extAuth does not target the Authguard Check gRPC port"
             )
-        required_headers = {"authorization", "x-request-id", "traceparent", "tracestate"}
+        required_headers = {
+            "authorization",
+            "cookie",
+            "x-request-id",
+            "traceparent",
+            "tracestate",
+        }
         configured_headers = set(ext_auth.get("headersToExtAuth", []))
         if not required_headers.issubset(configured_headers):
             missing = sorted(required_headers - configured_headers)
@@ -328,7 +441,7 @@ class InfrastructureVerifier(BaseVerifier):
             raise RuntimeError("the deterministic Envoy local JWKS must contain keys")
         self.details.append(
             "SecurityPolicy requires only the AuthN issuer/audience and deterministic local "
-            "JWKS, then calls fail-closed Authguard ext_auth gRPC on port 8080"
+            "JWKS, then calls fail-closed Authguard ext_auth gRPC on labelled routes"
         )
 
     def _verify_redis_cluster(self) -> None:
@@ -416,19 +529,25 @@ class InfrastructureVerifier(BaseVerifier):
             ALIYUN_ANVIL_IMAGE,
             ALIYUN_SOLANA_IMAGE,
             AUTHGUARD_IMAGE,
+            AUTHGUARD_WEB_IMAGE,
             *WORKLOAD_IMAGES.values(),
         }
         missing = expected - images
         if missing:
-            raise RuntimeError(f"expected Aliyun images are not running: {sorted(missing)}")
+            raise RuntimeError(f"expected runtime images are not running: {sorted(missing)}")
+        configured_authguard_images = {AUTHGUARD_IMAGE, AUTHGUARD_WEB_IMAGE}
         non_aliyun = sorted(
             image
             for image in images
             if not image.startswith("registry.cn-shenzhen.aliyuncs.com/")
+            and image not in configured_authguard_images
         )
         if non_aliyun:
-            raise RuntimeError(f"non-Aliyun runtime images detected: {non_aliyun}")
-        self.details.append("all running images use registry.cn-shenzhen.aliyuncs.com")
+            raise RuntimeError(f"unexpected runtime image registries: {non_aliyun}")
+        self.details.append(
+            "all dependency images use registry.cn-shenzhen.aliyuncs.com and "
+            "AuthGuard uses its configured immutable runtime and Web images"
+        )
 
     def _verify_zero_container_restarts(self) -> None:
         result = self._run(

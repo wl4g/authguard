@@ -251,7 +251,10 @@ class PythonAdapterFilterTest(unittest.TestCase):
             AccessFilter().enter_headers(signed, None)
 
     def test_signing_key_configuration_uses_standard_environment_name(self) -> None:
-        self.assertEqual("AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY", ACCESS_CONTEXT_HMAC_KEY_ENV)
+        self.assertEqual(
+            "AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY",
+            ACCESS_CONTEXT_HMAC_KEY_ENV,
+        )
 
     def assert_authenticated(
         self, request_access: RequestAccess | None, *, require_current: bool = True

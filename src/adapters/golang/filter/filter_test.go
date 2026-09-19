@@ -270,7 +270,7 @@ func TestDirectContextSignedWithDifferentKeyFailsClosed(t *testing.T) {
 }
 
 func TestSigningKeyConfigurationUsesStandardEnvironmentName(t *testing.T) {
-	if access.AccessContextHMACKeyEnv != "AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY" {
+	if access.AccessContextHMACKeyEnv != "AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY" {
 		t.Fatalf("unexpected signing key environment: %s", access.AccessContextHMACKeyEnv)
 	}
 }

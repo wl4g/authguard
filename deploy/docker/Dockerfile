@@ -1,5 +1,7 @@
 FROM registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-rust-builder:1.94-bookworm AS builder
 WORKDIR /workspace
+COPY rust-toolchain.toml ./
+RUN cargo --version
 COPY . .
 ARG AUTHGUARD_CARGO_FEATURES=""
 RUN if [ -n "${AUTHGUARD_CARGO_FEATURES}" ]; then \

@@ -1,0 +1,51 @@
+:root[data-application-theme='APPLICATION_ID'] {
+  --authguard-application-theme: APPLICATION_ID;
+  --bg: #f4f7f8;
+  --panel: #ffffff;
+  --panel-2: #eef3f4;
+  --text: #101a1f;
+  --muted: #63747c;
+  --line: #d9e3e5;
+  --accent: #00a889;
+  --accent-2: #00d9ae;
+  --danger: #e15461;
+  --shadow: 0 24px 70px rgba(17, 43, 49, .12);
+}
+
+:root[data-theme='dark'][data-application-theme='APPLICATION_ID'] {
+  --bg: #050b0f;
+  --panel: #091318;
+  --panel-2: #0d1b21;
+  --text: #e9fbf6;
+  --muted: #779099;
+  --line: #183039;
+  --accent: #19e6b7;
+  --accent-2: #70ffe0;
+  --danger: #ff6c7b;
+  --shadow: 0 26px 80px rgba(0, 0, 0, .46);
+}
+
+:root[data-application-theme='APPLICATION_ID'] .login-visual {
+  background:
+    radial-gradient(circle at 68% 28%, color-mix(in srgb, var(--accent) 34%, transparent), transparent 34%),
+    linear-gradient(145deg, #0b1730, #06131a 72%);
+}
+
+:root[data-application-theme='APPLICATION_ID'] .login-card {
+  padding: 34px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+:root[data-application-theme='APPLICATION_ID'] .primary {
+  color: #ffffff;
+  background: linear-gradient(115deg, var(--accent), var(--accent-2));
+}
+
+@media (max-width: 900px) {
+  :root[data-application-theme='APPLICATION_ID'] .login-card {
+    padding: clamp(22px, 6vw, 34px);
+  }
+}

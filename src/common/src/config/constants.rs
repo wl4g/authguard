@@ -9,8 +9,6 @@ pub(crate) const DEFAULT_CONFIG_YAML: &str = include_str!("../../../../etc/authg
 /// Environment prefix used for Spring Boot-like nested property overrides.
 pub const ENV_PREFIX: &str = "AUTHGUARD__";
 
-/// Shared configuration file environment variable.
-pub const CONFIG_FILE_ENV: &str = "AUTHGUARD_CONFIG_FILE";
-
-/// Optional `KEY=VALUE` secret projection environment variable.
-pub const SECRET_ENV_FILE_ENV: &str = "AUTHGUARD_ENV_FILE";
+/// Optional `KEY=VALUE` secret projection, represented by the typed
+/// `secrets.env_file` configuration property.
+pub const SECRETS_ENV_FILE_ENV: &str = "AUTHGUARD__SECRETS__ENV_FILE";

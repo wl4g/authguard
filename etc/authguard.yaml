@@ -20,6 +20,13 @@ server:
   performance:
     worker_threads: 2
     max_in_flight_requests: 4096
+  deployment:
+    replica_count: 1
+
+# CSI/Vault deployments may project a KEY=VALUE file with this typed setting.
+# It can also be overridden as AUTHGUARD__SECRETS__ENV_FILE.
+secrets:
+  env_file: ""
 
 logging:
   mode: JSON  # HUMAN | JSON
@@ -59,7 +66,7 @@ authn:
   #     type: oidc
   #     issuer: https://sso.example.com/realms/corporate
   #     clientId: authguard
-  #     clientSecret: "${AUTHGUARD_CORPORATE_OIDC_CLIENT_SECRET}"
+  #     clientSecret: "${AUTHGUARD__AUTHN__PROVIDERS__CORPORATE_OIDC__CLIENT_SECRET}"
   #     callbackUrl: https://app.example.com/auth/oauth2/corporate-oidc/callback
   #     scopes: [openid, profile, email]
   #     userinfo: true
@@ -120,8 +127,10 @@ authn:
     issuer: authguard-authn
     audience: authguard
     ttl: 5m
-    # Set from AUTHGUARD__AUTHN__TOKEN__PRIVATE_KEY or mount privateKeyFile.
+    # Set base64 PKCS#8 PEM from AUTHGUARD__AUTHN__TOKEN__PRIVATE_KEY_B64,
+    # or use privateKey/privateKeyFile for a PEM source.
     privateKey: ""
+    privateKeyB64: ""
     privateKeyFile: ""
 
 authz:
@@ -140,6 +149,8 @@ authz:
   scope_delivery:
     direct_urn_limit: 32
     max_direct_header_bytes: 8192
+    # Shared with workload adapters through the same Kubernetes Secret.
+    direct_context_hmac_key: ""
     context_ttl: 30s
     scope_token_ttl: 30s
   # Optional control-plane federation only. Login normalization and identity

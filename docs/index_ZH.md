@@ -27,4 +27,4 @@ Authguard 是一个深度集成 Envoy Gateway 的通用、独立、高性能 Aut
 
 ### 业务案例
 
-- [客户增长分析任务授权案例](../use-cases/customer-growth-job-service/README.md)：同一企业增长团队业务场景的 Go、Rust、Python、Spring JDBC、Spring JPA 独立服务实现，共享 53 个授权案例并提供完整 k3s 部署验证。
+- [客户增长分析任务授权案例](../use-cases/customer-growth-job-service/README.md)：同一企业增长团队业务场景的 Go、Rust、Python、Spring JDBC、Spring JPA 独立服务实现，共享 53 个授权案例并提供完整 Kubernetes 部署验证。

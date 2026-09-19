@@ -51,29 +51,20 @@ spec:
         - name: authguard-authz
           image: "{{ .Values.authguard.authz.image.repository }}:{{ default .Chart.AppVersion .Values.authguard.authz.image.tag }}"
           imagePullPolicy: {{ .Values.authguard.authz.image.pullPolicy }}
-          args: ["authz"]
+          args: ["--config", "/etc/authguard/authguard.yaml", "authz"]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities: { drop: ["ALL"] }
           env:
-            - name: AUTHGUARD_CONFIG_FILE
-              value: /etc/authguard/authguard.yaml
-            - name: AUTHGUARD_REPLICA_COUNT
+            - name: AUTHGUARD__SERVER__DEPLOYMENT__REPLICA_COUNT
               value: {{ .Values.authguard.authz.replicaCount | quote }}
             {{- if or (eq $provider "gcp") (eq $provider "aws") }}
-            - name: AUTHGUARD_ENV_FILE
+            - name: AUTHGUARD__SECRETS__ENV_FILE
               value: {{ include "authguard.csiSecretsMountPath" . }}/env
             {{- else if eq $provider "vault" }}
-            - name: AUTHGUARD_ENV_FILE
+            - name: AUTHGUARD__SECRETS__ENV_FILE
               value: /vault/secrets/env
-            {{- end }}
-            {{- if and .Values.redis_cluster.enabled .Values.redis_cluster.usePassword }}
-            - name: AUTHGUARD__CACHE__REDIS__PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "authguard.redisSecretName" . }}
-                  key: {{ include "authguard.redisPasswordKey" . }}
             {{- end }}
           {{- if and (eq $provider "kubernetes") .Values.secrets.kubernetes.existingSecret }}
           envFrom:

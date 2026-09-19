@@ -226,7 +226,8 @@ mod access {
     pub const ACCESS_CONTEXT_HEADER: &str = "x-authguard-context";
     pub const SCOPE_TOKEN_HEADER: &str = "x-authguard-scope-token";
     pub const ACCESS_CONTEXT_VERSION: u8 = 3;
-    pub const ACCESS_CONTEXT_SIGNING_KEY_ENV: &str = "AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY";
+    pub const ACCESS_CONTEXT_SIGNING_KEY_ENV: &str =
+        "AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY";
     const SIGNED_CONTEXT_PREFIX: &str = "agctx1";
     const MIN_SIGNING_KEY_BYTES: usize = 32;
 
@@ -301,9 +302,10 @@ mod access {
             Ok(Self { key: key.to_vec() })
         }
 
-        /// Reads the direct-context key from `AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY`,
+        /// Reads the direct-context key from
+        /// `AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY`,
         /// either from the process environment or from the mounted
-        /// `AUTHGUARD_ENV_FILE` KEY=VALUE file.
+        /// `AUTHGUARD__SECRETS__ENV_FILE` KEY=VALUE file.
         ///
         /// # Errors
         ///

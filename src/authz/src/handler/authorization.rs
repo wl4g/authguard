@@ -39,7 +39,7 @@ use crate::model::{
 use authguard_common::apm::metrics::AuthzMetrics;
 use authguard_common::utils::jwt as resign;
 use authguard_common::utils::{HttpMappingError, ResolvedHttpRoute};
-use authguard_common::{AuthenticatedPrincipalContext, IdentityError};
+use authguard_common::{gateway_token, AuthenticatedPrincipalContext, IdentityError};
 
 const CHECK_ROUTE: &str = "envoy.service.auth.v3.Authorization/Check";
 const RESOLVE_SCOPE_ROUTE: &str = "authguard.access.v1.AccessContextService/ResolveScope";
@@ -734,19 +734,7 @@ impl DefaultAuthorizationHandler {
         if self.resign.is_none() {
             return Ok(None);
         }
-        let token = request
-            .headers
-            .get(&self.identity.token_header)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| {
-                if self.identity.token_header.eq_ignore_ascii_case("authorization") {
-                    value.split_once(' ').and_then(|(scheme, token)| {
-                        scheme.eq_ignore_ascii_case("bearer").then_some(token)
-                    })
-                } else {
-                    Some(value)
-                }
-            })
+        let token = gateway_token(&request.headers, &self.identity.token_header)
             .ok_or_else(CheckFailure::invalid_identity_expiry)?;
         let expires_at = token
             .split('.')

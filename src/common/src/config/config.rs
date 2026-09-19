@@ -16,9 +16,7 @@ use anyhow::{bail, Context as _};
 use config::{Config, File, FileFormat};
 use serde::{Deserialize, Serialize};
 
-use super::constants::{
-    CONFIG_FILE_ENV, DEFAULT_CONFIG, DEFAULT_CONFIG_YAML, ENV_PREFIX, SECRET_ENV_FILE_ENV,
-};
+use super::constants::{DEFAULT_CONFIG_YAML, ENV_PREFIX, SECRETS_ENV_FILE_ENV};
 use crate::model::IamPolicyInfo;
 
 /// Complete product configuration shared by `AuthN` and `AuthZ`.
@@ -29,6 +27,7 @@ use crate::model::IamPolicyInfo;
 #[serde(default, deny_unknown_fields)]
 pub struct AppConfigProperties {
     pub server: ServerProperties,
+    pub secrets: SecretsProperties,
     pub mgmt: ManagementProperties,
     pub logging: LoggingProperties,
     pub cache: CacheProperties,
@@ -51,6 +50,21 @@ pub struct ServerProperties {
     pub request: RequestProperties,
     pub response: ResponseProperties,
     pub performance: PerformanceProperties,
+    pub deployment: DeploymentProperties,
+}
+
+/// Deployment topology values consumed by a running process.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DeploymentProperties {
+    pub replica_count: usize,
+}
+
+/// Optional local projection used by external secret-store integrations.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SecretsProperties {
+    pub env_file: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -196,6 +210,12 @@ pub struct PostgresProperties {
 #[serde(default, deny_unknown_fields)]
 pub struct AuthnProperties {
     pub providers: BTreeMap<String, ProviderProperties>,
+    /// Trusted relying applications for the same-origin hosted login.
+    ///
+    /// Authentication providers stay protocol focused. This mapping only
+    /// establishes which browser host may use a branded login surface and
+    /// which post-authentication destinations it owns.
+    pub applications: BTreeMap<String, ApplicationProperties>,
     #[serde(rename = "challengeTtl", with = "humantime_serde")]
     pub challenge_ttl: Duration,
     pub standalone: StandaloneAuthnProperties,
@@ -203,6 +223,33 @@ pub struct AuthnProperties {
     #[serde(rename = "accountLinking")]
     pub account_linking: AccountLinkingProperties,
     pub token: TokenProperties,
+}
+
+/// A browser-facing application that delegates login UX to `AuthGuard`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ApplicationProperties {
+    /// Exact, trusted DNS hosts. Schemes, paths, and wildcards are forbidden.
+    pub hosts: BTreeSet<String>,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+    /// Optional same-origin static asset served by `AuthGuard` Web. An empty
+    /// value uses the built-in `AuthGuard` mark without disabling text branding.
+    pub logo: String,
+    /// Optional same-origin presentation pack applied only to Hosted Login and
+    /// account-security surfaces. Authentication remains protocol-independent.
+    pub theme: Option<ApplicationThemeProperties>,
+    #[serde(rename = "returnUris")]
+    pub return_uris: Vec<String>,
+}
+
+/// Declarative, static application theme. Rust never loads executable plugins;
+/// the Web image serves this stylesheet from the trusted `/auth/assets` tree.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ApplicationThemeProperties {
+    pub id: String,
+    pub stylesheet: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -359,6 +406,8 @@ pub struct TokenProperties {
     pub ttl: Duration,
     #[serde(rename = "privateKey")]
     pub private_key: String,
+    #[serde(rename = "privateKeyB64")]
+    pub private_key_b64: String,
     #[serde(rename = "privateKeyFile")]
     pub private_key_file: String,
 }
@@ -614,6 +663,7 @@ pub struct ScimPrincipalDiscoveryProperties {
 pub struct ScopeDeliveryProperties {
     pub direct_urn_limit: usize,
     pub max_direct_header_bytes: usize,
+    pub direct_context_hmac_key: String,
     #[serde(with = "humantime_serde")]
     pub context_ttl: Duration,
     #[serde(with = "humantime_serde")]
@@ -655,7 +705,14 @@ impl Default for ServerProperties {
             request: RequestProperties::default(),
             response: ResponseProperties::default(),
             performance: PerformanceProperties::default(),
+            deployment: DeploymentProperties::default(),
         }
+    }
+}
+
+impl Default for DeploymentProperties {
+    fn default() -> Self {
+        Self { replica_count: 1 }
     }
 }
 
@@ -819,6 +876,7 @@ impl Default for AuthnProperties {
     fn default() -> Self {
         Self {
             providers: BTreeMap::new(),
+            applications: BTreeMap::new(),
             challenge_ttl: Duration::from_secs(300),
             standalone: StandaloneAuthnProperties::default(),
             wallet: WalletAuthnProperties::default(),
@@ -890,6 +948,7 @@ impl Default for TokenProperties {
             audience: "authguard".to_string(),
             ttl: Duration::from_secs(300),
             private_key: String::new(),
+            private_key_b64: String::new(),
             private_key_file: String::new(),
         }
     }
@@ -1022,6 +1081,7 @@ impl Default for ScopeDeliveryProperties {
         Self {
             direct_urn_limit: 32,
             max_direct_header_bytes: 8 * 1024,
+            direct_context_hmac_key: String::new(),
             context_ttl: Duration::from_secs(30),
             scope_token_ttl: Duration::from_secs(30),
         }
@@ -1116,8 +1176,8 @@ impl AppConfig {
     /// # Errors
     ///
     /// Returns an error for invalid configuration or deployment constraints.
-    pub fn load() -> anyhow::Result<Arc<AppConfigProperties>> {
-        Self::install(AppConfigProperties::load()?)
+    pub fn load(path: impl AsRef<Path>) -> anyhow::Result<Arc<AppConfigProperties>> {
+        Self::install(AppConfigProperties::load(path)?)
     }
 
     /// Loads the `AuthN` view without resolving or validating `AuthZ`-only secrets.
@@ -1134,8 +1194,8 @@ impl AppConfig {
     /// # Errors
     ///
     /// Returns an error for invalid configuration or deployment constraints.
-    pub fn refresh() -> anyhow::Result<Arc<AppConfigProperties>> {
-        Self::load()
+    pub fn refresh(path: impl AsRef<Path>) -> anyhow::Result<Arc<AppConfigProperties>> {
+        Self::load(path)
     }
 
     fn install(config: AppConfigProperties) -> anyhow::Result<Arc<AppConfigProperties>> {
@@ -1173,9 +1233,10 @@ impl AppConfigProperties {
     ///
     /// Returns an error when a process-local storage or cache provider is used
     /// by more than one Authguard replica.
-    pub fn validate_deployment(&self, replica_count: usize) -> anyhow::Result<()> {
+    pub fn validate_deployment(&self) -> anyhow::Result<()> {
+        let replica_count = self.server.deployment.replica_count;
         if replica_count == 0 {
-            bail!("AUTHGUARD_REPLICA_COUNT must be positive");
+            bail!("server.deployment.replica_count must be positive");
         }
         if replica_count > 1 && self.storage.provider.eq_ignore_ascii_case("SQLite") {
             bail!(
@@ -1461,6 +1522,15 @@ fn validate_authn(authn: &AuthnProperties, cache: &CacheProperties) -> anyhow::R
     if authn.challenge_ttl.is_zero() || authn.challenge_ttl > Duration::from_secs(15 * 60) {
         bail!("authn.challengeTtl must be between 1 second and 15 minutes");
     }
+    let mut application_hosts = BTreeSet::new();
+    for (id, application) in &authn.applications {
+        validate_application(id, application)?;
+        for host in &application.hosts {
+            if !application_hosts.insert(host) {
+                bail!("authn.applications hosts must belong to exactly one application");
+            }
+        }
+    }
     let needs_challenge_store = !authn.providers.is_empty()
         || authn.wallet.enabled
         || authn.standalone.enabled
@@ -1472,7 +1542,12 @@ fn validate_authn(authn: &AuthnProperties, cache: &CacheProperties) -> anyhow::R
         validate_redis_cache(&cache.redis)?;
     }
 
-    let standalone = &authn.standalone;
+    validate_standalone_authn(&authn.standalone)?;
+    validate_wallet_authn(&authn.wallet)?;
+    Ok(())
+}
+
+fn validate_standalone_authn(standalone: &StandaloneAuthnProperties) -> anyhow::Result<()> {
     if !standalone.enabled && (standalone.totp.enabled || standalone.webauthn.enabled) {
         bail!("standalone TOTP/WebAuthn cannot be enabled when authn.standalone.enabled=false");
     }
@@ -1508,8 +1583,11 @@ fn validate_authn(authn: &AuthnProperties, cache: &CacheProperties) -> anyhow::R
         }
     }
 
-    if authn.wallet.enabled {
-        let wallet = &authn.wallet;
+    Ok(())
+}
+
+fn validate_wallet_authn(wallet: &WalletAuthnProperties) -> anyhow::Result<()> {
+    if wallet.enabled {
         let uri =
             reqwest::Url::parse(&wallet.uri).context("authn.wallet.uri must be an absolute URL")?;
         if wallet.domain.trim().is_empty()
@@ -1560,6 +1638,87 @@ fn validate_authn(authn: &AuthnProperties, cache: &CacheProperties) -> anyhow::R
         }
     }
     Ok(())
+}
+
+fn validate_application(id: &str, application: &ApplicationProperties) -> anyhow::Result<()> {
+    if id.is_empty()
+        || id.len() > 64
+        || !id
+            .bytes()
+            .all(|value| value.is_ascii_lowercase() || value.is_ascii_digit() || value == b'-')
+    {
+        bail!("authn.applications keys must be lowercase application IDs");
+    }
+    let logo_is_valid = application.logo.is_empty()
+        || (application.logo.starts_with("/auth/assets/")
+            && !application.logo.contains("..")
+            && !application.logo.contains(['\\', '?', '#'])
+            && !application.logo.bytes().any(|value| value.is_ascii_control()));
+    if application.hosts.is_empty()
+        || application.display_name.trim().is_empty()
+        || application.display_name.len() > 256
+        || !logo_is_valid
+        || application.return_uris.is_empty()
+    {
+        bail!("authn.applications.{id} requires hosts, displayName, an optional /auth/assets/ logo, and returnUris");
+    }
+    for host in &application.hosts {
+        if !is_application_host(host) {
+            bail!("authn.applications.{id}.hosts contains an invalid DNS host");
+        }
+    }
+    if let Some(theme) = &application.theme {
+        if theme.id.is_empty()
+            || theme.id.len() > 64
+            || !theme
+                .id
+                .bytes()
+                .all(|value| value.is_ascii_lowercase() || value.is_ascii_digit() || value == b'-')
+            || !theme.stylesheet.starts_with("/auth/assets/themes/")
+            || !std::path::Path::new(&theme.stylesheet)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("css"))
+            || theme.stylesheet.contains("..")
+            || theme.stylesheet.contains(['\\', '?', '#'])
+            || theme.stylesheet.bytes().any(|value| value.is_ascii_control())
+        {
+            bail!(
+                "authn.applications.{id}.theme requires a lowercase ID and a same-origin /auth/assets/themes/*.css stylesheet"
+            );
+        }
+    }
+    for return_uri in &application.return_uris {
+        let is_wildcard = return_uri.ends_with("/**");
+        if return_uri.contains('*') && !is_wildcard {
+            bail!("authn.applications.{id}.returnUris supports a wildcard only as a trailing /**");
+        }
+        let wildcard = return_uri.strip_suffix("/**").unwrap_or(return_uri);
+        let parsed = reqwest::Url::parse(wildcard).with_context(|| {
+            format!("authn.applications.{id}.returnUris must contain absolute URLs")
+        })?;
+        if parsed.scheme() != "https"
+            || parsed.username() != ""
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+            || !application.hosts.contains(parsed.host_str().unwrap_or_default())
+        {
+            bail!("authn.applications.{id}.returnUris must be HTTPS URLs for a configured host, optionally ending in /**");
+        }
+    }
+    Ok(())
+}
+
+fn is_application_host(host: &str) -> bool {
+    !host.is_empty()
+        && host.len() <= 253
+        && host == host.to_ascii_lowercase()
+        && host.bytes().all(|value| {
+            value.is_ascii_lowercase() || value.is_ascii_digit() || value == b'.' || value == b'-'
+        })
+        && !host.starts_with('.')
+        && !host.ends_with('.')
+        && !host.contains("..")
 }
 
 fn validate_caip_reference(reference: &str, namespace: &str) -> anyhow::Result<()> {
@@ -1651,6 +1810,13 @@ fn apply_environment_entries(
 fn parse_environment_path(path: &str) -> anyhow::Result<Vec<ConfigPathSegment>> {
     let mut parsed = Vec::new();
     for segment in path.split("__").filter(|segment| !segment.is_empty()) {
+        if let Some(index) = segment.strip_prefix("INDEX_") {
+            let index = index
+                .parse::<usize>()
+                .with_context(|| format!("invalid array index in `{segment}`"))?;
+            parsed.push(ConfigPathSegment::Index(index));
+            continue;
+        }
         let mut remaining = segment;
         if !remaining.starts_with('[') {
             let key_end = remaining.find('[').unwrap_or(remaining.len());
@@ -1743,7 +1909,8 @@ pub fn read_secret_env_file(path: Option<&str>) -> anyhow::Result<HashMap<String
 
 #[must_use]
 pub fn secret_env(name: &str) -> Option<String> {
-    read_secret_env_file(std::env::var(SECRET_ENV_FILE_ENV).ok().as_deref())
+    let secret_file = projected_secret_env_file();
+    read_secret_env_file(secret_file.as_deref())
         .ok()
         .and_then(|values| values.get(name).cloned())
         .or_else(|| std::env::var(name).ok())
@@ -1807,10 +1974,8 @@ fn expand_yaml_env_refs(
     Ok(())
 }
 
-fn runtime_replica_count() -> anyhow::Result<usize> {
-    std::env::var("AUTHGUARD_REPLICA_COUNT").map_or(Ok(1), |value| {
-        value.parse::<usize>().context("AUTHGUARD_REPLICA_COUNT must be a positive integer")
-    })
+fn projected_secret_env_file() -> Option<String> {
+    std::env::var(SECRETS_ENV_FILE_ENV).ok().filter(|path| !path.trim().is_empty())
 }
 
 impl AppConfigProperties {
@@ -1819,24 +1984,23 @@ impl AppConfigProperties {
     /// # Errors
     ///
     /// Returns an error for unreadable, invalid, or unresolved configuration.
-    pub fn load() -> anyhow::Result<Self> {
-        let configured_path =
-            std::env::var(CONFIG_FILE_ENV).unwrap_or_else(|_| DEFAULT_CONFIG.to_string());
-        let configured_path = Path::new(&configured_path);
-        let file = configured_path.exists().then_some(configured_path);
-        let mut value = merged_yaml(Some(DEFAULT_CONFIG_YAML), file)?;
-        let env_values = read_secret_env_file(std::env::var(SECRET_ENV_FILE_ENV).ok().as_deref())?;
+    pub fn load(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let path = path.as_ref();
+        let mut value = merged_yaml(Some(DEFAULT_CONFIG_YAML), Some(path))?;
+        let secret_file = projected_secret_env_file();
+        let env_values = read_secret_env_file(secret_file.as_deref())?;
         expand_authz_owned_env_refs(&mut value, &env_values)?;
         let config: Self =
             serde_yaml::from_value(value).context("decode AuthGuard configuration")?;
         config.validate()?;
-        config.validate_deployment(runtime_replica_count()?)?;
+        config.validate_deployment()?;
         Ok(config)
     }
 
     fn load_for_authn(path: &Path) -> anyhow::Result<Self> {
         let mut value = merged_yaml(Some(DEFAULT_CONFIG_YAML), Some(path))?;
-        let env_values = read_secret_env_file(std::env::var(SECRET_ENV_FILE_ENV).ok().as_deref())?;
+        let secret_file = projected_secret_env_file();
+        let env_values = read_secret_env_file(secret_file.as_deref())?;
         expand_authn_owned_env_refs(&mut value, &env_values)?;
         let config: Self = serde_yaml::from_value(value)
             .with_context(|| format!("decode AuthN configuration {}", path.display()))?;
@@ -1928,6 +2092,20 @@ mod tests {
             &[("AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__KEYCLOAK[1]__ENABLED", "true")],
         );
         assert_eq!(value["authz"]["principal_discovery"]["keycloak"][1]["enabled"], true);
+    }
+
+    #[test]
+    fn environment_supports_kubernetes_safe_array_indices() {
+        let mut config = serde_yaml::Value::Null;
+        apply_environment_entries(
+            &mut config,
+            [(
+                "AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__LDAP__INDEX_0__ENABLED".to_string(),
+                "true".to_string(),
+            )],
+        )
+        .expect("Kubernetes-safe array override");
+        assert_eq!(config["authz"]["principal_discovery"]["ldap"][0]["enabled"], true);
     }
 
     #[test]
@@ -2202,6 +2380,70 @@ wallet:
     }
 
     #[test]
+    fn hosted_login_applications_require_exact_https_origins() {
+        let mut authn = AuthnProperties::default();
+        authn.applications.insert(
+            "example-app".to_string(),
+            ApplicationProperties {
+                hosts: BTreeSet::from(["app.example.com".to_string()]),
+                display_name: "Example App".to_string(),
+                logo: "/auth/assets/themes/custom/example-app.svg".to_string(),
+                theme: Some(ApplicationThemeProperties {
+                    id: "example-app".to_string(),
+                    stylesheet: "/auth/assets/themes/custom/example-app.css".to_string(),
+                }),
+                return_uris: vec!["https://app.example.com/**".to_string()],
+            },
+        );
+        validate_authn(&authn, &CacheProperties::default()).expect("valid hosted application");
+
+        let mut fallback = authn.clone();
+        let fallback_application =
+            fallback.applications.get_mut("example-app").expect("application");
+        fallback_application.logo.clear();
+        fallback_application.theme = None;
+        validate_authn(&fallback, &CacheProperties::default())
+            .expect("text branding with the built-in visual fallback");
+
+        authn
+            .applications
+            .get_mut("example-app")
+            .expect("application")
+            .theme
+            .as_mut()
+            .expect("theme")
+            .stylesheet = "https://cdn.example.com/theme.css".to_string();
+        assert!(validate_authn(&authn, &CacheProperties::default()).is_err());
+        authn
+            .applications
+            .get_mut("example-app")
+            .expect("application")
+            .theme
+            .as_mut()
+            .expect("theme")
+            .stylesheet = "/auth/assets/themes/custom/example-app.css".to_string();
+        authn.applications.get_mut("example-app").expect("application").return_uris =
+            vec!["http://app.example.com/**".to_string()];
+        assert!(validate_authn(&authn, &CacheProperties::default()).is_err());
+    }
+
+    #[test]
+    fn hosted_login_host_must_belong_to_one_application() {
+        let application = ApplicationProperties {
+            hosts: BTreeSet::from(["app.example.com".to_string()]),
+            display_name: "Example App".to_string(),
+            logo: String::new(),
+            theme: None,
+            return_uris: vec!["https://app.example.com/**".to_string()],
+        };
+        let mut authn = AuthnProperties::default();
+        authn.applications.insert("first-app".to_string(), application.clone());
+        authn.applications.insert("second-app".to_string(), application);
+
+        assert!(validate_authn(&authn, &CacheProperties::default()).is_err());
+    }
+
+    #[test]
     fn rejects_unbounded_worker_configuration() {
         let config = AppConfigProperties {
             server: ServerProperties {
@@ -2231,17 +2473,21 @@ wallet:
     fn rejects_process_local_providers_in_multi_replica_deployments() {
         let mut memory = AppConfigProperties::default();
         memory.storage.provider = "postgres".to_string();
-        assert!(memory.validate_deployment(2).is_err());
+        memory.server.deployment.replica_count = 2;
+        assert!(memory.validate_deployment().is_err());
 
         let mut sqlite = AppConfigProperties::default();
         sqlite.cache.provider = "Redis".to_string();
-        assert!(sqlite.validate_deployment(2).is_err());
+        sqlite.server.deployment.replica_count = 2;
+        assert!(sqlite.validate_deployment().is_err());
 
         let mut shared = AppConfigProperties::default();
         shared.storage.provider = "postgres".to_string();
         shared.cache.provider = "Redis".to_string();
-        assert!(shared.validate_deployment(2).is_ok());
-        assert!(shared.validate_deployment(0).is_err());
+        shared.server.deployment.replica_count = 2;
+        assert!(shared.validate_deployment().is_ok());
+        shared.server.deployment.replica_count = 0;
+        assert!(shared.validate_deployment().is_err());
     }
 
     #[test]

@@ -19,7 +19,7 @@ Import the authorization policy into Authguard storage as a post-deploy step
 {{- if not .Values.secrets.kubernetes.existingSecret }}
 WARNING: secrets.kubernetes.existingSecret is empty — no environment
 secrets are injected. Authguard fails closed at startup unless the required
-AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY (plus admin/connector secrets as configured)
+AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY (plus admin/connector secrets as configured)
 is provided through the secrets provider or an externally managed Secret.
 {{- end }}
 {{- end }}

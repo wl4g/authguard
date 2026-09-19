@@ -17,6 +17,9 @@ dist/
 .DS_Store
 *.log
 
+# Docker Compose keeps the only local plaintext deployment secret payload here.
+deploy/docker/.env
+
 *.db
 *.db-shm
 *.db-wal

@@ -1,3 +1,13 @@
+# Helm propagates global values through immutable umbrella-chart dependencies.
+# A business Chart can therefore attach its local-files ConfigMap without
+# unpacking or rebuilding the AuthGuard tgz.
+global:
+  authguard:
+    # Optional ConfigMap created by an umbrella/business Chart from its local
+    # static files. The value is evaluated with Helm `tpl`, so a parent can use
+    # `{{ .Release.Name }}-authguard-theme` without unpacking this Chart.
+    themeConfigMap: ""
+
 # Optional cluster-level Envoy Gateway controller. Disable this when the
 # cluster already has a compatible Envoy Gateway installation. This block is
 # passed directly to the vendored official gateway-helm chart.
@@ -34,7 +44,13 @@ envoy_gateway:
     gateway:
       create: true
       name: authguard
+      # A single listener keeps Hosted Login and the relying application on the
+      # same browser origin. E2E may override this to 8082 for port-forwarding.
+      listenerPort: 80
       className: authguard
+      # Use a distinct controller name only when operating an isolated Envoy
+      # Gateway controller (for example the disposable E2E topology).
+      controllerName: gateway.envoyproxy.io/gatewayclass-controller
     # Optional Envoy data-plane spans exported over OTLP/gRPC. The sampler is
     # intentionally fixed to AlwaysOn; sampling should be performed centrally.
     tracing:
@@ -52,13 +68,21 @@ envoy_gateway:
       backend:
         name: app
         port: 8080
-    # Public pre-authentication route on a separate Gateway listener. It serves
-    # only AuthN authorize/callback endpoints; business routes remain protected.
+    # Public AuthN routes share the Gateway listener with relying applications.
+    # Their more-specific HTTP path matches bypass the route-scoped PEP.
     authnRoute:
       enabled: true
       name: authguard-authn
-      listenerPort: 8082
       hostnames: []
+    # Attach the PEP only to explicitly labelled business HTTPRoutes. This
+    # keeps /auth/login, /auth/account/security, /auth/assets/*,
+    # /.well-known/*, and /auth/* public
+    # while allowing each business application to own its normal routes.
+    protectedRouteSelector:
+      matchLabels:
+        authguard.io/protected: "true"
+      namespaces:
+        from: Same
 
 # AuthN and AuthZ deployment knobs share one product root. Runtime settings
 # remain in the single authguard-config payload below.
@@ -67,6 +91,10 @@ authguard:
   authn:
     enabled: true
     replicaCount: 2
+    # Trusted relying applications rendered into the default authguard.yaml.
+    # Umbrella Charts can configure Hosted Login without replacing the complete
+    # authguard-config block.
+    applications: {}
     image:
       repository: ghcr.io/wl4g/authguard
       # Empty pins the image to this chart's appVersion.
@@ -97,6 +125,7 @@ authguard:
   web:
     enabled: true
     replicaCount: 2
+    imagePullSecrets: []
     image:
       repository: ghcr.io/wl4g/authguard-web
       # Empty pins the image to this chart's appVersion.
@@ -104,12 +133,23 @@ authguard:
       pullPolicy: IfNotPresent
     service:
       port: 8080
+    theme:
+      # Optional pre-created ConfigMap for standalone Chart installations.
+      # Umbrella/business Charts should set global.authguard.themeConfigMap.
+      existingConfigMap: ""
     route:
       enabled: true
       name: authguard-web
-      # Empty inherits envoy_gateway.ext_authz.authnRoute.hostnames so OAuth
-      # callbacks and the UI remain same-origin.
+      # Empty inherits envoy_gateway.ext_authz.authnRoute.hostnames. This route
+      # owns only /auth/login, /auth/account/security, and /auth/assets/*,
+      # never an application's root.
       hostnames: []
+      console:
+        enabled: false
+        name: authguard-console
+        # Configure a dedicated console host; do not attach this to an
+        # application's business host where / and /api belong to it.
+        hostnames: []
     resources:
       requests: { cpu: 10m, memory: 16Mi }
       limits: { cpu: 100m, memory: 64Mi }
@@ -126,8 +166,9 @@ authguard:
     # Disable for authentication-only 2C applications that do not need
     # resource-level authorization; also set envoy_gateway.ext_authz.enabled=false.
     enabled: true
-    # SQLite is the default backend, so the zero-configuration deployment is a
-    # single replica. Select PostgreSQL before increasing this value.
+    # The bundled PostgreSQL dependency is the default storage backend, so
+    # AuthZ replicas share durable state. Scale this only with PostgreSQL (or
+    # another shared storage provider) enabled.
     replicaCount: 1
     image:
       repository: ghcr.io/wl4g/authguard
@@ -183,7 +224,7 @@ authguard:
         interval: 30s
         labels: {}
 
-  # The COMPLETE authguard.yaml main configuration (flowgent-chart style).
+  # The complete authguard.yaml main configuration.
   # Helm-templated: chart values and helpers can be referenced inside, so a
   # full override stays one file.
   authguard-config: |
@@ -201,6 +242,10 @@ authguard:
       performance:
         worker_threads: 2
         max_in_flight_requests: 4096
+      deployment:
+        replica_count: 1
+    secrets:
+      env_file: ""
     logging:
       mode: JSON
       level: "info,tower_http=info"
@@ -224,10 +269,11 @@ authguard:
     authn:
       challengeTtl: 5m
       providers: {}
+      applications: {}
       standalone:
         enabled: false
         issuer: authguard:standalone
-        credentialEncryptionKey: ""
+        credentialEncryptionKey: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD__AUTHN__STANDALONE__CREDENTIAL_ENCRYPTION_KEY}"{{ end }}
         password:
           minLength: 12
         totp:
@@ -263,6 +309,7 @@ authguard:
         audience: authguard
         ttl: 5m
         privateKey: ""
+        privateKeyB64: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD__AUTHN__TOKEN__PRIVATE_KEY_B64}"{{ end }}
         privateKeyFile: ""
     authz:
       # Envoy verifies AuthN's canonical token before forwarding it to AuthZ.
@@ -278,6 +325,9 @@ authguard:
         # (direct mode); larger grants resolve through opaque scope tokens.
         direct_urn_limit: 32
         max_direct_header_bytes: 8192
+        # Kubernetes resolves this through the nested environment override;
+        # file-backed providers resolve the explicit reference.
+        direct_context_hmac_key: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY}"{{ end }}
         context_ttl: 30s
         scope_token_ttl: 30s
       principal_discovery:
@@ -294,7 +344,7 @@ authguard:
         #     auth:
         #       token_url: ""  # default: {base_url}/realms/{realm}/protocol/openid-connect/token
         #       client_id: authguard-search
-        #       client_secret: "${AUTHGUARD_KEYCLOAK_CLIENT_SECRET}"
+        #       client_secret: "${AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__KEYCLOAK__INDEX_0__AUTH__CLIENT_SECRET}"
         #     connect_timeout: 3s
         #     request_timeout: 5s
         #     max_page_size: 100
@@ -307,7 +357,7 @@ authguard:
         #     base_dn: dc=example,dc=com
         #     auth:
         #       bind_dn: cn=authguard-readonly,ou=service,dc=example,dc=com
-        #       bind_password: "${AUTHGUARD_LDAP_BIND_PASSWORD}"
+        #       bind_password: "${AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__LDAP__INDEX_0__AUTH__BIND_PASSWORD}"
         #     user:
         #       search_base: ou=people
         #       object_filter: (&(objectClass=person)(|(uid={0})(mail={0})))
@@ -385,18 +435,17 @@ authguard:
       # the injected environment; file-based providers resolve the reference.
       api_token: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD__AUTHZ__API_TOKEN}"{{ end }}
     storage:
-      provider: SQLite
+      provider: Postgres
       bootstrap_policy: null
       sqlite:
         url: "sqlite:///tmp/authguard.db"
         max_connections: 1
         connect_timeout: 5s
       postgres:
-        # URL without credentials; username/password resolve from the injected
-        # environment. kubernetes: native AUTHGUARD__STORAGE__POSTGRES__*
-        # overrides apply; file-based providers resolve the references.
-        url: ""
-        username: ""
+        # The default in-chart PostgreSQL service. Set postgresql.enabled=false
+        # and override this complete runtime block for an external database.
+        url: {{ printf "postgresql://%s:5432/authguard?sslmode=disable" (include "authguard.postgresqlFullname" .) | quote }}
+        username: authguard
         password: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD__STORAGE__POSTGRES__PASSWORD}"{{ end }}
         max_connections: 20
         min_connections: 0
@@ -413,10 +462,9 @@ authguard:
       redis:
         nodes: [{{ printf "redis://%s:6379" (include "authguard.redisFullname" .) | quote }}]
         username: default
-        # In-cluster Redis consumes the Bitnami Secret directly; external
-        # clusters resolve the injected environment (native override for
-        # kubernetes, reference for file-based providers).
-        password: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD_REDIS_PASSWORD}"{{ end }}
+        # The in-chart Redis Cluster and AuthGuard consume the same
+        # authguard-secrets key; external clusters override this block.
+        password: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD__CACHE__REDIS__PASSWORD}"{{ end }}
         key_prefix: authguard
         connection_timeout: 3s
         response_timeout: 6s
@@ -438,8 +486,8 @@ redis_cluster:
     pullPolicy: IfNotPresent
   usePassword: true
   password: ""
-  existingSecret: ""
-  existingSecretPasswordKey: redis-password
+  existingSecret: authguard-secrets
+  existingSecretPasswordKey: AUTHGUARD__CACHE__REDIS__PASSWORD
   cluster:
     nodes: 6
     replicas: 1
@@ -450,38 +498,65 @@ redis_cluster:
       requests: { cpu: 50m, memory: 96Mi }
       limits: { cpu: 500m, memory: 256Mi }
 
-# ── Secrets — pick exactly ONE provider (flowgent cache.provider style) ──
-# kubernetes: envFrom an existing Opaque Secret whose keys are the env names
-#             used by the ${...} references above.
+# Shared PostgreSQL is enabled by default so AuthN and AuthZ replicas operate
+# on one IAM database. Disable it only when authguard.authguard-config points
+# storage.postgres at an external service.
+postgresql:
+  enabled: true
+  fullnameOverride: ""
+  # The Bitnami chart intentionally validates non-Bitnami image names. This
+  # controlled Aliyun mirror is the default for mainland-China deployments.
+  global:
+    security:
+      allowInsecureImages: true
+  image:
+    registry: registry.cn-shenzhen.aliyuncs.com
+    repository: wl4g/bitnami_postgresql
+    tag: "18.3"
+    pullPolicy: IfNotPresent
+  auth:
+    # AuthGuard connects through the dedicated application role; the bundled
+    # database does not expose a separately configured postgres superuser.
+    enablePostgresUser: false
+    username: authguard
+    database: authguard
+    existingSecret: authguard-secrets
+    secretKeys:
+      # The dependency still materializes its private admin entry internally,
+      # but operators manage one reflected application password key.
+      adminPasswordKey: AUTHGUARD__STORAGE__POSTGRES__PASSWORD
+      userPasswordKey: AUTHGUARD__STORAGE__POSTGRES__PASSWORD
+  primary:
+    persistence:
+      enabled: true
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 1000m, memory: 1Gi }
+
+# ── Secrets — pick exactly ONE provider ──
+# kubernetes: envFrom the one existing Opaque Secret, authguard-secrets, whose
+#             keys are the nested environment names used by ${...} references.
 # gcp / aws:  a single SecretProviderClass path whose secret CONTENT is the
 #             multi-line "ENV KEY=VALUE" text; mounted as a volume and read
-#             through AUTHGUARD_ENV_FILE.
+#             through AUTHGUARD__SECRETS__ENV_FILE.
 # vault:      the Vault Agent Injector writes the same multi-line KEY=VALUE
 #             content to /vault/secrets/env.
 #
-# Eight external-integration credential classes exercised by the real E2E:
-#   1. PostgreSQL password: AUTHGUARD__STORAGE__POSTGRES__PASSWORD
-#   2. Redis password:      AUTHGUARD__CACHE__REDIS__PASSWORD (an in-chart
-#                           cluster is injected from its own Bitnami Secret)
-#   3. GitHub client secret: AUTHGUARD_GITHUB_CLIENT_SECRET
-#   4. Google client secret: AUTHGUARD_GOOGLE_CLIENT_SECRET
-#   5. WeChat client secret: AUTHGUARD_WECHAT_CLIENT_SECRET
-#   6. Keycloak discovery SA: AUTHGUARD_KEYCLOAK_CLIENT_SECRET
-#   7. LDAP bind password:   AUTHGUARD_LDAP_BIND_PASSWORD
-#   8. SCIM API password:    AUTHGUARD_SCIM_API_PASSWORD
-#
-# AuthGuard also needs product-owned cryptographic material. These are not
-# external connection passwords and therefore are intentionally not counted
-# as another integration class:
-#   AUTHGUARD_AUTHN_TOKEN_PRIVATE_KEY  (AuthN canonical JWT signing key)
-#   AUTHGUARD__AUTHZ__RESIGN__PRIVATE_KEY_B64 (base64 PKCS#8 PEM when
-#                                               authz.resign.enabled=true)
-#   AUTHGUARD__AUTHZ__API_TOKEN          (required for /api/v1 control-plane API)
-#   AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY   (required; shared with workloads)
+# The same Secret supplies the in-chart PostgreSQL and Redis credentials plus
+# every optional AuthGuard secret. Use nested keys consistently, for example:
+#   AUTHGUARD__STORAGE__POSTGRES__PASSWORD
+#   AUTHGUARD__CACHE__REDIS__PASSWORD
+#   AUTHGUARD__AUTHN__TOKEN__PRIVATE_KEY_B64
+#   AUTHGUARD__AUTHN__STANDALONE__CREDENTIAL_ENCRYPTION_KEY
+#   AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY
+#   AUTHGUARD__AUTHZ__API_TOKEN
+#   AUTHGUARD__AUTHZ__RESIGN__PRIVATE_KEY_B64
+# Provider and directory credentials follow their reflected config paths;
+# see deploy/helm/authguard/README.md for a complete placeholder file.
 secrets:
   provider: kubernetes  # kubernetes | gcp | aws | vault
   kubernetes:
-    existingSecret: ""  # required when provider=kubernetes
+    existingSecret: authguard-secrets
   # GCP Secret Manager: exactly ONE path; its secret value is the
   # multi-line "ENV KEY=VALUE" content above.
   gcp:
@@ -492,7 +567,6 @@ secrets:
     region: ""
     secretName: ""
   vault:
-    vaultAddress: ""
     vaultRole: ""
     # KV v2 path whose data.env value is the multi-line KEY=VALUE content.
     secretPath: ""

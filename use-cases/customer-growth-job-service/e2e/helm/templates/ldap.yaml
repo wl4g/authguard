@@ -1,4 +1,4 @@
-{{- if .Values.ldap.enabled -}}
+{{- if and .Values.support.enabled .Values.ldap.enabled -}}
 {{- $name := include "customer-growth-e2e.ldapName" . -}}
 {{- $secretName := include "customer-growth-e2e.keycloakSecretName" . -}}
 apiVersion: v1

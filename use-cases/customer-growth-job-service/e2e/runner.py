@@ -27,6 +27,12 @@ def parse_args() -> argparse.Namespace:
         description="Rebuild and verify the portable multi-language Authguard E2E use case."
     )
     parser.add_argument(
+        "command",
+        nargs="?",
+        choices=("cleanup",),
+        help="Run `cleanup` to remove only the E2E-managed Helm releases and namespace.",
+    )
+    parser.add_argument(
         "-r", "--rounds", type=int, default=1, help="Number of complete clean rounds."
     )
     parser.add_argument(
@@ -62,6 +68,11 @@ def parse_args() -> argparse.Namespace:
             "Uninstall all E2E Helm releases and delete the isolated namespace "
             "after the run, including after failure or interruption."
         ),
+    )
+    parser.add_argument(
+        "--cleanup",
+        action="store_true",
+        help="Alias for the `cleanup` command; remove E2E resources and exit.",
     )
     return parser.parse_args()
 
@@ -114,6 +125,18 @@ def cleanup_deployment(context: RunContext) -> bool:
 
 def main() -> int:
     args = parse_args()
+    cleanup_requested = args.command == "cleanup" or args.cleanup
+    if cleanup_requested:
+        if args.cleanup_after_run:
+            print("--cleanup and --cleanup-after-run cannot be combined", file=sys.stderr)
+            return 2
+        context = RunContext(
+            round_number=0,
+            clean=False,
+            timeout_seconds=args.timeout,
+            build_images=False,
+        )
+        return 0 if cleanup_deployment(context) else 1
     if args.list:
         for scenario_id, (title, _) in SCENARIOS.items():
             print(f"{scenario_id}  {title}")

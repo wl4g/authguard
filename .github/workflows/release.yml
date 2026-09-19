@@ -1,28 +1,37 @@
 name: Release
 
 on:
-  push:
+  pull_request:
     branches: [main]
+    types: [closed]
 
 concurrency:
   group: authguard-release
   cancel-in-progress: false
 
 jobs:
-  release:
+  prepare:
+    name: Prepare release
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
-    timeout-minutes: 60
     permissions:
-      contents: write
-      packages: write
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      create_tag: ${{ steps.version.outputs.create_tag }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
 
       - name: Determine release version
         id: version
         shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           head_tag=$(git tag --points-at HEAD -l 'v[0-9]*' --sort=-v:refname | head -1)
           if [[ -n "${head_tag}" ]]; then
@@ -31,15 +40,14 @@ jobs:
             echo "create_tag=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
           latest=$(git tag -l 'v[0-9]*' --sort=-v:refname | head -1)
           latest=${latest:-v0.0.0}
-          version=${latest#v}
-          IFS=. read -r major minor patch <<< "${version}"
-          subject=$(git log -1 --format=%s)
-          body=$(git log -1 --format=%B)
-          if [[ "${subject}" =~ ^[^:]+!: ]] || grep -q "BREAKING CHANGE" <<< "${body}"; then
+          IFS=. read -r major minor patch <<< "${latest#v}"
+          if grep -Eq '^[^:]+!:' <<< "${PR_TITLE}" \
+            || grep -q 'BREAKING CHANGE' <<< "${PR_BODY}"; then
             major=$((major + 1)); minor=0; patch=0
-          elif [[ "${subject}" == feat:* ]]; then
+          elif grep -Eq '^feat(\([^)]+\))?:' <<< "${PR_TITLE}"; then
             minor=$((minor + 1)); patch=0
           else
             patch=$((patch + 1))
@@ -48,15 +56,19 @@ jobs:
           echo "tag=v${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
           echo "create_tag=true" >> "$GITHUB_OUTPUT"
 
-      - name: Tag release commit
-        if: steps.version.outputs.create_tag == 'true'
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${TAG}" -m "Release ${TAG}"
-          git push origin "${TAG}"
+  publish:
+    name: Publish official artifacts
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -75,26 +87,31 @@ jobs:
           file: deploy/docker/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
-          build-args: |
-            AUTHGUARD_CARGO_FEATURES=web3
+          build-args: AUTHGUARD_CARGO_FEATURES=web3
+          labels: |
+            org.opencontainers.image.revision=${{ github.event.pull_request.merge_commit_sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
           tags: |
-            ghcr.io/wl4g/authguard:${{ steps.version.outputs.version }}
+            ghcr.io/wl4g/authguard:${{ needs.prepare.outputs.version }}
             ghcr.io/wl4g/authguard:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=authguard-runtime
+          cache-to: type=gha,mode=max,scope=authguard-runtime
 
-      - name: Build and publish AuthGuard Web image
+      - name: Build and publish web image
         uses: docker/build-push-action@v6
         with:
           context: web
           file: web/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
+          labels: |
+            org.opencontainers.image.revision=${{ github.event.pull_request.merge_commit_sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
           tags: |
-            ghcr.io/wl4g/authguard-web:${{ steps.version.outputs.version }}
+            ghcr.io/wl4g/authguard-web:${{ needs.prepare.outputs.version }}
             ghcr.io/wl4g/authguard-web:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=authguard-web
+          cache-to: type=gha,mode=max,scope=authguard-web
 
       - name: Install Helm
         uses: azure/setup-helm@v4
@@ -103,7 +120,7 @@ jobs:
 
       - name: Package, publish, and pull-verify chart
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "${GH_TOKEN}" | helm registry login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
@@ -115,9 +132,46 @@ jobs:
           helm pull oci://ghcr.io/wl4g/charts/authguard --version "${VERSION}" --destination verify
           helm show chart "verify/authguard-${VERSION}.tgz" >/dev/null
 
+      - name: Tag release commit
+        if: needs.prepare.outputs.create_tag == 'true'
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "${TAG}"
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
+          tag_name: ${{ needs.prepare.outputs.tag }}
           generate_release_notes: true
-          files: dist/authguard-${{ steps.version.outputs.version }}.tgz
+          files: dist/authguard-${{ needs.prepare.outputs.version }}.tgz
+
+  cleanup-dirty-images:
+    name: Clean merged PR dirty images
+    needs: publish
+    if: ${{ always() && needs.publish.result == 'success' }}
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+      - name: Delete all dirty images produced by this PR
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          .github/scripts/cleanup-ghcr-dirty-images.sh \
+            "${GITHUB_REPOSITORY}" \
+            "${{ github.event.pull_request.number }}" \
+            "${GITHUB_REPOSITORY_OWNER}" \
+            authguard authguard-web

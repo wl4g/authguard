@@ -1,3 +1,5 @@
+{{- if .Values.support.enabled }}
+{{- $authguard := index .Values "authguard-middleware" -}}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -6,4 +8,5 @@ metadata:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
 type: Opaque
 stringData:
-  {{ .Values.authguard.accessContext.key }}: {{ required "authguard.accessContext.signingKey is required" .Values.authguard.accessContext.signingKey | quote }}
+  {{ $authguard.accessContext.key }}: {{ required "authguard-middleware.accessContext.signingKey is required" $authguard.accessContext.signingKey | quote }}
+{{- end }}

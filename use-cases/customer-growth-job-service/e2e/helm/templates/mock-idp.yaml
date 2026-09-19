@@ -1,3 +1,4 @@
+{{- if .Values.support.enabled }}
 {{- $name := include "customer-growth-e2e.mockIdpName" . -}}
 
 # Realistic GitHub, Google, WeChat, and QQ OAuth-like API contracts. Standard
@@ -48,13 +49,13 @@ spec:
           imagePullPolicy: {{ .Values.mockIdp.pullPolicy }}
           env:
             - name: MOCK_IDP_GITHUB_CLIENT_SECRET
-              valueFrom: { secretKeyRef: { name: {{ include "customer-growth-e2e.principalDiscoverySecretName" . }}, key: AUTHGUARD_GITHUB_CLIENT_SECRET } }
+              valueFrom: { secretKeyRef: { name: {{ include "customer-growth-e2e.principalDiscoverySecretName" . }}, key: AUTHGUARD__AUTHN__PROVIDERS__GITHUB__CLIENT_SECRET } }
             - name: MOCK_IDP_GOOGLE_CLIENT_SECRET
-              valueFrom: { secretKeyRef: { name: {{ include "customer-growth-e2e.principalDiscoverySecretName" . }}, key: AUTHGUARD_GOOGLE_CLIENT_SECRET } }
+              valueFrom: { secretKeyRef: { name: {{ include "customer-growth-e2e.principalDiscoverySecretName" . }}, key: AUTHGUARD__AUTHN__PROVIDERS__GOOGLE__CLIENT_SECRET } }
             - name: MOCK_IDP_WECHAT_CLIENT_SECRET
-              valueFrom: { secretKeyRef: { name: {{ include "customer-growth-e2e.principalDiscoverySecretName" . }}, key: AUTHGUARD_WECHAT_CLIENT_SECRET } }
+              valueFrom: { secretKeyRef: { name: {{ include "customer-growth-e2e.principalDiscoverySecretName" . }}, key: AUTHGUARD__AUTHN__PROVIDERS__WECHAT__CLIENT_SECRET } }
             - name: MOCK_IDP_QQ_CLIENT_SECRET
-              valueFrom: { secretKeyRef: { name: {{ include "customer-growth-e2e.principalDiscoverySecretName" . }}, key: AUTHGUARD_QQ_CLIENT_SECRET } }
+              valueFrom: { secretKeyRef: { name: {{ include "customer-growth-e2e.principalDiscoverySecretName" . }}, key: AUTHGUARD__AUTHN__PROVIDERS__QQ__CLIENT_SECRET } }
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -76,3 +77,4 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
+{{- end }}

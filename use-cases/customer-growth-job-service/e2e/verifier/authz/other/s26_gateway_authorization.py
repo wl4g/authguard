@@ -113,10 +113,10 @@ class GatewayAuthorizationVerifier(BaseVerifier):
             if self._jwt_claims(token).get("principal_id") != principal_id:
                 raise RuntimeError(f"AuthN canonical token did not contain {principal_id!r}")
 
-        with (
-            self._forward_service(envoy_service, 80) as gateway_port,
-            self._forward_service(envoy_service, 8082) as authn_gateway_port,
-        ):
+        # The E2E Gateway deliberately exposes one HTTP listener on 8082. AuthN
+        # and protected business routes must traverse that same-origin entrypoint.
+        with self._forward_service(envoy_service, 8082) as gateway_port:
+            authn_gateway_port = gateway_port
             self.step(
                 "prove Envoy jwt_authn rejects tampering before ext_authz",
                 lambda: self._verify_jwt_gate_precedes_ext_auth(
