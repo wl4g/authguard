@@ -186,7 +186,7 @@ AUTHGUARD_FORBIDDEN_PATHS = (
 )
 
 REAL_E2E_VERIFIERS = (
-    "infra/s00_k3s_infrastructure.py",
+    "infra/s00_infrastructure.py",
     "authn/other/s10_authentication.py",
     "authz/other/s20_principal_preauthorization.py",
     "authz/other/s26_gateway_authorization.py",
@@ -261,8 +261,14 @@ def _verify(_context: RunContext) -> VerificationResult:
         marker for marker in jaeger_query_markers if marker not in observability_source
     ]:
         errors.append(f"Jaeger contracts must query the real API directly: {missing}")
+    base_deployer_source = (
+        USE_CASE_DIR / "e2e/common/deploy/base.py"
+    ).read_text(encoding="utf-8")
     kubernetes_source = (
-        USE_CASE_DIR / "e2e/common/kubernetes.py"
+        USE_CASE_DIR / "e2e/common/deploy/kubernetes.py"
+    ).read_text(encoding="utf-8")
+    docker_source = (
+        USE_CASE_DIR / "e2e/common/deploy/docker.py"
     ).read_text(encoding="utf-8")
     if any(
         endpoint in kubernetes_source
@@ -286,7 +292,7 @@ def _verify(_context: RunContext) -> VerificationResult:
         "finally:",
         "cleanup_requested",
         "cleanup_deployment(context)",
-        "KubernetesE2E(context).cleanup()",
+        "create_deployer(context).cleanup()",
     )
     if missing := [marker for marker in cleanup_contract if marker not in runner_source]:
         errors.append(f"runner cleanup lifecycle is incomplete: {missing}")
@@ -309,7 +315,10 @@ def _verify(_context: RunContext) -> VerificationResult:
         for path in (
             USE_CASE_DIR / "e2e/helm/values.yaml",
             USE_CASE_DIR / "e2e/helm/templates/_helpers.tpl",
-            USE_CASE_DIR / "e2e/common/kubernetes.py",
+            USE_CASE_DIR / "e2e/common/deploy/base.py",
+            USE_CASE_DIR / "e2e/common/deploy/kubernetes.py",
+            USE_CASE_DIR / "e2e/common/deploy/docker.py",
+            USE_CASE_DIR / "e2e/docker-compose.yaml",
         )
     )
     required_prefixes = (
@@ -402,7 +411,12 @@ def _verify(_context: RunContext) -> VerificationResult:
         'set $authnConfig "applications" $applications',
     )
     theme_config_map_sources = (
-        helm_web_source + helm_values_source + helm_config_source + kubernetes_source
+        helm_web_source
+        + helm_values_source
+        + helm_config_source
+        + base_deployer_source
+        + kubernetes_source
+        + docker_source
     )
     if missing := [
         marker
@@ -430,7 +444,7 @@ def _verify(_context: RunContext) -> VerificationResult:
             business_chart_root / "Chart.yaml",
             business_chart_root / "values.yaml",
             business_chart_root / "templates/authguard-theme.yaml",
-            USE_CASE_DIR / "e2e/common/kubernetes.py",
+            USE_CASE_DIR / "e2e/common/deploy/kubernetes.py",
         )
     )
     business_chart_markers = (
@@ -570,11 +584,10 @@ def _verify(_context: RunContext) -> VerificationResult:
         "Each project keeps authorization, controller, DTO, entity, repository, service, and E2E test boundaries",
         "AuthGuard common/AuthN/AuthZ source boundaries match the converged module contract",
         f"Deployed resources use {E2E_RESOURCE_PREFIX} / {E2E_SQL_PREFIX}; host forwards use 288xx",
-        "Real k3s phases are ordered 00 deployment -> 15 pre-authorization -> "
-        "16 AuthN -> 17 Envoy/AuthZ/Biz -> 19 UI -> 21 runtime evidence; phase 20 is their "
-        "shared fail-closed observability contract",
-        "Runner supports one-shot and opt-in cleanup of all E2E Helm releases and the isolated namespace",
-        "Docker uses the same reflected AuthGuard secret keys and Envoy PEP filter order as Helm",
+        "Kubernetes and Docker phases share 00 deployment -> 10 AuthN -> 20 pre-authorization "
+        "-> 26 Envoy/AuthZ/Biz -> 30/31 UI -> 40 runtime evidence",
+        "Runner selects a deployer and supports one-shot or post-run cleanup of owned resources",
+        "Docker Compose uses the same reflected AuthGuard keys, real dependencies, and Envoy PEP order as Helm",
         "Hosted Login theming uses an immutable Web image plus a business service Helm Chart local directory mounted as a ConfigMap",
     ]
     details.extend(errors)

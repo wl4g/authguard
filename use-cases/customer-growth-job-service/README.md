@@ -42,7 +42,12 @@ customer-growth-job-service/
       authguard-e2e-scenarios.json   AuthN, federation, and 53 AuthZ scenarios
       keycloak-realm.json            external IdP and workload-client fixture
       e2e-jwt-keys/                  fixed realm-signing and resign-JWT keys
-    common/                            process, project lifecycle, and reports
+    common/
+      deploy/base.py                   backend-neutral E2E lifecycle contract
+      deploy/kubernetes.py             Helm/Gateway API deployment backend
+      deploy/docker.py                 Docker Compose/native Envoy backend
+      process.py                       subprocess execution and evidence
+    docker-compose.yaml                Docker topology equivalent to Helm E2E
     deploy/
       anvil/                            disposable real EVM node recipe
       solana/                           disposable real Solana validator recipe
@@ -112,15 +117,22 @@ By default, every round removes project-local generated artifacts and performs
 a fresh project build before testing. `--skip-clean` is available for local
 diagnosis. Reports are written to `e2e/reports/`; previous reports are archived
 before the next invocation.
-Kubernetes resources are retained by default for troubleshooting. Add
-`--cleanup-after-run` to uninstall all three E2E Helm releases and delete the
-isolated namespace after success, failure, or interruption.
+Deployment resources are retained by default for troubleshooting. Add
+`--cleanup-after-run` to remove resources owned by the selected backend after
+success, failure, or interruption.
 
 Run the real Kubernetes path:
 
 ```bash
 HTTPS_PROXY=http://127.0.0.1:8800 make e2e-k8s
 ```
+
+The Kubernetes deployer detects the active local image loader from the current
+cluster context: K3s, kind, minikube, K3d, or host containerd. Set
+`AUTHGUARD_E2E_KUBERNETES_IMAGE_LOADER` to one of those values to select it
+explicitly; set `AUTHGUARD_E2E_KUBERNETES_CLUSTER` when an explicit kind or
+K3d target is not encoded in the current context. Host-containerd loading is
+only selected when the active Kubernetes node resolves to the local host.
 
 Each round removes and recreates an `e2e-` namespace and three Helm releases.
 The normal Customer Growth support/workload release uses the business Chart's
@@ -129,6 +141,18 @@ Chart enables its vendored `charts/authguard-0.1.0.tgz`; `.Files.Glob` packages
 `files/authguard-theme/` into an immutable ConfigMap. This models normal
 business upgrades without rebuilding a theme image or owning the AuthGuard
 middleware lifecycle.
+
+Run the equivalent Docker Compose path when Kubernetes is unavailable:
+
+```bash
+HTTPS_PROXY=http://127.0.0.1:8800 make e2e-docker
+```
+
+It runs the same real PostgreSQL, Redis Cluster, Keycloak, LDAP, Jaeger,
+Anvil, Solana, AuthN/AuthZ/Web, native Envoy PEP, and five business workloads.
+The business theme directory is bind-mounted only into AuthGuard Web. Use
+`make e2e-cleanup E2E_DEPLOYER=docker` to remove its isolated project and
+volumes.
 Authguard first starts with the Action/Role catalog and no RoleBinding. A mock
 external social IdP then drives the real browser protocol through Envoy's
 public AuthN listener: authorize redirect, callback, POST token exchange,

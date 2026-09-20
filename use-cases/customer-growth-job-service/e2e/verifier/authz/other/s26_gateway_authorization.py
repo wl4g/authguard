@@ -7,7 +7,7 @@ import sqlite3
 from urllib import parse, request
 
 from common.config import CONFIG_DIR
-from common.kubernetes import AUTHN_HOST, WORKLOAD_HOSTS, WORKLOAD_IMAGES
+from common.deploy.base import AUTHN_HOST, WORKLOAD_HOSTS, WORKLOAD_IMAGES
 from common.model import RunContext, VerificationResult
 from common.telemetry import E2ETrace
 from verifier.other.base import BaseVerifier
@@ -653,16 +653,9 @@ class GatewayAuthorizationVerifier(BaseVerifier):
                     f"{body!r}"
                 )
 
-        logs = self._run(
-            (
-                "kubectl",
-                "logs",
-                "-n",
-                self.namespace,
-                f"deployment/{self.workload_service('rust-sqlx')}",
-                "--tail=200",
-            )
-        ).output
+        logs = self.infrastructure.service_logs(
+            self.workload_service("rust-sqlx"), tail=200
+        )
         if "verified Authguard resign JWT" not in logs:
             raise RuntimeError("rust workload never verified an Authguard resign JWT")
         self.details.append(
@@ -680,7 +673,7 @@ class GatewayAuthorizationVerifier(BaseVerifier):
         return ".".join(parts)
 
     def _authorization_check_count(self) -> int:
-        with self._forward_service(self.authguard_release, 9091) as port:
+        with self._forward_service(self.authguard_authz_service, 9091) as port:
             with request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=15) as response:
                 metrics = response.read().decode()
         total = 0
@@ -732,7 +725,7 @@ class GatewayAuthorizationVerifier(BaseVerifier):
 
     def _authorization_denied_reasons(self) -> dict[str, int]:
         """Per-reason denial counts from the Authguard decisions metric."""
-        with self._forward_service(self.authguard_release, 9091) as port:
+        with self._forward_service(self.authguard_authz_service, 9091) as port:
             with request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=15) as response:
                 metrics = response.read().decode()
         reasons: dict[str, int] = {}
@@ -812,12 +805,8 @@ class GatewayAuthorizationVerifier(BaseVerifier):
                 f"{component}: Jaeger verified verifier -> Envoy -> AuthZ and "
                 "Envoy -> Biz causal branches",
                 f"{component} Jaeger trace ID: {trace.trace_id}",
-                (
-                    "Jaeger UI: kubectl -n "
-                    f"{self.namespace} port-forward service/{self.jaeger_service} "
-                    "16686:16686, then open "
-                    f"http://127.0.0.1:16686/trace/{trace.trace_id}"
-                ),
+                f"Jaeger trace retained by the {self.context.deployer} E2E "
+                f"backend: {trace.trace_id}",
             ]
         )
 

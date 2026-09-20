@@ -6,7 +6,7 @@ import json
 import time
 from urllib import request
 
-from common.kubernetes import (
+from common.deploy.base import (
     ALIYUN_ANVIL_IMAGE,
     ALIYUN_ENVOY_GATEWAY_IMAGE,
     ALIYUN_ENVOY_IMAGE,
@@ -18,30 +18,35 @@ from common.kubernetes import (
     ALIYUN_SOLANA_IMAGE,
     AUTHGUARD_IMAGE,
     AUTHGUARD_WEB_IMAGE,
-    E2E_KEYS_DIR,
     WORKLOAD_IMAGES,
-    _has_true_condition,
 )
+from common.config import CONFIG_DIR
 from common.model import RunContext, VerificationResult
 from verifier.other.base import BaseVerifier
 
 
 class InfrastructureVerifier(BaseVerifier):
     scenario_id = "00"
-    title = "Infrastructure: Helm deployment and middleware initialization"
+    title = "Infrastructure: deployment and middleware initialization"
 
     def run(self) -> VerificationResult:
         return self.execute(self._run_scenario)
 
     def _run_scenario(self) -> None:
         self.step(
-            "verify Docker, Helm, kubectl, and k3s prerequisites",
+            f"verify {self.context.deployer} deployment prerequisites",
             self.infrastructure.verify_prerequisites,
         )
         self.step(
             "clean and deploy Envoy, middleware, AuthN/AuthZ, and five Biz services",
             self.infrastructure.redeploy,
         )
+        if self.context.deployer == "docker":
+            self.step(
+                "verify Docker Compose services, local theme mount, chains, and restart state",
+                self.infrastructure.verify_infrastructure_contract,
+            )
+            return
         self.step(
             "verify the business Chart keeps AuthGuard opt-in and mounts its local theme files",
             self._verify_business_chart_authguard_integration,
@@ -323,20 +328,22 @@ class InfrastructureVerifier(BaseVerifier):
                 kind = resource["kind"]
                 name = resource["metadata"]["name"]
                 if kind == "Gateway" and name == self.gateway_name:
-                    gateway_accepted = _has_true_condition(
+                    gateway_accepted = self._has_true_condition(
                         resource.get("status", {}).get("conditions", []), "Accepted"
                     )
                 elif kind == "HTTPRoute" and name in expected_routes:
                     parents = resource.get("status", {}).get("parents", [])
                     if any(
-                        _has_true_condition(parent.get("conditions", []), "Accepted")
+                        self._has_true_condition(
+                            parent.get("conditions", []), "Accepted"
+                        )
                         for parent in parents
                     ):
                         accepted_routes.add(name)
                 elif kind == "SecurityPolicy" and name == self.authguard_release:
                     ancestors = resource.get("status", {}).get("ancestors", [])
                     policy_accepted = any(
-                        _has_true_condition(
+                        self._has_true_condition(
                             ancestor.get("conditions", []), "Accepted"
                         )
                         for ancestor in ancestors
@@ -361,6 +368,16 @@ class InfrastructureVerifier(BaseVerifier):
             )
             time.sleep(1)
         raise RuntimeError(f"Gateway API resources were not accepted: {last_state}")
+
+    @staticmethod
+    def _has_true_condition(
+        conditions: list[dict[str, object]], condition_type: str
+    ) -> bool:
+        return any(
+            condition.get("type") == condition_type
+            and condition.get("status") == "True"
+            for condition in conditions
+        )
 
     def _verify_security_policy_contract(self, policy: dict) -> None:
         spec = policy.get("spec", {})
@@ -435,7 +452,7 @@ class InfrastructureVerifier(BaseVerifier):
                 f"support ConfigMap {expected_jwks_config_map}"
             )
         jwks = json.loads(
-            (E2E_KEYS_DIR / "realm-signing-jwk.json").read_text(encoding="utf-8")
+            (CONFIG_DIR / "e2e-jwt-keys/realm-signing-jwk.json").read_text(encoding="utf-8")
         )
         if not isinstance(jwks.get("keys"), list) or not jwks["keys"]:
             raise RuntimeError("the deterministic Envoy local JWKS must contain keys")

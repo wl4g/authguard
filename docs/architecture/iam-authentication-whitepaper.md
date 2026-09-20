@@ -234,6 +234,7 @@ The Customer Growth reference is the executable architecture contract:
 | Helm opt-in, local theme ConfigMap and Web-only mount | `s00` |
 | Protocol-independent Principal/JWT/AuthZ | `s10`, `s20`, `s26` |
 
-`make e2e-k8s` runs the ordered deployment, AuthN, AuthZ, SDK, Chromium, and observability
-matrix. Release evidence includes API assertions, database state, traces, and screenshots;
+`make e2e-k8s` and `make e2e-docker` run the same ordered deployment, AuthN, AuthZ, SDK,
+Chromium, and observability matrix through Helm/Envoy Gateway or Docker Compose/native
+Envoy. Release evidence includes API assertions, database state, traces, and screenshots;
 test-only successful IdP or blockchain-signature mocks are forbidden.

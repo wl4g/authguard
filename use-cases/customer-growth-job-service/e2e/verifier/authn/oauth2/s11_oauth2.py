@@ -6,7 +6,7 @@ import json
 import os
 from urllib import error, parse, request
 
-from common.kubernetes import AUTHN_HOST
+from common.deploy.base import AUTHN_HOST
 from common.telemetry import E2ETrace
 from verifier.jaeger.contracts import AuthnJaegerTraceVerifier
 from verifier.authn.other.protocol import AuthenticatedLogin, AuthnProtocolVerifier

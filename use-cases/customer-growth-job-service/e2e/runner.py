@@ -19,7 +19,7 @@ from common import (
     write_round_report,
     write_summary,
 )
-from common.kubernetes import KubernetesE2E
+from common.deploy.base import create_deployer
 
 
 def parse_args() -> argparse.Namespace:
@@ -27,10 +27,16 @@ def parse_args() -> argparse.Namespace:
         description="Rebuild and verify the portable multi-language Authguard E2E use case."
     )
     parser.add_argument(
+        "--deployer",
+        choices=("kubernetes", "docker"),
+        default="kubernetes",
+        help="Disposable deployment backend used by scenarios 00 and 10-40.",
+    )
+    parser.add_argument(
         "command",
         nargs="?",
         choices=("cleanup",),
-        help="Run `cleanup` to remove only the E2E-managed Helm releases and namespace.",
+        help="Run `cleanup` to remove resources owned by the selected deployer.",
     )
     parser.add_argument(
         "-r", "--rounds", type=int, default=1, help="Number of complete clean rounds."
@@ -53,7 +59,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-image-build",
         action="store_true",
-        help="Reuse locally tagged images during Kubernetes infrastructure phase 00.",
+        help="Reuse locally tagged images during infrastructure phase 00.",
     )
     parser.add_argument(
         "--timeout",
@@ -65,8 +71,8 @@ def parse_args() -> argparse.Namespace:
         "--cleanup-after-run",
         action="store_true",
         help=(
-            "Uninstall all E2E Helm releases and delete the isolated namespace "
-            "after the run, including after failure or interruption."
+            "Remove resources owned by the selected deployer after the run, "
+            "including after failure or interruption."
         ),
     )
     parser.add_argument(
@@ -112,9 +118,9 @@ def run_verifier(scenario_id: str, context: RunContext) -> VerificationResult:
 
 def cleanup_deployment(context: RunContext) -> bool:
     started = time.monotonic()
-    print("\n  [cleanup] Remove E2E Helm releases and namespace", flush=True)
+    print(f"\n  [cleanup] Remove {context.deployer} E2E resources", flush=True)
     try:
-        KubernetesE2E(context).cleanup()
+        create_deployer(context).cleanup()
     except Exception:
         print(f"  [cleanup] FAIL ({time.monotonic() - started:.2f}s)", flush=True)
         traceback.print_exc()
@@ -135,6 +141,7 @@ def main() -> int:
             clean=False,
             timeout_seconds=args.timeout,
             build_images=False,
+            deployer=args.deployer,
         )
         return 0 if cleanup_deployment(context) else 1
     if args.list:
@@ -162,6 +169,7 @@ def main() -> int:
         clean=not args.skip_clean,
         timeout_seconds=args.timeout,
         build_images=not args.skip_image_build,
+        deployer=args.deployer,
     )
     exit_code = 1
     try:
@@ -173,6 +181,7 @@ def main() -> int:
                 clean=not args.skip_clean,
                 timeout_seconds=args.timeout,
                 build_images=not args.skip_image_build,
+                deployer=args.deployer,
             )
             results: list[VerificationResult] = []
             for scenario_id in scenario_ids:

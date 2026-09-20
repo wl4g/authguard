@@ -25,6 +25,7 @@ class RunContext:
     clean: bool
     timeout_seconds: int
     build_images: bool = True
+    deployer: str = "kubernetes"
 
 
 @dataclass(frozen=True)

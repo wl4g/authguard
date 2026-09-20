@@ -15,7 +15,7 @@ from playwright.sync_api import (
     sync_playwright,
 )
 
-from common.kubernetes import AUTHGUARD_API_TOKEN, AUTHN_BROWSER_HOST
+from common.deploy.base import AUTHGUARD_API_TOKEN, AUTHN_BROWSER_HOST
 from common.model import RunContext, VerificationResult
 from verifier.other.base import BaseVerifier
 from verifier.web.fixtures import BrowserWalletFixture, Ctap2BrowserAuthenticator
@@ -46,9 +46,7 @@ class AuthGuardWebVerifier(BaseVerifier):
         return self.execute(self._run_scenario)
 
     def _run_scenario(self) -> None:
-        mock_host = (
-            f"{self.mock_idp_service}.{self.namespace}.svc.cluster.local"
-        )
+        mock_host = self.internal_hostname(self.mock_idp_service)
         with (
             self._forward_service(self._envoy_proxy_service(), 8082) as gateway_port,
             self._forward_service(self.mock_idp_service, 8080) as mock_port,

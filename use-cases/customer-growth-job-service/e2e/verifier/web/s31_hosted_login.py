@@ -9,7 +9,7 @@ from urllib import error, request
 
 from playwright.sync_api import Page, Playwright, expect, sync_playwright
 
-from common.kubernetes import (
+from common.deploy.base import (
     AUTHN_BROWSER_HOST,
     CUSTOMER_GROWTH_FALLBACK_HOST,
     CUSTOMER_GROWTH_HOST,
@@ -37,7 +37,7 @@ class HostedLoginVerifier(BaseVerifier):
         return self.execute(self._run_scenario)
 
     def _run_scenario(self) -> None:
-        mock_host = f"{self.mock_idp_service}.{self.namespace}.svc.cluster.local"
+        mock_host = self.internal_hostname(self.mock_idp_service)
         with (
             self._forward_service(self._envoy_proxy_service(), 8082) as gateway_port,
             self._forward_service(self.mock_idp_service, 8080) as mock_port,

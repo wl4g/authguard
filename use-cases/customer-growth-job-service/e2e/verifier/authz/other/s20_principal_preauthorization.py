@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from urllib import parse
 
-from common.kubernetes import GROUP_PRINCIPAL_IDS, WORKLOAD_HOSTS
+from common.deploy.base import GROUP_PRINCIPAL_IDS, WORKLOAD_HOSTS
 from common.model import RunContext, VerificationResult
 from common.telemetry import E2ETrace
 from verifier.other.base import BaseVerifier
@@ -58,7 +58,7 @@ class PrincipalPreauthorizationVerifier(BaseVerifier):
 
     def _bootstrap_authorization_policy(self) -> None:
         """Apply administrator grants to federated enterprise Principals."""
-        with self._forward_service(self.authguard_release, 9091) as port:
+        with self._forward_service(self.authguard_authz_service, 9091) as port:
             canonical_principals = self._materialize_scenario_principals(port)
             self._verify_direct_ldap_principal_discovery(port)
             self._verify_scim_push_provisioning(port, canonical_principals)

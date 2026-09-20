@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from urllib import parse, request
 
-from common.kubernetes import AUTHN_HOST
+from common.deploy.base import AUTHN_HOST
 from verifier.authn.other.protocol import AuthenticatedLogin, AuthnProtocolVerifier
 
 

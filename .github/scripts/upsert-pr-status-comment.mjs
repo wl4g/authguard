@@ -9,7 +9,10 @@ const runUrl = process.env.AUTHGUARD_RUN_URL;
 const dirtyTag = process.env.AUTHGUARD_DIRTY_TAG;
 const dirtyChartVersion = process.env.AUTHGUARD_DIRTY_CHART_VERSION;
 const buildResult = process.env.AUTHGUARD_BUILD_RESULT;
-const e2eResult = process.env.AUTHGUARD_E2E_RESULT;
+const kubernetesE2eResult = process.env.AUTHGUARD_E2E_KUBERNETES_RESULT;
+const kubernetesE2eSummary = process.env.AUTHGUARD_E2E_KUBERNETES_SUMMARY_BASE64;
+const dockerE2eResult = process.env.AUTHGUARD_E2E_DOCKER_RESULT;
+const dockerE2eSummary = process.env.AUTHGUARD_E2E_DOCKER_SUMMARY_BASE64;
 const releaseResult = process.env.AUTHGUARD_RELEASE_RESULT;
 const prepareResult = process.env.AUTHGUARD_PREPARE_RESULT;
 const releaseVersion = process.env.AUTHGUARD_RELEASE_VERSION;
@@ -26,21 +29,31 @@ const apiBase = `https://api.github.com/repos/${owner}/${repo}/issues/${pullRequ
 
 const resultIcon = (result) => {
   if (result === "success") return "✅";
+  if (result === "skipped") return "⏭️";
   if (result === "failure" || result === "cancelled" || result === "timed_out") return "❌";
   return "⏳";
 };
 
 const displayResult = (result) => result || "pending";
 
-const decodeSummary = () => {
-  const encoded = process.env.AUTHGUARD_E2E_SUMMARY_BASE64;
+const decodeSummary = (encoded) => {
   if (!encoded) return "E2E summary was not generated; see the evidence artifact.";
   const summary = Buffer.from(encoded, "base64").toString("utf8").trim();
   if (!summary) return "E2E summary was empty; see the evidence artifact.";
-  if (summary.length > 48_000) {
-    return `${summary.slice(0, 48_000)}\n\n[Summary truncated; see the evidence artifact for the complete report.]`;
+  if (summary.length > 20_000) {
+    return `${summary.slice(0, 20_000)}\n\n[Summary truncated; see the evidence artifact for the complete report.]`;
   }
   return summary;
+};
+
+const appendE2eSummary = (details, name, result, summary, artifactUrl) => {
+  details.push(`- ${name}: ${resultIcon(result)} ${displayResult(result)}`);
+  if (result === "skipped") {
+    details.push(`  - ${name} did not start because the build stage did not succeed.`);
+    return;
+  }
+  details.push(`  - Evidence: [reports and screenshots](${artifactUrl})`);
+  details.push("", `### ${name} summary`, "", "```text", decodeSummary(summary).replaceAll("```", "``\\`"), "```");
 };
 
 const renderCi = () => {
@@ -53,7 +66,7 @@ const renderCi = () => {
   ];
 
   if (phase === "started") {
-    details.push("- Status: ⏳ CI started: building dirty images, then running the full customer-growth E2E matrix.");
+    details.push("- Status: ⏳ CI started: building dirty images, then running Kubernetes and Docker Compose E2E in parallel.");
     return details.join("\n");
   }
 
@@ -67,22 +80,31 @@ const renderCi = () => {
 
   if (phase === "build") {
     details.push("", buildResult === "success"
-      ? "- Status: ⏳ Dirty images and the chart package are ready; full E2E is running."
-      : "- Status: ❌ Build failed; E2E was not started.");
+      ? "- Status: ⏳ Dirty images and the chart package are ready; Kubernetes and Docker Compose E2E are running in parallel."
+      : "- Status: ❌ Build failed; E2E jobs were not started.");
     return details.join("\n");
   }
 
-  details.push(`- Full customer-growth E2E: ${resultIcon(e2eResult)} ${displayResult(e2eResult)}`);
-  if (e2eResult === "skipped") {
-    details.push("- E2E did not start because the build stage did not succeed.");
-  } else {
-    details.push(`- Evidence: [reports and screenshots](${artifactUrl})`);
-    details.push("", "### E2E summary", "", "```text", decodeSummary().replaceAll("```", "``\\`"), "```");
-  }
-  const passed = buildResult === "success" && e2eResult === "success";
+  appendE2eSummary(
+    details,
+    "Full customer-growth Kubernetes E2E",
+    kubernetesE2eResult,
+    kubernetesE2eSummary,
+    artifactUrl,
+  );
+  appendE2eSummary(
+    details,
+    "Full customer-growth Docker Compose E2E",
+    dockerE2eResult,
+    dockerE2eSummary,
+    artifactUrl,
+  );
+  const passed = buildResult === "success"
+    && kubernetesE2eResult === "success"
+    && dockerE2eResult === "success";
   details.push("", passed
     ? "**CI completed successfully.**"
-    : e2eResult === "skipped"
+    : kubernetesE2eResult === "skipped" && dockerE2eResult === "skipped"
       ? `**CI failed.** Review the [Actions log](${runUrl}).`
       : `**CI failed.** Review the [Actions log](${runUrl}) and E2E evidence.`);
   return details.join("\n");
