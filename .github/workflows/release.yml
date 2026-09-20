@@ -16,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      issues: write
+      pull-requests: write
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -25,6 +27,16 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
+
+      - name: Update release comment
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTHGUARD_PR_NUMBER: ${{ github.event.pull_request.number }}
+          AUTHGUARD_COMMENT_KIND: release
+          AUTHGUARD_COMMENT_PHASE: started
+          AUTHGUARD_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node .github/scripts/upsert-pr-status-comment.mjs
 
       - name: Determine release version
         id: version
@@ -188,3 +200,31 @@ jobs:
             "${{ github.event.pull_request.number }}" \
             "${GITHUB_REPOSITORY_OWNER}" \
             authguard authguard-web
+
+  comment-final:
+    name: Report release result
+    needs: [prepare, publish, cleanup-dirty-images]
+    if: always() && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+
+      - name: Update release comment
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTHGUARD_PR_NUMBER: ${{ github.event.pull_request.number }}
+          AUTHGUARD_COMMENT_KIND: release
+          AUTHGUARD_COMMENT_PHASE: final
+          AUTHGUARD_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          AUTHGUARD_PREPARE_RESULT: ${{ needs.prepare.result }}
+          AUTHGUARD_RELEASE_RESULT: ${{ needs.publish.result }}
+          AUTHGUARD_SHOULD_RELEASE: ${{ needs.prepare.outputs.should_release }}
+          AUTHGUARD_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          AUTHGUARD_RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: node .github/scripts/upsert-pr-status-comment.mjs
