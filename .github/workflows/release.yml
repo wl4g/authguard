@@ -29,14 +29,15 @@ jobs:
           fetch-depth: 0
 
       - name: Update release comment
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           AUTHGUARD_PR_NUMBER: ${{ github.event.pull_request.number }}
           AUTHGUARD_COMMENT_KIND: release
           AUTHGUARD_COMMENT_PHASE: started
           AUTHGUARD_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: node .github/scripts/upsert-pr-status-comment.mjs
+        run: |
+          node .github/scripts/upsert-pr-status-comment.mjs || \
+            echo "::warning title=AuthGuard Release comment::Could not publish the release status comment."
 
       - name: Determine release version
         id: version
@@ -215,7 +216,6 @@ jobs:
           sparse-checkout: .github/scripts
 
       - name: Update release comment
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           AUTHGUARD_PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -227,4 +227,6 @@ jobs:
           AUTHGUARD_SHOULD_RELEASE: ${{ needs.prepare.outputs.should_release }}
           AUTHGUARD_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
           AUTHGUARD_RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
-        run: node .github/scripts/upsert-pr-status-comment.mjs
+        run: |
+          node .github/scripts/upsert-pr-status-comment.mjs || \
+            echo "::warning title=AuthGuard Release comment::Could not publish the release status comment."

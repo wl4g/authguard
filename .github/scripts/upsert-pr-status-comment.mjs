@@ -156,7 +156,10 @@ const existing = comments.find(
   (comment) => comment.user?.login === "github-actions[bot]" && comment.body?.includes(marker),
 );
 if (existing) {
-  await request(`${apiBase}/${existing.id}`, { method: "PATCH", body: JSON.stringify({ body }) });
+  await request(
+    `https://api.github.com/repos/${owner}/${repo}/issues/comments/${existing.id}`,
+    { method: "PATCH", body: JSON.stringify({ body }) },
+  );
 } else {
   await request(apiBase, { method: "POST", body: JSON.stringify({ body }) });
 }

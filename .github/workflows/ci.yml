@@ -39,14 +39,15 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Update PR CI comment
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           AUTHGUARD_PR_NUMBER: ${{ github.event.pull_request.number }}
           AUTHGUARD_COMMENT_KIND: ci
           AUTHGUARD_COMMENT_PHASE: started
           AUTHGUARD_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: node .github/scripts/upsert-pr-status-comment.mjs
+        run: |
+          node .github/scripts/upsert-pr-status-comment.mjs || \
+            echo "::warning title=AuthGuard PR CI comment::Could not publish the CI status comment."
 
       - name: Derive immutable dirty tag
         id: dirty-tag
@@ -175,7 +176,6 @@ jobs:
           sparse-checkout: .github/scripts
 
       - name: Update PR CI comment
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           AUTHGUARD_PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -185,7 +185,9 @@ jobs:
           AUTHGUARD_BUILD_RESULT: ${{ needs.build-and-test.result }}
           AUTHGUARD_DIRTY_TAG: ${{ needs.build-and-test.outputs.dirty_tag }}
           AUTHGUARD_DIRTY_CHART_VERSION: ${{ needs.build-and-test.outputs.dirty_chart_version }}
-        run: node .github/scripts/upsert-pr-status-comment.mjs
+        run: |
+          node .github/scripts/upsert-pr-status-comment.mjs || \
+            echo "::warning title=AuthGuard PR CI comment::Could not publish the CI status comment."
 
   e2e:
     name: Full customer-growth E2E
@@ -300,7 +302,6 @@ jobs:
           sparse-checkout: .github/scripts
 
       - name: Update PR CI comment
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           AUTHGUARD_PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -312,4 +313,6 @@ jobs:
           AUTHGUARD_E2E_SUMMARY_BASE64: ${{ needs.e2e.outputs.summary_base64 }}
           AUTHGUARD_DIRTY_TAG: ${{ needs.build-and-test.outputs.dirty_tag }}
           AUTHGUARD_DIRTY_CHART_VERSION: ${{ needs.build-and-test.outputs.dirty_chart_version }}
-        run: node .github/scripts/upsert-pr-status-comment.mjs
+        run: |
+          node .github/scripts/upsert-pr-status-comment.mjs || \
+            echo "::warning title=AuthGuard PR CI comment::Could not publish the CI status comment."
