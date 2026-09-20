@@ -145,7 +145,6 @@ jobs:
           DIRTY_TAG: ${{ steps.dirty-tag.outputs.value }}
         run: |
           mkdir -p dist
-          helm dependency build deploy/helm/authguard
           helm lint deploy/helm/authguard
           helm package deploy/helm/authguard \
             --destination dist \
