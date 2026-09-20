@@ -189,10 +189,12 @@ jobs:
           node .github/scripts/upsert-pr-status-comment.mjs || \
             echo "::warning title=AuthGuard PR CI comment::Could not publish the CI status comment."
 
-  e2e:
-    name: Full customer-growth E2E
+  e2e-kubernetes:
+    name: Full customer-growth Kubernetes E2E
     needs: build-and-test
-    runs-on: ubuntu-latest
+    # Set the repository/org variable AUTHGUARD_E2E_RUNNER for a larger or
+    # self-hosted runner when the default GitHub-hosted capacity is insufficient.
+    runs-on: ${{ vars.AUTHGUARD_E2E_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 120
     permissions:
       contents: read
@@ -283,14 +285,107 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: customer-growth-e2e-${{ needs.build-and-test.outputs.dirty_tag }}
+          name: customer-growth-e2e-kubernetes-${{ needs.build-and-test.outputs.dirty_tag }}
+          path: use-cases/customer-growth-job-service/e2e/reports/
+          if-no-files-found: warn
+          retention-days: 14
+
+  e2e-docker:
+    name: Full customer-growth Docker Compose E2E
+    needs: build-and-test
+    # Keep the two backends on separate runner VMs; never serialize their
+    # container, browser, database, Keycloak, and Solana resource peaks.
+    runs-on: ${{ vars.AUTHGUARD_E2E_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      summary_base64: ${{ steps.summary.outputs.base64 }}
+    env:
+      AUTHGUARD_E2E_USE_PREBUILT_IMAGES: "true"
+      AUTHGUARD_E2E_AUTHGUARD_IMAGE: ghcr.io/wl4g/authguard:${{ needs.build-and-test.outputs.dirty_tag }}
+      AUTHGUARD_E2E_WEB_IMAGE: ghcr.io/wl4g/authguard-web:${{ needs.build-and-test.outputs.dirty_tag }}
+    steps:
+      - name: Reclaim ephemeral runner disk
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+          tool-cache: true
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install pinned Rust toolchain
+        run: cargo --version
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify Docker Compose
+        run: docker compose version
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install browser runtime
+        run: |
+          make e2e-python
+          use-cases/customer-growth-job-service/e2e/.venv/bin/python \
+            -m playwright install --with-deps chromium
+
+      - name: Run complete Docker Compose E2E matrix against dirty images
+        run: make e2e-docker E2E_DOCKER_ARGS=--cleanup-after-run
+
+      - name: Capture Docker Compose E2E summary
+        id: summary
+        if: always()
+        run: |
+          summary=use-cases/customer-growth-job-service/e2e/reports/00_summary.md
+          if [[ -s "${summary}" ]]; then
+            echo "base64=$(base64 -w 0 "${summary}")" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload Docker Compose E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: customer-growth-e2e-docker-${{ needs.build-and-test.outputs.dirty_tag }}
           path: use-cases/customer-growth-job-service/e2e/reports/
           if-no-files-found: warn
           retention-days: 14
 
   comment-final:
     name: Report PR CI result
-    needs: [build-and-test, comment-build, e2e]
+    needs: [build-and-test, comment-build, e2e-kubernetes, e2e-docker]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -309,8 +404,10 @@ jobs:
           AUTHGUARD_COMMENT_PHASE: final
           AUTHGUARD_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           AUTHGUARD_BUILD_RESULT: ${{ needs.build-and-test.result }}
-          AUTHGUARD_E2E_RESULT: ${{ needs.e2e.result }}
-          AUTHGUARD_E2E_SUMMARY_BASE64: ${{ needs.e2e.outputs.summary_base64 }}
+          AUTHGUARD_E2E_KUBERNETES_RESULT: ${{ needs.e2e-kubernetes.result }}
+          AUTHGUARD_E2E_KUBERNETES_SUMMARY_BASE64: ${{ needs.e2e-kubernetes.outputs.summary_base64 }}
+          AUTHGUARD_E2E_DOCKER_RESULT: ${{ needs.e2e-docker.result }}
+          AUTHGUARD_E2E_DOCKER_SUMMARY_BASE64: ${{ needs.e2e-docker.outputs.summary_base64 }}
           AUTHGUARD_DIRTY_TAG: ${{ needs.build-and-test.outputs.dirty_tag }}
           AUTHGUARD_DIRTY_CHART_VERSION: ${{ needs.build-and-test.outputs.dirty_chart_version }}
         run: |
