@@ -893,16 +893,86 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
         return self._image_loader
 
     def service_logs(self, service: str, tail: int = 5000) -> str:
-        return self._run(
-            (
-                "kubectl",
-                "logs",
-                "-n",
-                self.namespace,
-                f"deployment/{service}",
-                f"--tail={tail}",
+        """Return logs from Pods actually owned by the named Deployment.
+
+        ``kubectl logs deployment/<name>`` uses the Deployment selector.  The
+        AuthGuard chart intentionally shares its release labels across AuthN,
+        AuthZ, and Web, so that selector can resolve to a sibling Pod.  Follow
+        the Deployment -> ReplicaSet -> Pod ownership chain instead; it is
+        unambiguous and remains valid if chart labels evolve.
+        """
+        pod_names = self._deployment_pods(service)
+        if not pod_names:
+            raise RuntimeError(
+                f"deployment {service!r} has no running Pods in namespace "
+                f"{self.namespace!r}"
             )
-        ).output
+        return "\n".join(
+            self._run(
+                (
+                    "kubectl",
+                    "logs",
+                    "-n",
+                    self.namespace,
+                    f"pod/{pod_name}",
+                    f"--tail={tail}",
+                )
+            ).output
+            for pod_name in pod_names
+        )
+
+    def _deployment_pods(self, deployment: str) -> tuple[str, ...]:
+        """Resolve running Pods through the exact Deployment owner chain."""
+        replica_sets = json.loads(
+            self._run(
+                (
+                    "kubectl",
+                    "get",
+                    "replicasets",
+                    "-n",
+                    self.namespace,
+                    "-o",
+                    "json",
+                )
+            ).output
+        )
+        replica_set_names = {
+            item.get("metadata", {}).get("name", "")
+            for item in replica_sets.get("items", [])
+            if any(
+                owner.get("kind") == "Deployment"
+                and owner.get("name") == deployment
+                for owner in item.get("metadata", {}).get("ownerReferences", [])
+            )
+        }
+        if not replica_set_names:
+            return ()
+
+        pods = json.loads(
+            self._run(
+                (
+                    "kubectl",
+                    "get",
+                    "pods",
+                    "-n",
+                    self.namespace,
+                    "-o",
+                    "json",
+                )
+            ).output
+        )
+        return tuple(
+            sorted(
+                item.get("metadata", {}).get("name", "")
+                for item in pods.get("items", [])
+                if item.get("status", {}).get("phase") == "Running"
+                and any(
+                    owner.get("kind") == "ReplicaSet"
+                    and owner.get("name") in replica_set_names
+                    for owner in item.get("metadata", {}).get("ownerReferences", [])
+                )
+            )
+        )
 
     def postgresql_query(self, sql: str) -> str:
         pod = self._run(
