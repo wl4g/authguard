@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from urllib import request
 
-from common.kubernetes import WORKLOAD_IMAGES
+from common.deploy.base import WORKLOAD_IMAGES
 from common.model import RunContext, VerificationResult
 from verifier.other.base import BaseVerifier
 from verifier.jaeger.contracts import (
@@ -44,12 +44,12 @@ class RuntimeEvidenceVerifier(BaseVerifier):
         )
 
     def _verify_metrics(self) -> None:
-        with self._forward_service(self.authguard_release, 9091) as port:
+        with self._forward_service(self.authguard_authz_service, 9091) as port:
             with request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=15) as response:
                 metrics = response.read().decode()
             self._verify_management_diagnostics(port, metrics, "authguard-authz")
         verify_authz_metrics(metrics)
-        with self._forward_service(f"{self.authguard_release}-authn", 8082) as port:
+        with self._forward_service(self.authguard_authn_service, 8082) as port:
             with request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=15) as response:
                 authn_metrics = response.read().decode()
             self._verify_management_diagnostics(port, authn_metrics, "authguard-authn")
@@ -95,19 +95,11 @@ class RuntimeEvidenceVerifier(BaseVerifier):
         )
 
     def _verify_observability_logs(self) -> None:
-        result = self._run(
-            (
-                "kubectl",
-                "logs",
-                "-n",
-                self.namespace,
-                "-l",
-                "app.kubernetes.io/component=authz",
-                "--tail=5000",
-            )
+        authz_logs = self.infrastructure.service_logs(
+            self.authguard_authz_service, tail=5000
         )
         authz_json_records = require_json_events(
-            result.output,
+            authz_logs,
             AUTHZ_LOG_EVENTS,
             "authguard-authz",
         )
@@ -115,7 +107,7 @@ class RuntimeEvidenceVerifier(BaseVerifier):
         discovery_events: set[str] = set()
         provisioning_events: set[str] = set()
         discovery_providers: set[str] = set()
-        for line in result.output.splitlines():
+        for line in authz_logs.splitlines():
             try:
                 event = json.loads(line)
             except json.JSONDecodeError:
@@ -159,17 +151,9 @@ class RuntimeEvidenceVerifier(BaseVerifier):
             "Authguard structured logs contain Keycloak/LDAP pull federation and SCIM push "
             "materialization events"
         )
-        authn_logs = self._run(
-            (
-                "kubectl",
-                "logs",
-                "-n",
-                self.namespace,
-                "-l",
-                "app.kubernetes.io/component=authn",
-                "--tail=5000",
-            )
-        ).output
+        authn_logs = self.infrastructure.service_logs(
+            self.authguard_authn_service, tail=5000
+        )
         authn_json_records = require_json_events(
             authn_logs,
             AUTHN_LOG_EVENTS,
@@ -182,17 +166,9 @@ class RuntimeEvidenceVerifier(BaseVerifier):
         )
 
         for component in WORKLOAD_IMAGES:
-            logs = self._run(
-                (
-                    "kubectl",
-                    "logs",
-                    "-n",
-                    self.namespace,
-                    "-l",
-                    f"app.kubernetes.io/component=e2e-authguard-{component}",
-                    "--tail=5000",
-                )
-            ).output
+            logs = self.infrastructure.service_logs(
+                self.workload_service(component), tail=5000
+            )
             require_adapter_events(logs, component)
         self.details.append(
             f"All {len(WORKLOAD_IMAGES)} SDK workloads emitted {len(ADAPTER_LOG_EVENTS)} "

@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from fido2 import cbor
 
-from common.kubernetes import AUTHN_BROWSER_HOST
+from common.deploy.base import AUTHN_BROWSER_HOST
 from verifier.authn.other.protocol import AuthnProtocolVerifier
 from verifier.authn.password.s13_password_totp import (
     AuthenticatorAppTotpOracle,

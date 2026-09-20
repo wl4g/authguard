@@ -1,0 +1,234 @@
+version: "3.8"
+
+x-authguard: &authguard
+  image: ${AUTHGUARD_E2E_AUTHGUARD_IMAGE}
+  env_file: ["${AUTHGUARD_E2E_RUNTIME_DIR}/authguard.env"]
+  volumes:
+    - ${AUTHGUARD_E2E_RUNTIME_DIR}/authguard.yaml:/etc/authguard/authguard.yaml:ro
+  tmpfs: [/tmp]
+  depends_on:
+    postgresql: { condition: service_healthy }
+    redis: { condition: service_healthy }
+    keycloak: { condition: service_started }
+    ldap: { condition: service_started }
+    jaeger: { condition: service_started }
+    mock-idp: { condition: service_started }
+    anvil: { condition: service_started }
+    solana: { condition: service_started }
+
+x-workload: &workload
+  environment: &workload-environment
+    PORT: "8080"
+    AUTHGUARD_GRPC_TARGET: authz:8081
+    AUTHGUARD_GRPC_TLS: "false"
+    AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY: e2e-authguard-access-context-hmac-key
+    OTEL_TRACING_ENABLED: "true"
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
+    AUTHGUARD_OTEL_GRPC_ENDPOINT: http://jaeger:4317
+  depends_on:
+    postgresql: { condition: service_healthy }
+    authz: { condition: service_started }
+    jaeger: { condition: service_started }
+  ports: ["127.0.0.1::8080"]
+  tmpfs: [/tmp]
+
+services:
+  postgresql:
+    image: ${AUTHGUARD_E2E_POSTGRES_IMAGE}
+    environment:
+      POSTGRESQL_USERNAME: e2e_authguard_customer_growth_admin
+      POSTGRESQL_PASSWORD: e2e-authguard-customer-growth-admin-password
+      POSTGRESQL_POSTGRES_PASSWORD: e2e-authguard-customer-growth-postgres-password
+      POSTGRESQL_DATABASE: e2e_authguard_customer_growth
+    volumes:
+      - ${AUTHGUARD_E2E_RUNTIME_DIR}/postgres-init.sh:/docker-entrypoint-initdb.d/10-e2e-authguard-init.sh:ro
+      - ./config/init.sql:/e2e-authguard-fixture/init.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, 'PGPASSWORD="$${POSTGRESQL_PASSWORD}" pg_isready -U "$${POSTGRESQL_USERNAME}" -d "$${POSTGRESQL_DATABASE}"']
+      interval: 3s
+      timeout: 3s
+      retries: 60
+    ports: ["127.0.0.1::5432"]
+
+  redis:
+    image: ${AUTHGUARD_E2E_REDIS_IMAGE}
+    entrypoint: [/bin/bash, -ec]
+    command:
+      - >-
+        /opt/bitnami/redis/bin/redis-server
+        --save '' --appendonly no
+        --requirepass e2e-authguard-redis-password
+        --masterauth e2e-authguard-redis-password
+        --cluster-enabled yes
+        --cluster-config-file /tmp/nodes.conf
+        --cluster-node-timeout 5000 &
+        pid=$$!;
+        until /opt/bitnami/redis/bin/redis-cli -a e2e-authguard-redis-password ping >/dev/null 2>&1; do sleep 0.2; done;
+        /opt/bitnami/redis/bin/redis-cli -a e2e-authguard-redis-password cluster addslotsrange 0 16383;
+        wait $$pid
+    healthcheck:
+      test: [CMD-SHELL, '/opt/bitnami/redis/bin/redis-cli --no-auth-warning -a e2e-authguard-redis-password cluster info | grep -q cluster_state:ok']
+      interval: 3s
+      timeout: 3s
+      retries: 60
+    ports: ["127.0.0.1::6379"]
+
+  keycloak:
+    image: ${AUTHGUARD_E2E_KEYCLOAK_IMAGE}
+    command: [start-dev, --import-realm, --health-enabled=true]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: e2e-authguard-admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: e2e-authguard-admin-password
+      KC_HOSTNAME: http://keycloak:8080
+      KC_HOSTNAME_STRICT: "false"
+    volumes:
+      - ${AUTHGUARD_E2E_RUNTIME_DIR}/keycloak-realm.json:/opt/keycloak/data/import/example-corp-realm.json:ro
+    ports: ["127.0.0.1::8080"]
+
+  ldap:
+    image: ${AUTHGUARD_E2E_LDAP_IMAGE}
+    volumes:
+      - ${AUTHGUARD_E2E_RUNTIME_DIR}/ldap-config.cfg:/app/config/config.cfg:ro
+    ports: ["127.0.0.1::389"]
+    tmpfs: [/tmp]
+
+  jaeger:
+    image: ${AUTHGUARD_E2E_JAEGER_IMAGE}
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      SPAN_STORAGE_TYPE: memory
+      MEMORY_MAX_TRACES: "10000"
+      OTEL_TRACES_SAMPLER: always_off
+    ports:
+      - "127.0.0.1::4317"
+      - "127.0.0.1::4318"
+      - "127.0.0.1::16686"
+
+  mock-idp:
+    image: ${AUTHGUARD_E2E_MOCK_IDP_IMAGE}
+    environment:
+      MOCK_IDP_GITHUB_CLIENT_SECRET: e2e-authguard-github-secret
+      MOCK_IDP_GOOGLE_CLIENT_SECRET: e2e-authguard-google-secret
+      MOCK_IDP_WECHAT_CLIENT_SECRET: e2e-authguard-wechat-secret
+      MOCK_IDP_QQ_CLIENT_SECRET: e2e-authguard-qq-secret
+    ports: ["127.0.0.1::8080"]
+    tmpfs: [/tmp]
+
+  anvil:
+    image: ${AUTHGUARD_E2E_ANVIL_IMAGE}
+    command: [--host=0.0.0.0, --port=8545, --accounts=10, --balance=10000, --chain-id=31337]
+    environment: { HOME: /tmp }
+    ports: ["127.0.0.1::8545"]
+    tmpfs: [/tmp]
+
+  solana:
+    image: ${AUTHGUARD_E2E_SOLANA_IMAGE}
+    environment: { HOME: /tmp }
+    entrypoint: [sh, -c]
+    command:
+      - >-
+        exec solana-test-validator --bind-address="$$(hostname -i | cut -d' ' -f1)"
+        --rpc-port=8899 --faucet-port=8900
+        --ledger=/tmp/solana-ledger --quiet
+        --limit-ledger-size=1000 --faucet-sol=10
+        --rpc-pubsub-max-active-subscriptions=16
+        --rpc-pubsub-notification-threads=0
+        --rpc-pubsub-worker-threads=1
+        --rpc-pubsub-queue-capacity-items=32
+        --rpc-pubsub-queue-capacity-bytes=1048576
+    ports: ["127.0.0.1::8899"]
+    security_opt: [seccomp=unconfined]
+    volumes:
+      - solana-ledger:/tmp/solana-ledger
+
+  authz:
+    <<: *authguard
+    command: [--config, /etc/authguard/authguard.yaml, authz]
+    environment: { AUTHGUARD__SERVER__SERVICE_NAME: authguard-authz }
+    ports:
+      - "127.0.0.1::8080"
+      - "127.0.0.1::8081"
+      - "127.0.0.1::9091"
+
+  authn:
+    <<: *authguard
+    command: [--config, /etc/authguard/authguard.yaml, authn, --bind, 0.0.0.0:8082]
+    environment: { AUTHGUARD__SERVER__SERVICE_NAME: authguard-authn }
+    ports: ["127.0.0.1::8082"]
+
+  web:
+    image: ${AUTHGUARD_E2E_WEB_IMAGE}
+    volumes:
+      - ./helm/files/authguard-theme:/usr/share/nginx/html/assets/themes/custom:ro
+    ports: ["127.0.0.1::8080"]
+
+  go-sqlx:
+    <<: *workload
+    image: ${AUTHGUARD_E2E_GO_SQLX_IMAGE}
+    environment:
+      <<: *workload-environment
+      OTEL_SERVICE_NAME: e2e-authguard-go-sqlx
+      DATABASE_URL: postgresql://e2e_authguard_customer_growth_go_sqlx:e2e-authguard-customer-growth-go-sqlx-password@postgresql:5432/e2e_authguard_customer_growth?sslmode=disable&options=-csearch_path%3De2e_authguard_customer_growth_go_sqlx
+
+  rust-sqlx:
+    <<: *workload
+    image: ${AUTHGUARD_E2E_RUST_SQLX_IMAGE}
+    environment:
+      <<: *workload-environment
+      OTEL_SERVICE_NAME: e2e-authguard-rust-sqlx
+      DATABASE_URL: postgresql://e2e_authguard_customer_growth_rust_sqlx:e2e-authguard-customer-growth-rust-sqlx-password@postgresql:5432/e2e_authguard_customer_growth?sslmode=disable&options=-csearch_path%3De2e_authguard_customer_growth_rust_sqlx
+      RESIGN_TOKEN_PUBLIC_KEY_FILE: /etc/e2e/resign-jwt-public-key.pem
+    volumes:
+      - ./config/e2e-jwt-keys/resign-jwt-key.pub.pem:/etc/e2e/resign-jwt-public-key.pem:ro
+
+  python-sqlalchemy:
+    <<: *workload
+    image: ${AUTHGUARD_E2E_PYTHON_SQLALCHEMY_IMAGE}
+    environment:
+      <<: *workload-environment
+      OTEL_SERVICE_NAME: e2e-authguard-python-sqlalchemy
+      DATABASE_URL: postgresql://e2e_authguard_customer_growth_python_sqlalchemy:e2e-authguard-customer-growth-python-sqlalchemy-password@postgresql:5432/e2e_authguard_customer_growth?sslmode=disable&options=-csearch_path%3De2e_authguard_customer_growth_python_sqlalchemy
+
+  spring-jdbc:
+    <<: *workload
+    image: ${AUTHGUARD_E2E_SPRING_JDBC_IMAGE}
+    environment:
+      <<: *workload-environment
+      OTEL_SERVICE_NAME: e2e-authguard-spring-jdbc
+      DATABASE_URL: jdbc:postgresql://postgresql:5432/e2e_authguard_customer_growth?sslmode=disable&currentSchema=e2e_authguard_customer_growth_spring_jdbc
+      DATABASE_USERNAME: e2e_authguard_customer_growth_spring_jdbc
+      DATABASE_PASSWORD: e2e-authguard-customer-growth-spring-jdbc-password
+      DATABASE_SCHEMA: e2e_authguard_customer_growth_spring_jdbc
+
+  spring-jpa:
+    <<: *workload
+    image: ${AUTHGUARD_E2E_SPRING_JPA_IMAGE}
+    environment:
+      <<: *workload-environment
+      OTEL_SERVICE_NAME: e2e-authguard-spring-jpa
+      DATABASE_URL: jdbc:postgresql://postgresql:5432/e2e_authguard_customer_growth?sslmode=disable&currentSchema=e2e_authguard_customer_growth_spring_jpa
+      DATABASE_USERNAME: e2e_authguard_customer_growth_spring_jpa
+      DATABASE_PASSWORD: e2e-authguard-customer-growth-spring-jpa-password
+      DATABASE_SCHEMA: e2e_authguard_customer_growth_spring_jpa
+
+  envoy:
+    image: ${AUTHGUARD_E2E_ENVOY_IMAGE}
+    command: [-c, /etc/envoy/envoy.yaml, --log-level, info]
+    volumes:
+      - ./config/docker-envoy.yaml:/etc/envoy/envoy.yaml:ro
+    depends_on:
+      authn: { condition: service_started }
+      authz: { condition: service_started }
+      web: { condition: service_started }
+      go-sqlx: { condition: service_started }
+      rust-sqlx: { condition: service_started }
+      python-sqlalchemy: { condition: service_started }
+      spring-jdbc: { condition: service_started }
+      spring-jpa: { condition: service_started }
+    ports:
+      - "127.0.0.1::8082"
+      - "127.0.0.1::19000"
+
+volumes:
+  solana-ledger:

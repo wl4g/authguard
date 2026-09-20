@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, utils
 
 from common.config import PROJECT_ROOT
-from common.kubernetes import AUTHN_HOST
+from common.deploy.base import AUTHN_HOST
 from verifier.authn.other.protocol import AuthenticatedLogin, AuthnProtocolVerifier
 from verifier.authn.password.s13_password_totp import StandaloneFixture
 

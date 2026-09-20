@@ -1,0 +1,189 @@
+admin:
+  access_log_path: /dev/null
+  address:
+    socket_address: { address: 0.0.0.0, port_value: 19000 }
+
+static_resources:
+  listeners:
+    - name: customer_growth_edge
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 8082 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: customer_growth_edge
+                strip_any_host_port: true
+                tracing:
+                  provider:
+                    name: envoy.tracers.opentelemetry
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.config.trace.v3.OpenTelemetryConfig
+                      grpc_service:
+                        envoy_grpc: { cluster_name: jaeger_otlp }
+                        timeout: 2s
+                      service_name: e2e-authguard-envoy-proxy
+                route_config:
+                  name: customer_growth_routes
+                  virtual_hosts:
+                    - name: authguard_public
+                      domains:
+                        - e2e-authguard-authn.customer-growth.local
+                        - localhost
+                        - customer-growth.local
+                        - customer-growth-default.local
+                        - authguard-management.local
+                      routes:
+                        - match:
+                            path: /auth/login
+                            headers:
+                              - name: ":method"
+                                string_match: { exact: GET }
+                          route: { cluster: web }
+                          typed_per_filter_config: &public_filters
+                            envoy.filters.http.jwt_authn:
+                              "@type": type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
+                              disabled: true
+                            envoy.filters.http.ext_authz:
+                              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
+                              disabled: true
+                        - match:
+                            path: /auth/account/security
+                            headers:
+                              - name: ":method"
+                                string_match: { exact: GET }
+                          route: { cluster: web }
+                          typed_per_filter_config: *public_filters
+                        - match:
+                            prefix: /auth/assets/
+                            headers:
+                              - name: ":method"
+                                string_match: { exact: GET }
+                          route: { cluster: web }
+                          typed_per_filter_config: *public_filters
+                        - match: { prefix: /.well-known/ }
+                          route: { cluster: authn_http }
+                          typed_per_filter_config: *public_filters
+                        - match: { prefix: /auth/ }
+                          route: { cluster: authn_http }
+                          typed_per_filter_config: *public_filters
+                        - match: { prefix: /api/ }
+                          route: { cluster: authz_management }
+                          typed_per_filter_config: *public_filters
+                        - match: { prefix: / }
+                          route: { cluster: web }
+                          typed_per_filter_config: *public_filters
+                    - name: go_sqlx
+                      domains: [e2e-authguard-go-sqlx.customer-growth.local]
+                      routes: [{ match: { prefix: /customer-growth/jobs }, route: { cluster: go_sqlx } }]
+                    - name: rust_sqlx
+                      domains: [e2e-authguard-rust-sqlx.customer-growth.local]
+                      routes: [{ match: { prefix: /customer-growth/jobs }, route: { cluster: rust_sqlx } }]
+                    - name: python_sqlalchemy
+                      domains: [e2e-authguard-python-sqlalchemy.customer-growth.local]
+                      routes: [{ match: { prefix: /customer-growth/jobs }, route: { cluster: python_sqlalchemy } }]
+                    - name: spring_jdbc
+                      domains: [e2e-authguard-spring-jdbc.customer-growth.local]
+                      routes: [{ match: { prefix: /customer-growth/jobs }, route: { cluster: spring_jdbc } }]
+                    - name: spring_jpa
+                      domains: [e2e-authguard-spring-jpa.customer-growth.local]
+                      routes: [{ match: { prefix: /customer-growth/jobs }, route: { cluster: spring_jpa } }]
+                http_filters:
+                  - name: envoy.filters.http.jwt_authn
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication
+                      providers:
+                        authguard_authn:
+                          issuer: urn:authguard:e2e:authn
+                          audiences: [customer-growth-job-service]
+                          from_headers: [{ name: authorization, value_prefix: "Bearer " }]
+                          from_cookies: [authguard_token]
+                          forward: true
+                          remote_jwks:
+                            http_uri:
+                              uri: http://authn:8082/.well-known/jwks.json
+                              cluster: authn_http
+                              timeout: 2s
+                            cache_duration: 300s
+                      rules:
+                        - match: { prefix: / }
+                          requires: { provider_name: authguard_authn }
+                  - name: envoy.filters.http.ext_authz
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+                      failure_mode_allow: false
+                      transport_api_version: V3
+                      allowed_headers:
+                        patterns:
+                          - { exact: authorization }
+                          - { exact: cookie }
+                          - { exact: x-request-id }
+                          - { exact: traceparent }
+                          - { exact: tracestate }
+                      grpc_service:
+                        envoy_grpc: { cluster_name: authz_grpc }
+                        timeout: 2s
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+    - name: authn_http
+      type: STRICT_DNS
+      connect_timeout: 2s
+      load_assignment:
+        cluster_name: authn_http
+        endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: authn, port_value: 8082 } } } }] }]
+    - name: authz_management
+      type: STRICT_DNS
+      connect_timeout: 2s
+      load_assignment:
+        cluster_name: authz_management
+        endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: authz, port_value: 9091 } } } }] }]
+    - name: authz_grpc
+      type: STRICT_DNS
+      connect_timeout: 2s
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config: { http2_protocol_options: {} }
+      load_assignment:
+        cluster_name: authz_grpc
+        endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: authz, port_value: 8080 } } } }] }]
+    - name: jaeger_otlp
+      type: STRICT_DNS
+      connect_timeout: 2s
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config: { http2_protocol_options: {} }
+      load_assignment:
+        cluster_name: jaeger_otlp
+        endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: jaeger, port_value: 4317 } } } }] }]
+    - name: web
+      type: STRICT_DNS
+      connect_timeout: 2s
+      load_assignment:
+        cluster_name: web
+        endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: web, port_value: 8080 } } } }] }]
+    - name: go_sqlx
+      type: STRICT_DNS
+      connect_timeout: 2s
+      load_assignment: { cluster_name: go_sqlx, endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: go-sqlx, port_value: 8080 } } } }] }] }
+    - name: rust_sqlx
+      type: STRICT_DNS
+      connect_timeout: 2s
+      load_assignment: { cluster_name: rust_sqlx, endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: rust-sqlx, port_value: 8080 } } } }] }] }
+    - name: python_sqlalchemy
+      type: STRICT_DNS
+      connect_timeout: 2s
+      load_assignment: { cluster_name: python_sqlalchemy, endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: python-sqlalchemy, port_value: 8080 } } } }] }] }
+    - name: spring_jdbc
+      type: STRICT_DNS
+      connect_timeout: 2s
+      load_assignment: { cluster_name: spring_jdbc, endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: spring-jdbc, port_value: 8080 } } } }] }] }
+    - name: spring_jpa
+      type: STRICT_DNS
+      connect_timeout: 2s
+      load_assignment: { cluster_name: spring_jpa, endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: spring-jpa, port_value: 8080 } } } }] }] }

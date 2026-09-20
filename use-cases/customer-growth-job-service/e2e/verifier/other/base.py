@@ -13,10 +13,7 @@ from typing import Callable, Iterator, TypeVar
 from urllib import error, parse, request
 
 from common.config import CONFIG_DIR, REPORTS_DIR
-from common.kubernetes import (
-    AUTHGUARD_API_TOKEN,
-    KubernetesE2E,
-)
+from common.deploy.base import AUTHGUARD_API_TOKEN, create_deployer
 from common.model import EvidenceArtifact, RunContext, VerificationResult
 from common.telemetry import E2ETrace
 from verifier.jaeger.contracts import JaegerQueryClient
@@ -26,13 +23,13 @@ T = TypeVar("T")
 
 
 class BaseVerifier:
-    """Compose Kubernetes infrastructure with fail-closed verifier utilities."""
+    """Compose disposable infrastructure with fail-closed verifier utilities."""
 
     scenario_id = ""
     title = ""
 
     def __init__(self, context: RunContext) -> None:
-        self.infrastructure = KubernetesE2E(context)
+        self.infrastructure = create_deployer(context)
         self.context = context
         self.commands = self.infrastructure.commands
         self.details = self.infrastructure.details
@@ -163,15 +160,18 @@ class BaseVerifier:
     def _verify_envoy_runtime_filter_chain(self) -> None:
         with self._forward_envoy_admin() as port:
             with request.urlopen(
-                f"http://127.0.0.1:{port}/config_dump?resource=dynamic_listeners",
+                f"http://127.0.0.1:{port}/config_dump",
                 timeout=15,
             ) as response:
                 config_dump = json.loads(response.read())
 
-        expected_ext_auth = (
-            "envoy.filters.http.ext_authz/securitypolicy/"
-            f"{self.namespace}/{self.authguard_release}"
-        )
+        if self.context.deployer == "kubernetes":
+            expected_ext_auth = (
+                "envoy.filters.http.ext_authz/securitypolicy/"
+                f"{self.namespace}/{self.authguard_release}"
+            )
+        else:
+            expected_ext_auth = "envoy.filters.http.ext_authz"
         for candidate in self._json_objects(config_dump):
             filters = candidate.get("http_filters")
             if not isinstance(filters, list):
@@ -186,15 +186,20 @@ class BaseVerifier:
                 raise RuntimeError(f"unsafe Envoy HTTP filter order: {names}")
             ext_auth = filters[ext_auth_index].get("typed_config", {})
             envoy_grpc = ext_auth.get("grpc_service", {}).get("envoy_grpc", {})
-            expected_authority = f"{self.authguard_release}.{self.namespace}:8080"
-            if envoy_grpc.get("authority") != expected_authority:
+            expected_authority = (
+                f"{self.authguard_release}.{self.namespace}:8080"
+                if self.context.deployer == "kubernetes"
+                else None
+            )
+            if expected_authority and envoy_grpc.get("authority") != expected_authority:
                 raise RuntimeError(
                     "Envoy ext_authz runtime target mismatch: "
                     f"expected={expected_authority!r}, actual={envoy_grpc.get('authority')!r}"
                 )
+            target = expected_authority or envoy_grpc.get("cluster_name")
             self.details.append(
                 "Envoy runtime filter order is jwt_authn -> ext_authz -> router; "
-                f"ext_authz authority is {expected_authority}"
+                f"ext_authz target is {target}"
             )
             return
         raise RuntimeError("Envoy runtime config contains no JWT + Authguard ext_authz chain")
@@ -347,36 +352,9 @@ class BaseVerifier:
         self.details.append(f"{scenario}: job ids {actual}")
 
     def _postgresql_pod(self) -> str:
-        return self._run(
-            (
-                "kubectl",
-                "get",
-                "pods",
-                "-n",
-                self.namespace,
-                "-l",
-                "app.kubernetes.io/component=e2e-authguard-postgresql",
-                "-o",
-                "jsonpath={.items[0].metadata.name}",
-            )
-        ).output.strip()
+        return self.postgresql_service
 
     def _postgresql_query(self, pod: str, sql: str) -> str:
-        return self._run(
-            (
-                "kubectl",
-                "exec",
-                "-n",
-                self.namespace,
-                pod,
-                "--",
-                "bash",
-                "-ec",
-                'PGPASSWORD="$POSTGRESQL_POSTGRES_PASSWORD" '
-                'PGOPTIONS="-c search_path=authguard" psql '
-                '-U postgres -d "$POSTGRESQL_DATABASE" -At '
-                '--set=ON_ERROR_STOP=1 --command "$1"',
-                "e2e-authguard-query",
-                sql,
-            )
-        ).output.strip()
+        if pod != self.postgresql_service:
+            raise RuntimeError(f"unexpected PostgreSQL service: {pod}")
+        return self.infrastructure.postgresql_query(sql)

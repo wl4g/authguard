@@ -1,4 +1,4 @@
-"""Minimal dependency-free OpenTelemetry trace producer for the k3s verifier."""
+"""Minimal dependency-free OpenTelemetry trace producer for E2E verifiers."""
 
 from __future__ import annotations
 

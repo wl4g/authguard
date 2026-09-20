@@ -165,8 +165,8 @@ DEFAULT_SCENARIOS = {
 
 OPTIONAL_SCENARIOS = {
     "00": (
-        "Infrastructure: Helm deployment and middleware initialization",
-        "verifier.infra.s00_k3s_infrastructure",
+        "Infrastructure: deployment and middleware initialization",
+        "verifier.infra.s00_infrastructure",
     ),
     "10": (
         "AuthN: unified OAuth/OIDC, standalone, WebAuthn, and CAIP/SIWX",

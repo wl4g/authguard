@@ -180,6 +180,9 @@ make test
 # Full disposable Kubernetes matrix: infrastructure, AuthN, AuthZ, SDKs, Chromium UI,
 # PostgreSQL, logs, metrics, and Jaeger evidence.
 HTTPS_PROXY=http://127.0.0.1:8800 make e2e-k8s
+
+# Equivalent Docker Compose matrix with native Envoy when Kubernetes is unavailable.
+HTTPS_PROXY=http://127.0.0.1:8800 make e2e-docker
 ```
 
 The reproducible application and verifier suite lives in
