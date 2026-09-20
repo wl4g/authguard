@@ -16,9 +16,12 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+      issues: write
       packages: write
+      pull-requests: write
     outputs:
       dirty_tag: ${{ steps.dirty-tag.outputs.value }}
+      dirty_chart_version: ${{ steps.dirty-tag.outputs.chart_version }}
     steps:
       - name: Reclaim ephemeral runner disk
         uses: jlumbroso/free-disk-space@v1.3.1
@@ -35,11 +38,27 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
+      - name: Update PR CI comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTHGUARD_PR_NUMBER: ${{ github.event.pull_request.number }}
+          AUTHGUARD_COMMENT_KIND: ci
+          AUTHGUARD_COMMENT_PHASE: started
+          AUTHGUARD_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          node .github/scripts/upsert-pr-status-comment.mjs || \
+            echo "::warning title=AuthGuard PR CI comment::Could not publish the CI status comment."
+
       - name: Derive immutable dirty tag
         id: dirty-tag
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: echo "value=dirty-${HEAD_SHA:0:8}" >> "$GITHUB_OUTPUT"
+        run: |
+          short_sha="${HEAD_SHA:0:8}"
+          base_chart_version=$(awk '/^version:/ { print $2; exit }' deploy/helm/authguard/Chart.yaml)
+          test -n "${base_chart_version}"
+          echo "value=dirty-${short_sha}" >> "$GITHUB_OUTPUT"
+          echo "chart_version=${base_chart_version}-dirty.${short_sha}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -62,7 +81,7 @@ jobs:
             org.opencontainers.image.version=${{ steps.dirty-tag.outputs.value }}
           tags: ghcr.io/wl4g/authguard:${{ steps.dirty-tag.outputs.value }}
           cache-from: type=gha,scope=authguard-runtime
-          cache-to: type=gha,mode=max,scope=authguard-runtime
+          cache-to: type=gha,mode=max,scope=authguard-runtime,ignore-error=true
 
       - name: Build and push dirty web image
         uses: docker/build-push-action@v6
@@ -75,7 +94,7 @@ jobs:
             org.opencontainers.image.version=${{ steps.dirty-tag.outputs.value }}
           tags: ghcr.io/wl4g/authguard-web:${{ steps.dirty-tag.outputs.value }}
           cache-from: type=gha,scope=authguard-web
-          cache-to: type=gha,mode=max,scope=authguard-web
+          cache-to: type=gha,mode=max,scope=authguard-web,ignore-error=true
 
       - name: Drop package credentials before tests
         run: docker logout ghcr.io
@@ -121,6 +140,55 @@ jobs:
       - name: Run unit and integration matrix
         run: make test
 
+      - name: Package dirty Helm chart
+        env:
+          CHART_VERSION: ${{ steps.dirty-tag.outputs.chart_version }}
+          DIRTY_TAG: ${{ steps.dirty-tag.outputs.value }}
+        run: |
+          mkdir -p dist
+          helm lint deploy/helm/authguard
+          helm package deploy/helm/authguard \
+            --destination dist \
+            --version "${CHART_VERSION}" \
+            --app-version "${DIRTY_TAG}"
+          helm show chart "dist/authguard-${CHART_VERSION}.tgz" >/dev/null
+
+      - name: Upload dirty Helm chart
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: authguard-chart-${{ steps.dirty-tag.outputs.value }}
+          path: dist/authguard-${{ steps.dirty-tag.outputs.chart_version }}.tgz
+          if-no-files-found: error
+          retention-days: 14
+
+  comment-build:
+    name: Report build result
+    needs: build-and-test
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+
+      - name: Update PR CI comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTHGUARD_PR_NUMBER: ${{ github.event.pull_request.number }}
+          AUTHGUARD_COMMENT_KIND: ci
+          AUTHGUARD_COMMENT_PHASE: build
+          AUTHGUARD_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          AUTHGUARD_BUILD_RESULT: ${{ needs.build-and-test.result }}
+          AUTHGUARD_DIRTY_TAG: ${{ needs.build-and-test.outputs.dirty_tag }}
+          AUTHGUARD_DIRTY_CHART_VERSION: ${{ needs.build-and-test.outputs.dirty_chart_version }}
+        run: |
+          node .github/scripts/upsert-pr-status-comment.mjs || \
+            echo "::warning title=AuthGuard PR CI comment::Could not publish the CI status comment."
+
   e2e:
     name: Full customer-growth E2E
     needs: build-and-test
@@ -129,6 +197,8 @@ jobs:
     permissions:
       contents: read
       packages: read
+    outputs:
+      summary_base64: ${{ steps.summary.outputs.base64 }}
     env:
       KUBECONFIG: /etc/rancher/k3s/k3s.yaml
       AUTHGUARD_E2E_USE_PREBUILT_IMAGES: "true"
@@ -200,6 +270,15 @@ jobs:
       - name: Run complete E2E matrix against dirty images
         run: make e2e-k8s E2E_K8S_ARGS=--cleanup-after-run
 
+      - name: Capture E2E summary
+        id: summary
+        if: always()
+        run: |
+          summary=use-cases/customer-growth-job-service/e2e/reports/00_summary.md
+          if [[ -s "${summary}" ]]; then
+            echo "base64=$(base64 -w 0 "${summary}")" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload E2E evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -208,3 +287,32 @@ jobs:
           path: use-cases/customer-growth-job-service/e2e/reports/
           if-no-files-found: warn
           retention-days: 14
+
+  comment-final:
+    name: Report PR CI result
+    needs: [build-and-test, comment-build, e2e]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+
+      - name: Update PR CI comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTHGUARD_PR_NUMBER: ${{ github.event.pull_request.number }}
+          AUTHGUARD_COMMENT_KIND: ci
+          AUTHGUARD_COMMENT_PHASE: final
+          AUTHGUARD_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          AUTHGUARD_BUILD_RESULT: ${{ needs.build-and-test.result }}
+          AUTHGUARD_E2E_RESULT: ${{ needs.e2e.result }}
+          AUTHGUARD_E2E_SUMMARY_BASE64: ${{ needs.e2e.outputs.summary_base64 }}
+          AUTHGUARD_DIRTY_TAG: ${{ needs.build-and-test.outputs.dirty_tag }}
+          AUTHGUARD_DIRTY_CHART_VERSION: ${{ needs.build-and-test.outputs.dirty_chart_version }}
+        run: |
+          node .github/scripts/upsert-pr-status-comment.mjs || \
+            echo "::warning title=AuthGuard PR CI comment::Could not publish the CI status comment."
