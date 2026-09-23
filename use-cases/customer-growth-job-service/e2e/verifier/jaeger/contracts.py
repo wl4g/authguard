@@ -452,7 +452,7 @@ class AuthorizationJaegerTraceVerifier:
 
 
 @dataclass(frozen=True)
-class ControlPlaneJaegerTraceVerifier:
+class ApiJaegerTraceVerifier:
     """Proves that administrator federation and policy calls reached AuthZ."""
 
     authz_service: str = "authguard-authz"
@@ -483,5 +483,5 @@ class ControlPlaneJaegerTraceVerifier:
             for span in authz_spans
         ):
             raise RuntimeError(
-                "AuthZ control-plane spans are not descendants of the administrator client span"
+                "AuthZ API spans are not descendants of the API client span"
             )

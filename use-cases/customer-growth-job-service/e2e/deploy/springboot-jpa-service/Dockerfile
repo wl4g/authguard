@@ -1,4 +1,7 @@
-FROM registry.cn-shenzhen.aliyuncs.com/wl4g/maven:3.9.9-eclipse-temurin-17 AS builder
+ARG MAVEN_IMAGE=registry.cn-shenzhen.aliyuncs.com/wl4g/maven:3.9.9-eclipse-temurin-17
+ARG JAVA_IMAGE=registry.cn-shenzhen.aliyuncs.com/wl4g/eclipse-temurin:17-jre
+
+FROM ${MAVEN_IMAGE} AS builder
 ARG MAVEN_PROXY_HOST
 ARG MAVEN_PROXY_PORT
 WORKDIR /workspace
@@ -24,7 +27,7 @@ RUN set -eu; \
     fi; \
     mvn -q ${settings_args} -f /workspace/service/pom.xml -DskipTests package
 
-FROM registry.cn-shenzhen.aliyuncs.com/wl4g/eclipse-temurin:17-jre
+FROM ${JAVA_IMAGE}
 WORKDIR /app
 COPY --from=builder /workspace/service/target/authguard-customer-growth-job-springboot-jpa-service-0.1.0.jar /app/service.jar
 USER 65532:65532

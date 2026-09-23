@@ -149,13 +149,16 @@ services:
     ports:
       - "127.0.0.1::8080"
       - "127.0.0.1::8081"
+      - "127.0.0.1::9090"
       - "127.0.0.1::9091"
 
   authn:
     <<: *authguard
     command: [--config, /etc/authguard/authguard.yaml, authn, --bind, 0.0.0.0:8082]
     environment: { AUTHGUARD__SERVER__SERVICE_NAME: authguard-authn }
-    ports: ["127.0.0.1::8082"]
+    ports:
+      - "127.0.0.1::8082"
+      - "127.0.0.1::9091"
 
   web:
     image: ${AUTHGUARD_E2E_WEB_IMAGE}

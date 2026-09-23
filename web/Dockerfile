@@ -1,5 +1,5 @@
-ARG NODE_IMAGE=node:22-alpine
-ARG WEB_IMAGE=nginxinc/nginx-unprivileged:1.27-alpine
+ARG NODE_IMAGE=registry.cn-shenzhen.aliyuncs.com/wl4g/node:22-alpine
+ARG WEB_IMAGE=registry.cn-shenzhen.aliyuncs.com/wl4g/nginxinc_nginx-unprivileged:1.27-alpine
 
 FROM ${NODE_IMAGE} AS builder
 WORKDIR /workspace

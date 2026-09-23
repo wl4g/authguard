@@ -18,7 +18,7 @@ use self::principal::PrincipalRoutes;
 use self::scim::ScimRoutes;
 use crate::handler::{PolicyHandler, PrincipalHandler, PrincipalHandlerError};
 
-/// Authenticated composition of `AuthGuard`'s control-plane APIs.
+/// Authenticated composition of `AuthGuard`'s product APIs.
 pub struct ApiRoutes {
     policy: PolicyHandler,
     principals: PrincipalHandler,
@@ -59,10 +59,10 @@ impl ApiAuthenticator {
         next: Next,
     ) -> Response {
         let Some(expected) = authenticator.token.as_deref() else {
-            tracing::warn!("rejected control-plane request because the API is disabled");
+            tracing::warn!("rejected API request because its credential is not configured");
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
-                Json(ApiError::new("api_disabled", "control-plane credential is not configured")),
+                Json(ApiError::new("api_disabled", "API credential is not configured")),
             )
                 .into_response();
         };
@@ -74,13 +74,10 @@ impl ApiAuthenticator {
         if !provided.is_some_and(|provided| {
             Self::constant_time_eq(provided.as_bytes(), expected.as_bytes())
         }) {
-            tracing::warn!("rejected control-plane request with invalid credentials");
+            tracing::warn!("rejected API request with invalid credentials");
             let mut response = (
                 StatusCode::UNAUTHORIZED,
-                Json(ApiError::new(
-                    "invalid_api_token",
-                    "valid control-plane bearer token required",
-                )),
+                Json(ApiError::new("invalid_api_token", "valid API bearer token required")),
             )
                 .into_response();
             response.headers_mut().insert(

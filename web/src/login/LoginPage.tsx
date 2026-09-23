@@ -75,7 +75,7 @@ export function LoginPage() {
   }
 
   // Application branding belongs only to the hosted relying-party surface.
-  // The AuthGuard console keeps its own brand even if it shares a hostname in
+  // The AuthGuard Dashboard keeps its own brand even if it shares a hostname in
   // a development topology.
   const brand = hosted ? meta?.application : null
   const brandName = brand?.displayName || t('product')

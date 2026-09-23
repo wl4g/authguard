@@ -414,7 +414,7 @@ src/common                      authguard-common crate
 
 src/authz                        authguard-authz crate
   route/mod.rs                  authenticated composition of AuthGuard APIs
-  route/{policy,principal}.rs   transport-only control-plane APIs
+  route/{policy,principal}.rs   transport-only product APIs
   route/authorization.rs        Envoy ext_authz/access-context gRPC entry points
   handler/{authorization,principal}.rs
                                 authorization catalog and Principal use cases
@@ -423,7 +423,7 @@ src/authz                        authguard-authz crate
                                 immutable evaluation runtime and catalog CRUD
   principal/{ldap,keycloak,scim}/
                                 optional 2B control-plane federation connectors
-  server.rs                     process initialization and listener lifecycle
+  server.rs                     isolated API (:9090) and management (:9091) listeners
 
 migrations/                     single authoritative IAM schema
 ```
@@ -431,6 +431,8 @@ migrations/                     single authoritative IAM schema
 Dependency rules:
 
 - AuthN does not depend on AuthZ policy implementation;
+- the Dashboard reaches only the product API listener; health, metrics, and
+  profiling remain on the internal management listener and are never Gateway routes;
 - AuthZ does not depend on AuthN Provider implementations;
 - AuthN, AuthZ, and the Rust workload SDK depend on `authguard-common`; the SDK
   never imports the AuthZ server crate;

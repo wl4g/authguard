@@ -1,11 +1,14 @@
-FROM registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-rust-builder:1.94-bookworm AS builder
+ARG RUST_BUILDER_IMAGE=registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-rust-builder:1.94-bookworm
+ARG RUNTIME_IMAGE=registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-runtime:nonroot
+
+FROM ${RUST_BUILDER_IMAGE} AS builder
 WORKDIR /workspace
 COPY rust-toolchain.toml ./
 RUN cargo --version
 COPY . .
 RUN cargo build --release --locked --package authguard-customer-growth-job-rust-service --bin authguard-customer-growth-job-rust-service
 
-FROM registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-runtime:nonroot
+FROM ${RUNTIME_IMAGE}
 COPY --from=builder /workspace/target/release/authguard-customer-growth-job-rust-service /usr/local/bin/e2e-authguard-rust-sqlx
 USER nonroot:nonroot
 EXPOSE 8080

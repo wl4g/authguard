@@ -131,7 +131,7 @@ callback、provider token 或登录 session。
 
 ## 4. 控制面契约
 
-`/api/v1/**` 使用独立 `AUTHGUARD__AUTHZ__API_TOKEN` Bearer 凭证，不复用 workload
+`/api/v1/**` 使用独立 `AUTHGUARD__AUTHZ__API__TOKEN` Bearer 凭证，不复用 workload
 OIDC/JWT。当前真实 API 为：
 
 | API | 语义 |

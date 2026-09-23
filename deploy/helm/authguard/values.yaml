@@ -65,6 +65,9 @@ envoy_gateway:
       enabled: false
       name: protected-app
       hostnames: []
+      # Business API prefix protected by Envoy jwt_authn + ext_authz. Keep /
+      # only when the entire backend, including its static Web shell, is private.
+      path: /
       backend:
         name: app
         port: 8080
@@ -87,6 +90,17 @@ envoy_gateway:
 # AuthN and AuthZ deployment knobs share one product root. Runtime settings
 # remain in the single authguard-config payload below.
 authguard:
+  # Process-level diagnostics shared by AuthN and AuthZ. These endpoints are
+  # internal and never routed through the public Gateway.
+  mgmt:
+    enabled: true
+    port: 9091
+    livenessPath: /healthz
+    readinessPath: /readyz
+    metricsPath: /metrics
+    otelEnabled: false
+    otelEndpoint: http://otel-collector.observability.svc:4317
+
   # AuthN owns provider callbacks, normalization, token issuance, and account linking.
   authn:
     enabled: true
@@ -120,8 +134,8 @@ authguard:
       enabled: true
       minAvailable: 1
 
-  # Static React control plane. The public Gateway still routes authentication
-  # proofs to AuthN and management calls to AuthZ; this container serves assets only.
+  # Static React Dashboard. The public Gateway still routes authentication
+  # proofs to AuthN and product API calls to AuthZ; this container serves assets only.
   web:
     enabled: true
     replicaCount: 2
@@ -144,10 +158,10 @@ authguard:
       # owns only /auth/login, /auth/account/security, and /auth/assets/*,
       # never an application's root.
       hostnames: []
-      console:
+      dashboard:
         enabled: false
-        name: authguard-console
-        # Configure a dedicated console host; do not attach this to an
+        name: authguard-dashboard
+        # Configure a dedicated Dashboard host; do not attach this to an
         # application's business host where / and /api belong to it.
         hostnames: []
     resources:
@@ -183,14 +197,9 @@ authguard:
     service:
       grpcPort: 8080
       scopeGrpcPort: 8081
-      mgmtPort: 9091
-    mgmt:
+      apiPort: 9090
+    api:
       enabled: true
-      livenessPath: /healthz
-      readinessPath: /readyz
-      metricsPath: /metrics
-      otelEnabled: false
-      otelEndpoint: http://otel-collector.observability.svc:4317
     resources:
       requests: { cpu: 100m, memory: 128Mi }
       limits: { cpu: 1000m, memory: 512Mi }
@@ -215,6 +224,9 @@ authguard:
       workloadNamespaceSelector: {}
       workloadPodSelector:
         authguard.io/scope-client: "true"
+      apiNamespaceSelector: {}
+      apiPodSelector:
+        authguard.io/api-client: "true"
       managementNamespaceSelector: {}
       managementPodSelector:
         authguard.io/management-client: "true"
@@ -250,19 +262,19 @@ authguard:
       mode: JSON
       level: "info,tower_http=info"
     mgmt:
-      enabled: {{ .Values.authguard.authz.mgmt.enabled }}
+      enabled: {{ .Values.authguard.mgmt.enabled }}
       host: 0.0.0.0
-      port: {{ .Values.authguard.authz.service.mgmtPort }}
+      port: {{ .Values.authguard.mgmt.port }}
       context_path: "/"
       health:
-        liveness_path: {{ .Values.authguard.authz.mgmt.livenessPath | quote }}
-        readiness_path: {{ .Values.authguard.authz.mgmt.readinessPath | quote }}
+        liveness_path: {{ .Values.authguard.mgmt.livenessPath | quote }}
+        readiness_path: {{ .Values.authguard.mgmt.readinessPath | quote }}
       metrics:
         enabled: true
-        path: {{ .Values.authguard.authz.mgmt.metricsPath | quote }}
+        path: {{ .Values.authguard.mgmt.metricsPath | quote }}
       otel:
-        enabled: {{ .Values.authguard.authz.mgmt.otelEnabled }}
-        endpoint: {{ .Values.authguard.authz.mgmt.otelEndpoint | quote }}
+        enabled: {{ .Values.authguard.mgmt.otelEnabled }}
+        endpoint: {{ .Values.authguard.mgmt.otelEndpoint | quote }}
         protocol: grpc
         timeout: 5s
         sample_rate: 1.0
@@ -312,6 +324,13 @@ authguard:
         privateKeyB64: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD__AUTHN__TOKEN__PRIVATE_KEY_B64}"{{ end }}
         privateKeyFile: ""
     authz:
+      api:
+        enabled: {{ .Values.authguard.authz.api.enabled }}
+        host: 0.0.0.0
+        port: {{ .Values.authguard.authz.service.apiPort }}
+        # Kubernetes overrides this through AUTHGUARD__AUTHZ__API__TOKEN;
+        # file-backed providers resolve the explicit placeholder.
+        token: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD__AUTHZ__API__TOKEN}"{{ end }}
       # Envoy verifies AuthN's canonical token before forwarding it to AuthZ.
       # Unknown principal_id values always fail closed. Authentication-only 2C
       # routes should not attach ext_authz; authorized 2C routes use first-login.
@@ -431,9 +450,6 @@ authguard:
         # min(max_ttl, source JWT remaining lifetime).
         max_ttl: 60s
         private_key_b64: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD__AUTHZ__RESIGN__PRIVATE_KEY_B64}"{{ end }}
-      # kubernetes: overridden natively by AUTHGUARD__AUTHZ__API_TOKEN from
-      # the injected environment; file-based providers resolve the reference.
-      api_token: {{ if eq (include "authguard.secretsProvider" .) "kubernetes" }}""{{ else }}"${AUTHGUARD__AUTHZ__API_TOKEN}"{{ end }}
     storage:
       provider: Postgres
       bootstrap_policy: null
@@ -549,7 +565,7 @@ postgresql:
 #   AUTHGUARD__AUTHN__TOKEN__PRIVATE_KEY_B64
 #   AUTHGUARD__AUTHN__STANDALONE__CREDENTIAL_ENCRYPTION_KEY
 #   AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY
-#   AUTHGUARD__AUTHZ__API_TOKEN
+#   AUTHGUARD__AUTHZ__API__TOKEN
 #   AUTHGUARD__AUTHZ__RESIGN__PRIVATE_KEY_B64
 # Provider and directory credentials follow their reflected config paths;
 # see deploy/helm/authguard/README.md for a complete placeholder file.

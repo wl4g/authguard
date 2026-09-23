@@ -82,17 +82,23 @@ impl AuthguardServer {
             "starting Authguard runtime"
         );
         let runtime = RuntimeComponents::open(metrics).await?;
-        if config.authz.api_token.is_empty() {
-            tracing::warn!("control-plane APIs are disabled because authz.api_token is empty");
+        if config.authz.api.enabled && config.authz.api.token.is_empty() {
+            tracing::warn!("AuthGuard API requests are disabled because authz.api.token is empty");
         }
 
         let mut supervisor = ServerSupervisor::new(config.server.shutdown_timeout);
         Self::spawn_authorization_plane(&mut supervisor, runtime.authorization.clone());
         Self::spawn_access_context_plane(&mut supervisor, runtime.authorization);
+        Self::spawn_api_plane(
+            &mut supervisor,
+            runtime.policy.clone(),
+            runtime.principals,
+            runtime.metrics.clone(),
+        )
+        .await?;
         Self::spawn_management_plane(
             &mut supervisor,
             runtime.policy,
-            runtime.principals,
             runtime.cache,
             runtime.metrics,
         )
@@ -107,27 +113,44 @@ impl AuthguardServer {
         result
     }
 
-    /// Constructs the management router for integration tests and embedded use.
-    pub fn management_router(
+    /// Constructs the product API router for integration tests and embedded use.
+    pub fn api_router(
         policy: PolicyHandler,
         principals: PrincipalHandler,
+        metrics: AuthzMetrics,
+        config: &AppConfigProperties,
+    ) -> Router {
+        let routes =
+            ApiRoutes::new(policy, principals, Some(config.authz.api.token.clone())).router();
+        Self::instrument_http(routes, metrics, config)
+    }
+
+    /// Constructs the process management router. Product APIs are never
+    /// merged here, so health, metrics, and profiling remain internal.
+    pub fn management_router(
+        policy: PolicyHandler,
         cache: Arc<dyn IAuthorizationCache>,
         metrics: AuthzMetrics,
         config: &AppConfigProperties,
     ) -> Router {
-        let readiness = AuthzReadiness { cache, policy: policy.clone() };
-        let operational = management::endpoints(
+        let readiness = AuthzReadiness { cache, policy };
+        let endpoints = management::endpoints(
             &config.mgmt,
             ManagementState::new(Arc::new(metrics.clone()), Arc::new(readiness)),
-        );
-        let endpoints = operational.merge(
-            ApiRoutes::new(policy, principals, Some(config.authz.api_token.clone())).router(),
         );
         let routes = if config.mgmt.context_path == "/" {
             endpoints
         } else {
             Router::new().nest(&config.mgmt.context_path, endpoints)
         };
+        Self::instrument_http(routes, metrics, config)
+    }
+
+    fn instrument_http(
+        routes: Router,
+        metrics: AuthzMetrics,
+        config: &AppConfigProperties,
+    ) -> Router {
         routes
             .layer(axum::extract::DefaultBodyLimit::max(config.server.request.max_message_bytes))
             .layer(ConcurrencyLimitLayer::new(config.server.performance.max_in_flight_requests))
@@ -187,10 +210,35 @@ impl AuthguardServer {
         tracing::info!(server.address = %address, "Authguard workload access-context gRPC server listening");
     }
 
-    async fn spawn_management_plane(
+    async fn spawn_api_plane(
         supervisor: &mut ServerSupervisor,
         policy: PolicyHandler,
         principals: PrincipalHandler,
+        metrics: AuthzMetrics,
+    ) -> anyhow::Result<()> {
+        let config = AppConfig::get();
+        if !config.authz.api.enabled {
+            return Ok(());
+        }
+        let address = config.authz_api_addr();
+        let listener = tokio::net::TcpListener::bind(address)
+            .await
+            .with_context(|| format!("bind AuthGuard API listener {address}"))?;
+        let routes = Self::api_router(policy, principals, metrics, &config);
+        let shutdown = supervisor.shutdown_signal();
+        supervisor.spawn(async move {
+            axum::serve(listener, routes)
+                .with_graceful_shutdown(shutdown.wait())
+                .await
+                .context("serve AuthGuard API")
+        });
+        tracing::info!(server.address = %address, "AuthGuard API server listening");
+        Ok(())
+    }
+
+    async fn spawn_management_plane(
+        supervisor: &mut ServerSupervisor,
+        policy: PolicyHandler,
         cache: Arc<dyn IAuthorizationCache>,
         metrics: AuthzMetrics,
     ) -> anyhow::Result<()> {
@@ -202,15 +250,15 @@ impl AuthguardServer {
         let listener = tokio::net::TcpListener::bind(address)
             .await
             .with_context(|| format!("bind management listener {address}"))?;
-        let routes = Self::management_router(policy, principals, cache, metrics, &config);
+        let routes = Self::management_router(policy, cache, metrics, &config);
         let shutdown = supervisor.shutdown_signal();
         supervisor.spawn(async move {
             axum::serve(listener, routes)
                 .with_graceful_shutdown(shutdown.wait())
                 .await
-                .context("serve management API")
+                .context("serve process management endpoints")
         });
-        tracing::info!(server.address = %address, "Authguard management server listening");
+        tracing::info!(server.address = %address, "AuthGuard management endpoints listening");
         Ok(())
     }
 }

@@ -38,7 +38,7 @@ stringData:
   AUTHGUARD__AUTHN__STANDALONE__CREDENTIAL_ENCRYPTION_KEY: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
   AUTHGUARD__STORAGE__POSTGRES__PASSWORD: {{ .Values.supportPostgresql.authguardPassword | quote }}
   AUTHGUARD__CACHE__REDIS__PASSWORD: "e2e-authguard-redis-password"
-  AUTHGUARD__AUTHZ__API_TOKEN: {{ required "authguard-middleware.apiToken is required" $authguard.apiToken | quote }}
+  AUTHGUARD__AUTHZ__API__TOKEN: {{ required "authguard-middleware.apiToken is required" $authguard.apiToken | quote }}
   AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY: {{ $authguard.accessContext.signingKey | quote }}
   # AuthN signs canonical sessions; Envoy receives only the paired public JWKS.
   AUTHGUARD__AUTHN__TOKEN__PRIVATE_KEY_B64: {{ required "keycloak.realmSigningPrivateKey must contain the AuthN test signing key" .Values.keycloak.realmSigningPrivateKey | b64enc | quote }}

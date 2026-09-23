@@ -1,3 +1,4 @@
+{{/* PEP policy. It attaches only to gateway/protected-route.yaml's label. */}}
 {{- $ext := .Values.envoy_gateway.ext_authz -}}
 {{- $canonical := .Values.authguard.authn.canonical_jwt -}}
 {{- $selector := $ext.protectedRouteSelector -}}

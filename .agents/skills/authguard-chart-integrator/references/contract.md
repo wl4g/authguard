@@ -53,9 +53,11 @@ releases and enable it only for the separately managed AuthGuard release.
 ## 3. Routing boundary
 
 Web owns `/auth/login`, `/auth/account/security`, and `/auth/assets/*`; AuthN owns
-`/.well-known/*` and `/auth/*`. The business service Helm Chart retains `/api/*` and `/*`. Protect
+`/.well-known/*` and `/auth/*`. The business service Helm Chart retains `/api/*` and `/*`. The
+browser-facing business Web route MUST use that same Gateway origin; a NodePort, port-forward, or
+direct Service URL bypasses Hosted Login routing and is not a valid integration endpoint. Protect
 only intended service HTTPRoutes with `authguard.io/protected: "true"`, configure cross-namespace
-references explicitly, and never attach the AuthGuard Console catch-all to a business service
+references explicitly, and never attach the AuthGuard Dashboard catch-all to a business service
 domain. Resolve Applications from the Gateway-preserved `Host`, never query parameters or
 `X-Forwarded-Host`.
 
@@ -80,5 +82,7 @@ without this delta, retain the built-in cyan fallback.
 - Only selected components and infrastructure render, with correct Applications, routes, and Secrets.
 - The authorized test release reaches Helm `deployed` and its workloads become ready.
 - Metadata, Hosted Login/AuthN, and one protected route pass smoke tests.
+- A real business-page sign-out reaches `POST /auth/logout`, clears the canonical cookie, and
+  returns to `GET /auth/login` through the same Gateway origin without a 404.
 - Optional theme assets mount only in Web, and the no-theme fallback remains functional.
 - Normal service upgrades cannot own, upgrade, or delete the separate AuthGuard release.

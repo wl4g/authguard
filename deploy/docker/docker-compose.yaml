@@ -36,7 +36,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
-    expose: ["8082"]
+    expose: ["8082", "9091"]
 
   authz:
     image: ghcr.io/wl4g/authguard:0.1.0
@@ -49,7 +49,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
-    expose: ["8080", "8081", "9091"]
+    expose: ["8080", "8081", "9090", "9091"]
 
   web:
     image: ghcr.io/wl4g/authguard-web:0.1.0

@@ -28,6 +28,54 @@ from authguard_adapter.filter import AccessMiddleware
 from authguard_adapter.util import configure_logger
 
 
+CUSTOMER_GROWTH_SHELL = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Customer Growth</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; color: #e8f7f4; background: #070d16; }
+    aside { position: fixed; inset: 0 auto 0 0; width: 240px; padding: 28px 20px;
+      border-right: 1px solid #163342; background: #0a1520; }
+    .brand { color: #51f1cf; font-size: 20px; font-weight: 750; letter-spacing: .03em; }
+    .nav { margin-top: 40px; color: #9db8bd; }
+    button { position: absolute; left: 20px; right: 20px; bottom: 24px; width: 200px;
+      padding: 12px 16px; color: #d9efec; background: #10232e; border: 1px solid #285064;
+      border-radius: 10px; cursor: pointer; text-align: left; }
+    button:hover { border-color: #51f1cf; color: #51f1cf; }
+    main { margin-left: 240px; padding: 64px; }
+    h1 { margin: 0 0 12px; font-size: 34px; }
+    p { color: #91aeb4; }
+  </style>
+</head>
+<body>
+  <aside>
+    <div class="brand">Customer Growth</div>
+    <div class="nav">Workflows</div>
+    <button type="button" data-testid="business-sign-out">Sign out</button>
+  </aside>
+  <main>
+    <h1>Customer Growth Workflows</h1>
+    <p>Authenticated business application shell</p>
+  </main>
+  <script>
+    document.querySelector('[data-testid="business-sign-out"]')
+      .addEventListener('click', async () => {
+        const response = await fetch('/auth/logout', {
+          method: 'POST', credentials: 'same-origin'
+        });
+        if (!response.ok) throw new Error(`logout failed: ${response.status}`);
+        window.location.assign('/auth/login?return_to=%2Fworkflows%2Flogout-proof');
+      });
+  </script>
+</body>
+</html>
+"""
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
     instrument(app)
@@ -43,6 +91,13 @@ def create_app() -> Flask:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
         return Response("ok", status=200, mimetype="text/plain")
+
+    @app.get("/workflows/logout-proof")
+    def customer_growth_shell() -> Response:
+        response = Response(CUSTOMER_GROWTH_SHELL, status=200, mimetype="text/html")
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
 
     @app.get("/customer-growth/jobs")
     def list_jobs() -> Response:
@@ -106,7 +161,7 @@ def create_app() -> Flask:
     secured_wsgi = AccessMiddleware(original_wsgi, *resolvers)
 
     def authguard_wsgi(environ: dict[str, Any], start_response: Any) -> Any:
-        if environ.get("PATH_INFO") == "/healthz":
+        if environ.get("PATH_INFO") in {"/healthz", "/workflows/logout-proof"}:
             return original_wsgi(environ, start_response)
         return secured_wsgi(environ, start_response)
 

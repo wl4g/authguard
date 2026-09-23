@@ -9,7 +9,7 @@ from common.deploy.base import GROUP_PRINCIPAL_IDS, WORKLOAD_HOSTS
 from common.model import RunContext, VerificationResult
 from common.telemetry import E2ETrace
 from verifier.other.base import BaseVerifier
-from verifier.jaeger.contracts import ControlPlaneJaegerTraceVerifier
+from verifier.jaeger.contracts import ApiJaegerTraceVerifier
 
 
 class PrincipalPreauthorizationVerifier(BaseVerifier):
@@ -22,10 +22,11 @@ class PrincipalPreauthorizationVerifier(BaseVerifier):
     def verify_principal_preauthorization(self) -> None:
         """Materialize enterprise identities and apply grants before business login."""
         self.step("verify Envoy jwt_authn -> ext_authz -> router", self._verify_envoy_runtime_filter_chain)
+        self.step("verify API and management listener isolation", self._verify_listener_isolation)
         trace = E2ETrace("customer-growth.administrator-preauthorization.e2e")
         span = trace.start_client(
             "authz.administrator.preauthorization",
-            **{"server.address": "authguard-management.local"},
+            **{"server.address": "authguard-api.local"},
         )
         self.api_trace_headers = {
             "traceparent": span.traceparent,
@@ -41,7 +42,7 @@ class PrincipalPreauthorizationVerifier(BaseVerifier):
             span.finish()
             trace.finish()
         self.step("export administrator pre-authorization trace", lambda: self._export_verifier_trace(trace))
-        verifier = ControlPlaneJaegerTraceVerifier()
+        verifier = ApiJaegerTraceVerifier()
         def query_trace() -> dict:
             with self._forward_service(self.jaeger_service, 16686) as query_port:
                 return self._jaeger_query(query_port).wait_for_trace(trace, verifier)
@@ -56,9 +57,22 @@ class PrincipalPreauthorizationVerifier(BaseVerifier):
             ]
         )
 
+    def _verify_listener_isolation(self) -> None:
+        with self._forward_service(self.authguard_authz_service, 9090) as api_port:
+            status, _ = self._api_http(api_port, "/healthz")
+            self._expect_status("management endpoint on product API listener", status, 404)
+        with self._forward_service(self.authguard_authz_service, 9091) as mgmt_port:
+            status, _ = self._api_http(mgmt_port, "/api/v1/status")
+            self._expect_status("product API on management listener", status, 404)
+            status, _ = self._http(mgmt_port, "authguard-mgmt.local", "/healthz")
+            self._expect_status("management health endpoint", status, 200)
+        self.details.append(
+            "AuthZ :9090 exposes only product APIs; :9091 exposes only health, metrics, and profiling"
+        )
+
     def _bootstrap_authorization_policy(self) -> None:
         """Apply administrator grants to federated enterprise Principals."""
-        with self._forward_service(self.authguard_authz_service, 9091) as port:
+        with self._forward_service(self.authguard_authz_service, 9090) as port:
             canonical_principals = self._materialize_scenario_principals(port)
             self._verify_direct_ldap_principal_discovery(port)
             self._verify_scim_push_provisioning(port, canonical_principals)

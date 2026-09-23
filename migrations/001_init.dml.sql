@@ -1,2 +1,2 @@
--- Authorization entities are created by the management API or optional
+-- Authorization entities are created by the AuthGuard API or optional
 -- bootstrap configuration; no synthetic policy aggregate row is required.

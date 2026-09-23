@@ -1,4 +1,5 @@
-FROM registry.cn-shenzhen.aliyuncs.com/wl4g/python:3.12-slim
+ARG PYTHON_IMAGE=registry.cn-shenzhen.aliyuncs.com/wl4g/python:3.12-slim
+FROM ${PYTHON_IMAGE}
 WORKDIR /app
 COPY src/adapters/python/requirements.txt /tmp/authguard-sdk-requirements.txt
 COPY use-cases/customer-growth-job-service/e2e/deploy/python-sqlalchemy-service/requirements.txt /tmp/service-requirements.txt

@@ -1,0 +1,31 @@
+{{/* Optional dedicated Dashboard host. Keep its broad / route on a hostname
+     that is not used by a business application's Hosted Login. */}}
+{{- $web := .Values.authguard.web -}}
+{{- $ext := .Values.envoy_gateway.ext_authz -}}
+{{- if and $web.enabled $web.route.dashboard.enabled .Values.authguard.authz.enabled .Values.authguard.authz.api.enabled $ext.authnRoute.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $web.route.dashboard.name }}
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $ext.gateway.name }}
+      sectionName: http
+  {{- with $web.route.dashboard.hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /api/ }
+      backendRefs:
+        - name: {{ include "authguard.fullname" . }}
+          port: {{ .Values.authguard.authz.service.apiPort }}
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - name: {{ include "authguard.fullname" . }}-web
+          port: {{ $web.service.port }}
+{{- end }}

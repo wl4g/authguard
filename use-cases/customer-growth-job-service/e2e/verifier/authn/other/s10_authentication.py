@@ -21,6 +21,7 @@ class UnifiedAuthenticationVerifier(BaseVerifier):
         return self.execute(self._verify)
 
     def _verify(self) -> None:
+        self.step("AuthN API and management listener isolation", self._listener_isolation)
         oauth = OAuth2AuthenticationVerifier(self).verify()
         OidcAuthenticationVerifier(self).verify()
         standalone = PasswordTotpAuthenticationVerifier(self).verify(oauth["github"])
@@ -29,6 +30,21 @@ class UnifiedAuthenticationVerifier(BaseVerifier):
         self.step(
             "Unified AuthN: one credential table and protocol-independent Principal boundary",
             self._storage_boundary,
+        )
+
+    def _listener_isolation(self) -> None:
+        with self._forward_service(self.authguard_authn_service, 8082) as api_port:
+            status, _ = self._http(api_port, "customer-growth.local", "/healthz")
+            self._expect_status("management endpoint on AuthN API listener", status, 404)
+        with self._forward_service(self.authguard_authn_service, 9091) as mgmt_port:
+            status, _ = self._http(
+                mgmt_port, "authguard-mgmt.local", "/.well-known/authn.json"
+            )
+            self._expect_status("AuthN API on management listener", status, 404)
+            status, _ = self._http(mgmt_port, "authguard-mgmt.local", "/healthz")
+            self._expect_status("AuthN management health endpoint", status, 200)
+        self.details.append(
+            "AuthN :8082 exposes only authentication APIs; :9091 exposes only health, metrics, and profiling"
         )
 
     def _storage_boundary(self) -> None:

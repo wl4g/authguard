@@ -1,0 +1,10 @@
+{{- $renderedConfig := include "authguard.runtimeConfig" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "authguard.fullname" . }}-config
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+data:
+  authguard.yaml: |
+{{ $renderedConfig | nindent 4 }}

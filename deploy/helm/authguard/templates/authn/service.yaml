@@ -15,4 +15,10 @@ spec:
       port: {{ .Values.authguard.authn.service.port }}
       targetPort: http
       appProtocol: http
+    {{- if .Values.authguard.mgmt.enabled }}
+    - name: mgmt
+      port: {{ .Values.authguard.mgmt.port }}
+      targetPort: mgmt
+      appProtocol: http
+    {{- end }}
 {{- end }}

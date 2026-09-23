@@ -66,6 +66,14 @@ supportPostgresql:
 gateway:
   name: e2e-authguard-customer-growth-gateway
 
+customerGrowth:
+  hosts:
+    - localhost
+    - customer-growth.local
+  web:
+    component: python-sqlalchemy
+    path: /workflows/logout-proof
+
 # Realistic GitHub/Google/WeChat/QQ OAuth-like contracts. Standard OIDC uses
 # the real Keycloak deployment in the same disposable E2E namespace.
 mockIdp:

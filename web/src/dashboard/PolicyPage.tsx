@@ -1,6 +1,6 @@
 import { Braces, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useControl } from '../core/ControlContext'
+import { useApi } from '../core/ApiContext'
 import { control } from '../core/api'
 import { useI18n } from '../shared/i18n'
 
@@ -15,7 +15,7 @@ const definitions: Record<ResourceType, { id: string; initial: Resource }> = {
 }
 
 export function PolicyPage() {
-  const { t } = useI18n(); const { token } = useControl()
+  const { t } = useI18n(); const { token } = useApi()
   const [type, setType] = useState<ResourceType>('actions')
   const [collection, setCollection] = useState<Collection>({ policy_revision: 0, total: 0, items: [] })
   const [editing, setEditing] = useState<Resource | null>(null)
@@ -53,7 +53,7 @@ export function PolicyPage() {
     <div className="data-card">
       <div className="data-toolbar"><span>{collection.total} {labels[type].toLowerCase()}</span><button data-testid="policy-create" className="primary small" disabled={!token} onClick={() => setEditing({ ...definition.initial })}><Plus/>{t('add')}</button></div>
       {error && <div className="error-banner">{error}</div>}
-      {!collection.items.length ? <div className="empty"><Braces/><p>{token ? t('empty') : t('controlToken')}</p></div> : <div className="resource-list">{collection.items.map(resource => {
+      {!collection.items.length ? <div className="empty"><Braces/><p>{token ? t('empty') : t('apiToken')}</p></div> : <div className="resource-list">{collection.items.map(resource => {
         const id = String(resource[definition.id]); return <article key={id}><div><strong>{id}</strong><p>{resource.description as string || resource.name as string || resource.role_id as string || '—'}</p></div><code>{JSON.stringify(resource)}</code><div className="row-actions"><button onClick={() => setEditing(resource)}><Pencil/></button><button className="danger" onClick={() => remove(resource)}><Trash2/></button></div></article>
       })}</div>}
     </div>

@@ -19,9 +19,15 @@ spec:
       port: {{ .Values.authguard.authz.service.scopeGrpcPort }}
       targetPort: scope-grpc
       appProtocol: grpc
-    {{- if .Values.authguard.authz.mgmt.enabled }}
+    {{- if .Values.authguard.authz.api.enabled }}
+    - name: api
+      port: {{ .Values.authguard.authz.service.apiPort }}
+      targetPort: api
+      appProtocol: http
+    {{- end }}
+    {{- if .Values.authguard.mgmt.enabled }}
     - name: mgmt
-      port: {{ .Values.authguard.authz.service.mgmtPort }}
+      port: {{ .Values.authguard.mgmt.port }}
       targetPort: mgmt
     {{- end }}
 {{- end }}

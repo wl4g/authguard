@@ -1,4 +1,4 @@
-//! `AuthGuard` control-plane authorization catalog CRUD handlers.
+//! `AuthGuard` authorization catalog API handlers.
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Instant;
@@ -222,7 +222,7 @@ impl PolicyHandler {
         }
     }
 
-    /// Validates and evaluates one control-plane authorization request.
+    /// Validates and evaluates one explicit API authorization request.
     ///
     /// # Errors
     ///
@@ -279,7 +279,7 @@ impl PolicyHandler {
             authguard.resource_service = %request.resource_urn.service,
             authguard.role_binding_id = decision.role_binding_id.as_deref().unwrap_or("none"),
             duration_seconds = started.elapsed().as_secs_f64(),
-            "control-plane authorization evaluation completed"
+            "API authorization evaluation completed"
         );
         Ok(AuthorizeResponse {
             allowed: decision.allowed,

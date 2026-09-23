@@ -15,15 +15,6 @@ import time
 from typing import Iterator
 
 from .base import (
-    ALIYUN_ANVIL_IMAGE,
-    ALIYUN_ENVOY_GATEWAY_IMAGE,
-    ALIYUN_ENVOY_IMAGE,
-    ALIYUN_JAEGER_IMAGE,
-    ALIYUN_KEYCLOAK_IMAGE,
-    ALIYUN_LDAP_IMAGE,
-    ALIYUN_POSTGRES_IMAGE,
-    ALIYUN_REDIS_IMAGE,
-    ALIYUN_SOLANA_IMAGE,
     AUTHGUARD_IMAGE,
     AUTHGUARD_WEB_IMAGE,
     AUTHN_BROWSER_HOST,
@@ -31,6 +22,7 @@ from .base import (
     BaseE2EDeployer,
     CUSTOMER_GROWTH_FALLBACK_HOST,
     CUSTOMER_GROWTH_HOST,
+    E2E_IMAGES,
     MOCK_IDP_IMAGE,
     WORKLOAD_IMAGES,
 )
@@ -355,8 +347,8 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
         self._import_image(AUTHGUARD_WEB_IMAGE)
         # Import Redis immediately before Helm creates the StatefulSet. The chart
         # still uses IfNotPresent so kubelet can recover from image GC by pulling
-        # the same immutable Aliyun tag in constrained CI environments.
-        self._import_image(ALIYUN_REDIS_IMAGE)
+        # the same pinned source in constrained CI environments.
+        self._import_image(E2E_IMAGES.redis)
         self._install_authguard()
         self._wait_for_resources()
 
@@ -401,30 +393,13 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
         raise RuntimeError(f"timed out deleting namespace {self.namespace}")
 
     def _prepare_external_images(self) -> None:
-        external_images = (
-            ALIYUN_ENVOY_IMAGE,
-            ALIYUN_ENVOY_GATEWAY_IMAGE,
-            ALIYUN_REDIS_IMAGE,
-            ALIYUN_KEYCLOAK_IMAGE,
-            ALIYUN_LDAP_IMAGE,
-            ALIYUN_JAEGER_IMAGE,
-            ALIYUN_POSTGRES_IMAGE,
-            ALIYUN_ANVIL_IMAGE,
-            ALIYUN_SOLANA_IMAGE,
-        )
         loader = self._local_image_loader()
         cluster_images = loader.cached_images()
-        for image in external_images:
+        for image in E2E_IMAGES.pullable_images:
             if image in cluster_images:
                 self.details.append(f"reuse {loader.description} image: {image}")
                 continue
-            inspected = self._run(
-                # Docker returns 1 for a missing image; the Podman-compatible
-                # Docker CLI returns 125 for the same non-fatal cache miss.
-                ("docker", "image", "inspect", image), allowed_codes={0, 1, 125}
-            )
-            if inspected.return_code != 0:
-                self._run(("docker", "pull", image))
+            self._ensure_local_image(image)
             self._import_image(image)
 
     def _prepare_workload_images(self) -> None:
@@ -435,6 +410,7 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
             *WORKLOAD_IMAGES.values(),
             MOCK_IDP_IMAGE,
             AUTHGUARD_WEB_IMAGE,
+            *E2E_IMAGES.local_chain_images,
         ):
             self._import_image(image)
 
@@ -445,6 +421,7 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
             *WORKLOAD_IMAGES.values(),
             MOCK_IDP_IMAGE,
             AUTHGUARD_WEB_IMAGE,
+            *E2E_IMAGES.local_chain_images,
         ):
             loader.remove_image(image)
 
@@ -466,7 +443,7 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
             # A local cluster cache can lose an unreferenced dependency between
             # the initial cache check and a later Helm install. Immutable images
             # are safe to re-pull; mutable E2E images fail closed above.
-            self._run(("docker", "pull", image))
+            self._pull_image(image)
         loader.import_image(image)
 
     def _install_envoy_gateway(self) -> None:
@@ -483,11 +460,11 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                 "-n",
                 self.namespace,
                 "--set",
-                f"global.images.envoyGateway.image={ALIYUN_ENVOY_GATEWAY_IMAGE}",
+                f"global.images.envoyGateway.image={E2E_IMAGES.envoy_gateway}",
                 "--set",
                 "global.images.envoyGateway.pullPolicy=Never",
                 "--set",
-                f"global.images.envoyProxy.image={ALIYUN_ENVOY_IMAGE}",
+                f"global.images.envoyProxy.image={E2E_IMAGES.envoy}",
                 "--set",
                 "global.images.envoyProxy.pullPolicy=Never",
                 "--set-string",
@@ -526,6 +503,18 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                 f"authguard-middleware.grpcTarget={grpc_target}",
                 "--set",
                 f"gateway.name={self.gateway_name}",
+                "--set",
+                f"keycloak.image={E2E_IMAGES.keycloak}",
+                "--set",
+                f"ldap.image={E2E_IMAGES.ldap}",
+                "--set",
+                f"jaeger.image={E2E_IMAGES.jaeger}",
+                "--set",
+                f"supportPostgresql.image={E2E_IMAGES.postgres}",
+                "--set",
+                f"anvil.image={E2E_IMAGES.anvil}",
+                "--set",
+                f"solana.image={E2E_IMAGES.solana}",
             )
         )
 
@@ -593,6 +582,9 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
 
     def _authguard_values(self) -> dict:
         authguard_config = self._authguard_runtime_config()
+        redis_registry, redis_repository, redis_tag = E2E_IMAGES.helm_image_parts(
+            E2E_IMAGES.redis
+        )
         return {
             "envoy_gateway": {
                 "enabled": False,
@@ -600,7 +592,7 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                 "global": {
                     "images": {
                         "envoyProxy": {
-                            "image": ALIYUN_ENVOY_IMAGE,
+                            "image": E2E_IMAGES.envoy,
                             "pullPolicy": "Never",
                         }
                     }
@@ -639,9 +631,9 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                 # name is intentionally descriptive.
                 "fullnameOverride": "e2e-redis-cluster",
                 "image": {
-                    "registry": "registry.cn-shenzhen.aliyuncs.com",
-                    "repository": "wl4g-k8s/bitnami_redis-cluster",
-                    "tag": "7.0.14",
+                    "registry": redis_registry,
+                    "repository": redis_repository,
+                    "tag": redis_tag,
                     "pullPolicy": "IfNotPresent",
                 },
                 "existingSecret": self.principal_discovery_secret,
@@ -703,9 +695,9 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                             CUSTOMER_GROWTH_HOST,
                             CUSTOMER_GROWTH_FALLBACK_HOST,
                         ],
-                        "console": {
+                        "dashboard": {
                             "enabled": True,
-                            "name": f"{self.authguard_web_route}-console",
+                            "name": f"{self.authguard_web_route}-dashboard",
                             "hostnames": [AUTHN_HOST, AUTHN_BROWSER_HOST],
                         },
                     },
@@ -718,14 +710,15 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                         "pullPolicy": "Never",
                     },
                     "disruptionBudget": {"enabled": False},
-                    "mgmt": {
-                        "enabled": True,
-                        "otelEnabled": True,
-                        "otelEndpoint": (
-                            f"http://{self.jaeger_service}.{self.namespace}"
-                            ".svc.cluster.local:4317"
-                        ),
-                    },
+                    "api": {"enabled": True},
+                },
+                "mgmt": {
+                    "enabled": True,
+                    "otelEnabled": True,
+                    "otelEndpoint": (
+                        f"http://{self.jaeger_service}.{self.namespace}"
+                        ".svc.cluster.local:4317"
+                    ),
                 },
                 # The complete main configuration is
                 # rendered by Helm tpl into the authguard ConfigMap. Policy

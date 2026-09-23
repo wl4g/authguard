@@ -58,6 +58,7 @@ authn:
     privateKeyFile: ""
 
 authz:
+  api: { enabled: true, host: 0.0.0.0, port: 9090, token: "" }
   identity:
     token_header: authorization
     principal_id_claim: principal_id
@@ -71,7 +72,6 @@ authz:
     scope_token_ttl: 30s
   principal_discovery: { keycloak: [], ldap: [], custom: [], scim: { enabled: false, discovery_id: corporate-scim, issuer: "" } }
   resign: { enabled: false, max_ttl: 60s, private_key_b64: "" }
-  api_token: ""
 
 storage:
   provider: Postgres

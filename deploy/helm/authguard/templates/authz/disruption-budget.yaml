@@ -1,0 +1,13 @@
+{{- if and .Values.authguard.authz.enabled .Values.authguard.authz.disruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "authguard.fullname" . }}
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.authguard.authz.disruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "authguard.serverSelectorLabels" . | nindent 6 }}
+{{- end }}

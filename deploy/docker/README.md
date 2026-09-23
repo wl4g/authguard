@@ -24,7 +24,7 @@ docker compose --env-file deploy/docker/.env \
 
 ## 3. Use
 
-- Same-origin UI/AuthN/AuthZ management and protected demonstrator: `http://localhost:8080`
+- Same-origin Dashboard/Hosted Login/AuthN/AuthZ API and protected demonstrator: `http://localhost:8080`
 
 Hosted Login is available at `http://localhost:8080/auth/login`; authenticated
 credential enrollment is at `/auth/account/security`. For a real

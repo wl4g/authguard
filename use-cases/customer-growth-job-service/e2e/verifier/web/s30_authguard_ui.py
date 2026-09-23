@@ -29,7 +29,7 @@ class AuthGuardWebVerifier(BaseVerifier):
     """Exercise browser APIs and user controls, not bundle strings or HTTP mocks."""
 
     scenario_id = "30"
-    title = "Web: real Chromium authentication and control-plane journeys"
+    title = "Web: real Chromium authentication and Dashboard journeys"
 
     def __init__(self, context: RunContext) -> None:
         super().__init__(context)
@@ -203,8 +203,8 @@ class AuthGuardWebVerifier(BaseVerifier):
 
     def _principal_journeys(self) -> None:
         page = self.browser_page
-        page.get_by_test_id("control-token").fill(AUTHGUARD_API_TOKEN)
-        page.get_by_test_id("control-token-submit").click()
+        page.get_by_test_id("api-token").fill(AUTHGUARD_API_TOKEN)
+        page.get_by_test_id("api-token-submit").click()
         page.get_by_test_id("nav-principals").click()
         page.wait_for_url(f"{UI_ORIGIN}/principals")
 

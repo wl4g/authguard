@@ -74,7 +74,11 @@ class HostedLoginVerifier(BaseVerifier):
                         "HL-15: Hosted SIWX wallet login sets the canonical cookie and returns to business",
                         self._hosted_wallet,
                     )
-                    self.step("HL-16: Console keeps the AuthGuard brand and theme boundary", self._console_brand)
+                    self.step(
+                        "HL-16: business UI sign-out clears the cookie and opens Hosted Login",
+                        self._business_sign_out,
+                    )
+                    self.step("HL-17: Dashboard keeps the AuthGuard brand and theme boundary", self._dashboard_brand)
                 finally:
                     browser.close()
 
@@ -427,6 +431,75 @@ class HostedLoginVerifier(BaseVerifier):
         self._assert_browser_session_amr(["wallet", "siwx", "eoa"])
         self._screenshot("HL-15", "Hosted SIWX wallet return target")
 
+    def _business_sign_out(self) -> None:
+        page = self.browser_page
+        self._browser_logout()
+        page.goto(
+            f"http://{AUTHN_BROWSER_HOST}:8082/auth/login"
+            "?return_to=/workflows/logout-proof",
+            wait_until="domcontentloaded",
+        )
+        page.get_by_test_id("login-id").fill(self.login)
+        page.get_by_test_id("login-password").fill(self.password)
+        page.get_by_test_id("login-password-submit").click()
+        page.wait_for_url(
+            re.compile(
+                rf"^http://{re.escape(AUTHN_BROWSER_HOST)}:8082"
+                r"/workflows/logout-proof$"
+            ),
+            timeout=20_000,
+        )
+        expect(
+            page.get_by_role("heading", name="Customer Growth Workflows")
+        ).to_be_visible()
+        expect(page.get_by_test_id("business-sign-out")).to_be_visible()
+        session_status = page.evaluate(
+            "async () => (await fetch('/auth/session')).status"
+        )
+        if session_status != 200:
+            raise RuntimeError(
+                "business page did not receive the canonical same-origin session: "
+                f"HTTP {session_status}"
+            )
+        self._screenshot(
+            "HL-16-business", "Customer Growth business sign-out control"
+        )
+        with page.expect_response(
+            lambda response: response.request.method == "POST"
+            and response.url.endswith("/auth/logout")
+        ) as logout_response:
+            page.get_by_test_id("business-sign-out").click()
+        if logout_response.value.status != 204:
+            raise RuntimeError(
+                "business sign-out did not reach AuthN through the same-origin "
+                f"Gateway: HTTP {logout_response.value.status}"
+            )
+        page.wait_for_url(
+            re.compile(
+                rf"^http://{re.escape(AUTHN_BROWSER_HOST)}:8082/auth/login"
+                r"\?return_to=%2Fworkflows%2Flogout-proof$"
+            ),
+            timeout=20_000,
+        )
+        expect(
+            page.get_by_role("heading", name="Sign in to Customer Growth")
+        ).to_be_visible()
+        session_status = page.evaluate(
+            "async () => (await fetch('/auth/session')).status"
+        )
+        if session_status != 401:
+            raise RuntimeError(
+                "business sign-out retained the canonical browser session: "
+                f"HTTP {session_status}"
+            )
+        self._screenshot("HL-16", "Business UI sign-out returned to Hosted Login")
+        self.details.append(
+            "The real customer-growth workload served its business shell through "
+            "the Gateway; its SDK-free button used same-origin POST /auth/logout, "
+            "AuthN cleared the verified canonical cookie, and Hosted Login reopened "
+            "(session_before=200, logout=204, session_after=401)"
+        )
+
     def _browser_logout(self) -> None:
         status = self.browser_page.evaluate(
             "async () => (await fetch('/auth/logout', {method: 'POST'})).status"
@@ -445,7 +518,7 @@ class HostedLoginVerifier(BaseVerifier):
                 f"Hosted canonical cookie session mismatch: expected amr={expected}, got {session}"
             )
 
-    def _console_brand(self) -> None:
+    def _dashboard_brand(self) -> None:
         page = self.browser_page
         page.goto(f"http://{AUTHN_BROWSER_HOST}:8082/login", wait_until="domcontentloaded")
         expect(page.locator(".visual-brand")).to_contain_text("AuthGuard")
@@ -454,7 +527,7 @@ class HostedLoginVerifier(BaseVerifier):
             "data-application-theme", "customer-growth"
         )
         expect(page.locator("#authguard-application-theme")).to_have_count(0)
-        self._screenshot("HL-16", "AuthGuard console login branding")
+        self._screenshot("HL-17", "AuthGuard Dashboard login branding")
 
     def _register_standalone(self) -> None:
         status, body = self._http(

@@ -33,14 +33,14 @@ static_resources:
                         - localhost
                         - customer-growth.local
                         - customer-growth-default.local
-                        - authguard-management.local
+                        - authguard-api.local
                       routes:
                         - match:
-                            path: /auth/login
+                            path: /workflows/logout-proof
                             headers:
                               - name: ":method"
                                 string_match: { exact: GET }
-                          route: { cluster: web }
+                          route: { cluster: python_sqlalchemy }
                           typed_per_filter_config: &public_filters
                             envoy.filters.http.jwt_authn:
                               "@type": type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
@@ -48,6 +48,13 @@ static_resources:
                             envoy.filters.http.ext_authz:
                               "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
                               disabled: true
+                        - match:
+                            path: /auth/login
+                            headers:
+                              - name: ":method"
+                                string_match: { exact: GET }
+                          route: { cluster: web }
+                          typed_per_filter_config: *public_filters
                         - match:
                             path: /auth/account/security
                             headers:
@@ -69,7 +76,7 @@ static_resources:
                           route: { cluster: authn_http }
                           typed_per_filter_config: *public_filters
                         - match: { prefix: /api/ }
-                          route: { cluster: authz_management }
+                          route: { cluster: authz_api }
                           typed_per_filter_config: *public_filters
                         - match: { prefix: / }
                           route: { cluster: web }
@@ -135,12 +142,12 @@ static_resources:
       load_assignment:
         cluster_name: authn_http
         endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: authn, port_value: 8082 } } } }] }]
-    - name: authz_management
+    - name: authz_api
       type: STRICT_DNS
       connect_timeout: 2s
       load_assignment:
-        cluster_name: authz_management
-        endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: authz, port_value: 9091 } } } }] }]
+        cluster_name: authz_api
+        endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: authz, port_value: 9090 } } } }] }]
     - name: authz_grpc
       type: STRICT_DNS
       connect_timeout: 2s

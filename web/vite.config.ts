@@ -7,7 +7,7 @@ export default defineConfig(({ mode }) => {
   const authzTarget = env.AUTHGUARD_AUTHZ_TARGET || 'http://127.0.0.1:9090'
   return {
     // The production gateway reserves this namespace for Hosted Login assets.
-    // Console routes continue to resolve from `/` in the same SPA.
+    // Dashboard routes continue to resolve from `/` in the same SPA.
     base: '/auth/',
     plugins: [react()],
     server: {

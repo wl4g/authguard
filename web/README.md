@@ -1,6 +1,6 @@
 # AuthGuard Web
 
-React Hosted Login and AuthGuard console. One image serves business-branded
+React Hosted Login and AuthGuard Dashboard. One image serves business-branded
 Hosted Login without an SDK, iframe, Module Federation, or copied UI code.
 
 ```bash
@@ -14,11 +14,11 @@ Production routes are deliberately narrow:
 - `GET /auth/account/security` — authenticated credential enrollment;
 - `GET /auth/assets/*` — Vite assets and configured branding images;
 - `/.well-known/*`, `POST /auth/*` — AuthN, routed by Envoy;
-- `/` and `/api/*` — either a dedicated AuthGuard Console host or the relying
+- `/` and `/api/*` — either a dedicated AuthGuard Dashboard host or the relying
   business application's own routes.
 
 The Vite development server proxies AuthN to `AUTHGUARD_AUTHN_TARGET`
-(`http://127.0.0.1:8082` by default) and AuthZ management APIs to
+(`http://127.0.0.1:8082` by default) and AuthZ APIs to
 `AUTHGUARD_AUTHZ_TARGET` (`http://127.0.0.1:9090` by default). `authn.applications`
 drives per-host metadata and branding. Browser authentication uses the
 `HttpOnly` `authguard_token` cookie; this UI never writes an AuthGuard JWT to

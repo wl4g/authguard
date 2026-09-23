@@ -184,7 +184,7 @@ pub enum PrincipalDiscoveryError {
 /// A search-capable implementation (Keycloak Admin REST, LDAP per RFC 4511,
 /// cloud IAM, or a custom enterprise identity API) re-resolves a selected
 /// search result through [`IPrincipalDiscovery::resolve_principal`] so the
-/// management API never trusts client-supplied candidate data.
+/// `AuthGuard` API never trusts client-supplied candidate data.
 /// <https://www.rfc-editor.org/rfc/rfc4511.html>
 #[async_trait]
 pub trait IPrincipalDiscovery<Input>: Send + Sync + 'static

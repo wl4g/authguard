@@ -370,7 +370,7 @@ def _verify(_context: RunContext) -> VerificationResult:
     if "/fault/ethereum/<chain_id>/timeout" not in mock_idp_source:
         errors.append("mock IdP lacks the isolated contract-RPC timeout fixture")
     # Browser device transports are cohesive reusable fixtures shared by the
-    # console and Hosted Login journeys; validate the complete Web verifier
+    # Dashboard and Hosted Login journeys; validate the complete Web verifier
     # module rather than forcing those implementations back into one scenario.
     web_verifier_source = "\n".join(
         (verifier_dir / path).read_text(encoding="utf-8")
@@ -387,21 +387,190 @@ def _verify(_context: RunContext) -> VerificationResult:
         "personal_sign",
         "Customer Growth computed theme contract changed",
         "missing custom theme falls back",
+        "business-sign-out",
     )
     if missing := [
         marker for marker in browser_markers if marker not in web_verifier_source
     ]:
         errors.append(f"web E2E lacks real Chromium journeys: {missing}")
-
-    helm_web_source = (
-        PROJECT_ROOT / "deploy/helm/authguard/templates/web.yaml"
+    hosted_login_source = (
+        verifier_dir / "web/s31_hosted_login.py"
     ).read_text(encoding="utf-8")
+    business_logout_sources = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            DEPLOY_DIR / "python-sqlalchemy-service/app/server.py",
+            USE_CASE_DIR / "e2e/config/docker-envoy.yaml",
+            USE_CASE_DIR / "e2e/helm/templates/workloads.yaml",
+        )
+    )
+    logout_markers = (
+        "/workflows/logout-proof",
+        'fetch(\'/auth/logout\'',
+        'data-testid="business-sign-out"',
+        "cluster: python_sqlalchemy",
+        "kind: HTTPRoute",
+    )
+    if missing := [
+        marker for marker in logout_markers if marker not in business_logout_sources
+    ]:
+        errors.append(f"business logout deployment contract is incomplete: {missing}")
+    if "page.set_content" in hosted_login_source:
+        errors.append("Hosted Login E2E must use a real HTTP-served business page")
+    if "session_status != 200" not in hosted_login_source or "session_status != 401" not in hosted_login_source:
+        errors.append("business logout E2E must prove the session before and after sign-out")
+
+    chart_templates = PROJECT_ROOT / "deploy/helm/authguard/templates"
+    template_modules = {
+        "authn": (
+            "deployment.yaml",
+            "disruption-budget.yaml",
+            "network-policy.yaml",
+            "public-route.yaml",
+            "service.yaml",
+        ),
+        "authz": (
+            "deployment.yaml",
+            "disruption-budget.yaml",
+            "network-policy.yaml",
+            "service-monitor.yaml",
+            "service.yaml",
+        ),
+        "gateway": (
+            "canonical-jwks-config-map.yaml",
+            "gateway.yaml",
+            "protected-route.yaml",
+            "security-policy.yaml",
+        ),
+        "platform": (
+            "runtime-config-map.yaml",
+            "secrets-store.yaml",
+            "service-account.yaml",
+        ),
+        "web": (
+            "dashboard-route.yaml",
+            "deployment.yaml",
+            "hosted-login-route.yaml",
+            "network-policy.yaml",
+            "service.yaml",
+        ),
+    }
+    for module, file_names in template_modules.items():
+        for file_name in file_names:
+            path = chart_templates / module / file_name
+            if not path.is_file():
+                errors.append(
+                    "AuthGuard Helm template is missing "
+                    + str(path.relative_to(PROJECT_ROOT))
+                )
+    unexpected_root_templates = {
+        path.name
+        for path in chart_templates.iterdir()
+        if path.is_file() and path.name not in {"NOTES.txt", "_helpers.tpl"}
+    }
+    if unexpected_root_templates:
+        errors.append(
+            "AuthGuard Helm templates must be module-scoped; unexpected root files: "
+            + ", ".join(sorted(unexpected_root_templates))
+        )
+
+    web_dockerfile_source = (PROJECT_ROOT / "web/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    mainland_base_image_markers = (
+        "registry.cn-shenzhen.aliyuncs.com/wl4g/node:22-alpine",
+        "registry.cn-shenzhen.aliyuncs.com/wl4g/nginxinc_nginx-unprivileged:1.27-alpine",
+    )
+    if missing := [
+        marker
+        for marker in mainland_base_image_markers
+        if marker not in web_dockerfile_source
+    ]:
+        errors.append(
+            f"AuthGuard Web defaults lack mainland-accessible base images: {missing}"
+        )
+
+    makefile_source = (PROJECT_ROOT / "Makefile").read_text(encoding="utf-8")
+    image_catalog_source = (
+        USE_CASE_DIR / "e2e/common/deploy/base.py"
+    ).read_text(encoding="utf-8")
+    runtime_dockerfile_source = (
+        PROJECT_ROOT / "deploy/docker/Dockerfile"
+    ).read_text(encoding="utf-8")
+    image_source_markers = (
+        "AUTHGUARD_E2E_IMAGE_SOURCE",
+        "registry-1.docker.io/v2/",
+        "docker.io/envoyproxy/envoy:distroless-v1.36.4",
+        "registry.cn-shenzhen.aliyuncs.com/wl4g/",
+        "class E2EImageCatalog",
+        'RUN ["/usr/local/bin/authguard", "--version"]',
+    )
+    image_source_contract = (
+        makefile_source + image_catalog_source + runtime_dockerfile_source
+    )
+    if missing := [
+        marker for marker in image_source_markers if marker not in image_source_contract
+    ]:
+        errors.append(f"regional image-source selection is incomplete: {missing}")
+
+    route_template_contracts = {
+        "authn/public-route.yaml": ("value: /auth/", "value: /.well-known/"),
+        "web/hosted-login-route.yaml": (
+            "value: /auth/login",
+            "value: /auth/account/security",
+            "value: /auth/assets/",
+        ),
+        "web/dashboard-route.yaml": ("value: /api/", "value: /"),
+        "gateway/protected-route.yaml": ('authguard.io/protected: "true"',),
+    }
+    for relative_path, markers in route_template_contracts.items():
+        source = (chart_templates / relative_path).read_text(encoding="utf-8")
+        if missing := [marker for marker in markers if marker not in source]:
+            errors.append(
+                f"{relative_path} does not own its documented route boundary: {missing}"
+            )
+
+    dashboard_route_source = (
+        chart_templates / "web/dashboard-route.yaml"
+    ).read_text(encoding="utf-8")
+    if ".Values.authguard.authz.service.apiPort" not in dashboard_route_source:
+        errors.append("Dashboard /api route must target the AuthZ API port")
+    if "mgmt" in dashboard_route_source.lower():
+        errors.append("Dashboard route must never reference the process mgmt listener")
+
+    authz_server_source = (
+        PROJECT_ROOT / "src/authz/src/server.rs"
+    ).read_text(encoding="utf-8")
+    authn_server_source = (
+        PROJECT_ROOT / "src/authn/src/server.rs"
+    ).read_text(encoding="utf-8")
+    listener_isolation_markers = (
+        "pub fn api_router(",
+        "pub fn management_router(",
+        "config.authz_api_addr()",
+        "AuthnRoutes::management",
+        "config.mgmt_addr()",
+    )
+    listener_sources = authz_server_source + authn_server_source
+    if missing := [
+        marker for marker in listener_isolation_markers if marker not in listener_sources
+    ]:
+        errors.append(f"API/mgmt listener isolation is incomplete: {missing}")
+
+    helm_web_source = "\n".join(
+        (chart_templates / "web" / file_name).read_text(encoding="utf-8")
+        for file_name in template_modules["web"]
+    )
     helm_values_source = (
         PROJECT_ROOT / "deploy/helm/authguard/values.yaml"
     ).read_text(encoding="utf-8")
-    helm_config_source = (
-        PROJECT_ROOT / "deploy/helm/authguard/templates/configmap.yaml"
-    ).read_text(encoding="utf-8")
+    helm_config_source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            chart_templates / "platform/runtime-config-map.yaml",
+            chart_templates / "_helpers.tpl",
+        )
+    )
     theme_config_map_markers = (
         "automountServiceAccountToken: false",
         "readOnlyRootFilesystem: true",

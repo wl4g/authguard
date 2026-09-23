@@ -1,4 +1,4 @@
-//! Optional `AuthZ` control-plane Principal federation and materialization.
+//! Optional `AuthZ` API Principal federation and materialization.
 
 mod keycloak;
 mod ldap;
@@ -24,7 +24,7 @@ pub struct PrincipalDiscoveryComponent {
 }
 
 impl PrincipalDiscoveryComponent {
-    /// Opens enabled control-plane federation connectors and optional SCIM
+    /// Opens enabled API federation connectors and optional SCIM
     /// projection into a ready [`PrincipalHandler`].
     ///
     /// # Errors

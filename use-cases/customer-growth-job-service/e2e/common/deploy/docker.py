@@ -17,17 +17,10 @@ from typing import Iterator
 from urllib import error, request
 
 from .base import (
-    ALIYUN_ANVIL_IMAGE,
-    ALIYUN_DOCKER_REDIS_IMAGE,
-    ALIYUN_ENVOY_IMAGE,
-    ALIYUN_JAEGER_IMAGE,
-    ALIYUN_KEYCLOAK_IMAGE,
-    ALIYUN_LDAP_IMAGE,
-    ALIYUN_POSTGRES_IMAGE,
-    ALIYUN_SOLANA_IMAGE,
     AUTHGUARD_IMAGE,
     AUTHGUARD_WEB_IMAGE,
     BaseE2EDeployer,
+    E2E_IMAGES,
     MOCK_IDP_IMAGE,
     WORKLOAD_IMAGES,
 )
@@ -64,14 +57,14 @@ class DockerE2EDeployer(BaseE2EDeployer):
             "AUTHGUARD_E2E_RUNTIME_DIR": str(self.runtime_dir),
             "AUTHGUARD_E2E_AUTHGUARD_IMAGE": AUTHGUARD_IMAGE,
             "AUTHGUARD_E2E_WEB_IMAGE": AUTHGUARD_WEB_IMAGE,
-            "AUTHGUARD_E2E_ENVOY_IMAGE": ALIYUN_ENVOY_IMAGE,
-            "AUTHGUARD_E2E_REDIS_IMAGE": ALIYUN_DOCKER_REDIS_IMAGE,
-            "AUTHGUARD_E2E_KEYCLOAK_IMAGE": ALIYUN_KEYCLOAK_IMAGE,
-            "AUTHGUARD_E2E_LDAP_IMAGE": ALIYUN_LDAP_IMAGE,
-            "AUTHGUARD_E2E_JAEGER_IMAGE": ALIYUN_JAEGER_IMAGE,
-            "AUTHGUARD_E2E_POSTGRES_IMAGE": ALIYUN_POSTGRES_IMAGE,
-            "AUTHGUARD_E2E_ANVIL_IMAGE": ALIYUN_ANVIL_IMAGE,
-            "AUTHGUARD_E2E_SOLANA_IMAGE": ALIYUN_SOLANA_IMAGE,
+            "AUTHGUARD_E2E_ENVOY_IMAGE": E2E_IMAGES.envoy,
+            "AUTHGUARD_E2E_REDIS_IMAGE": E2E_IMAGES.redis,
+            "AUTHGUARD_E2E_KEYCLOAK_IMAGE": E2E_IMAGES.keycloak,
+            "AUTHGUARD_E2E_LDAP_IMAGE": E2E_IMAGES.ldap,
+            "AUTHGUARD_E2E_JAEGER_IMAGE": E2E_IMAGES.jaeger,
+            "AUTHGUARD_E2E_POSTGRES_IMAGE": E2E_IMAGES.postgres,
+            "AUTHGUARD_E2E_ANVIL_IMAGE": E2E_IMAGES.anvil,
+            "AUTHGUARD_E2E_SOLANA_IMAGE": E2E_IMAGES.solana,
             "AUTHGUARD_E2E_MOCK_IDP_IMAGE": MOCK_IDP_IMAGE,
             "AUTHGUARD_E2E_GO_SQLX_IMAGE": WORKLOAD_IMAGES["go-sqlx"],
             "AUTHGUARD_E2E_RUST_SQLX_IMAGE": WORKLOAD_IMAGES["rust-sqlx"],
@@ -158,6 +151,8 @@ class DockerE2EDeployer(BaseE2EDeployer):
             self.cleanup()
         if self.context.build_images:
             self._build_images()
+        for image in E2E_IMAGES.docker_pullable_images:
+            self._ensure_local_image(image)
         self._prepare_runtime_files()
         support_services = (
             "postgresql",
@@ -210,7 +205,7 @@ class DockerE2EDeployer(BaseE2EDeployer):
                         f"{self.runtime_dir}:/runtime",
                         "--entrypoint",
                         "/bin/bash",
-                        ALIYUN_POSTGRES_IMAGE,
+                        E2E_IMAGES.postgres,
                         "-ec",
                         "find /runtime -mindepth 1 -delete",
                     )
@@ -367,7 +362,7 @@ class DockerE2EDeployer(BaseE2EDeployer):
             "AUTHGUARD__AUTHN__STANDALONE__CREDENTIAL_ENCRYPTION_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
             "AUTHGUARD__STORAGE__POSTGRES__PASSWORD": "e2e-authguard-postgres-password",
             "AUTHGUARD__CACHE__REDIS__PASSWORD": "e2e-authguard-redis-password",
-            "AUTHGUARD__AUTHZ__API_TOKEN": "e2e-authguard-api-token",
+            "AUTHGUARD__AUTHZ__API__TOKEN": "e2e-authguard-api-token",
             "AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY": "e2e-authguard-access-context-hmac-key",
             "AUTHGUARD__AUTHN__TOKEN__PRIVATE_KEY_B64": base64.b64encode(
                 signing_key
@@ -521,7 +516,7 @@ class DockerE2EDeployer(BaseE2EDeployer):
         self._wait_for_json_rpc("solana", 8899, "getHealth")
 
     def _wait_for_runtime_services(self) -> None:
-        self._wait_for_http("authn", 8082, "/healthz")
+        self._wait_for_http("authn", 9091, "/healthz")
         self._wait_for_http("authz", 9091, "/healthz")
         self._wait_for_http("web", 8080, "/auth/login")
         for service in WORKLOAD_IMAGES:

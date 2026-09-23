@@ -20,7 +20,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/config: {{ include "authguard.runtimeConfigChecksum" . }}
         checksum/secrets: {{ .Values.secrets | toJson | sha256sum }}
         {{- if eq $provider "vault" }}
         {{- include "authguard.vaultAnnotations" . | nindent 8 }}
@@ -74,27 +74,30 @@ spec:
           ports:
             - { name: authz-grpc, containerPort: {{ .Values.authguard.authz.service.grpcPort }}, protocol: TCP }
             - { name: scope-grpc, containerPort: {{ .Values.authguard.authz.service.scopeGrpcPort }}, protocol: TCP }
-            {{- if .Values.authguard.authz.mgmt.enabled }}
-            - { name: mgmt, containerPort: {{ .Values.authguard.authz.service.mgmtPort }}, protocol: TCP }
+            {{- if .Values.authguard.authz.api.enabled }}
+            - { name: api, containerPort: {{ .Values.authguard.authz.service.apiPort }}, protocol: TCP }
             {{- end }}
-          {{- if .Values.authguard.authz.mgmt.enabled }}
+            {{- if .Values.authguard.mgmt.enabled }}
+            - { name: mgmt, containerPort: {{ .Values.authguard.mgmt.port }}, protocol: TCP }
+            {{- end }}
+          {{- if .Values.authguard.mgmt.enabled }}
           livenessProbe:
             httpGet:
-              path: {{ .Values.authguard.authz.mgmt.livenessPath }}
+              path: {{ .Values.authguard.mgmt.livenessPath }}
               port: mgmt
             periodSeconds: 10
             timeoutSeconds: 2
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: {{ .Values.authguard.authz.mgmt.readinessPath }}
+              path: {{ .Values.authguard.mgmt.readinessPath }}
               port: mgmt
             periodSeconds: 5
             timeoutSeconds: 2
             failureThreshold: 3
           startupProbe:
             httpGet:
-              path: {{ .Values.authguard.authz.mgmt.livenessPath }}
+              path: {{ .Values.authguard.mgmt.livenessPath }}
               port: mgmt
             periodSeconds: 2
             failureThreshold: 30
