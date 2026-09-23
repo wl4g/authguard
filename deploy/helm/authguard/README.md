@@ -3,6 +3,22 @@
 Installs Envoy Gateway, AuthN, AuthZ, Web, Redis Cluster, and PostgreSQL.
 Keycloak remains an external OIDC or Principal-discovery integration.
 
+## Template layout
+
+The Chart keeps every rendered resource with its owning boundary:
+`authn/`, `authz/`, `web/`, `gateway/`, and `platform/` for shared runtime
+configuration, secret-store bindings, and the ServiceAccount. Only Helm's
+`_helpers.tpl` and release `NOTES.txt` remain at the template root.
+
+For request-path review, start with these non-overlapping route owners:
+
+| Template | Paths and responsibility |
+| --- | --- |
+| `web/hosted-login-route.yaml` | `GET /auth/login`, account security UI, and `/auth/assets/*` |
+| `authn/public-route.yaml` | `/.well-known/*` and remaining `/auth/*` AuthN APIs |
+| `gateway/protected-route.yaml` | a labelled business route protected by JWT + `ext_authz` |
+| `web/dashboard-route.yaml` | optional dedicated AuthGuard Dashboard hostname |
+
 ## 1. Prepare
 
 Require Helm 3, a writable StorageClass, and an existing Kubernetes cluster.
@@ -175,7 +191,7 @@ The chart never loads theme JavaScript or arbitrary HTML. The Web HTTPRoute owns
 `GET /auth/login`, `GET /auth/account/security`, and `GET /auth/assets/*`; the
 AuthN HTTPRoute owns `/.well-known/*` and the remaining `/auth/*`. This leaves
 an application's `/api/*` and `/*` routes to its own chart. Enable
-`authguard-middleware.authguard.web.route.console` only on a dedicated AuthGuard Console hostname.
+`authguard-middleware.authguard.web.route.dashboard` only on a dedicated AuthGuard Dashboard hostname.
 
 The Gateway has one listener, so Hosted Login remains on the application's
 browser origin. Label each protected business `HTTPRoute` with

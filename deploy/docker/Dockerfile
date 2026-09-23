@@ -14,6 +14,6 @@ RUN if [ -n "${AUTHGUARD_CARGO_FEATURES}" ]; then \
 FROM registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-runtime:nonroot
 COPY --from=builder /workspace/target/release/authguard /usr/local/bin/authguard
 USER nonroot:nonroot
-EXPOSE 8080 8081 8082 9091
+EXPOSE 8080 8081 8082 9090 9091
 ENTRYPOINT ["/usr/local/bin/authguard"]
 CMD ["authz"]

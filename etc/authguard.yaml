@@ -3,7 +3,7 @@
 #
 #  Canonical keys use snake_case. Container overrides use double underscores:
 #  AUTHGUARD__SERVER__PORT=8081
-#  AUTHGUARD__AUTHZ__API_TOKEN=<secret>
+#  AUTHGUARD__AUTHZ__API__TOKEN=<secret>
 # =============================================================================
 
 server:
@@ -134,6 +134,14 @@ authn:
     privateKeyFile: ""
 
 authz:
+  # Product API consumed by the Dashboard and explicit API clients. It is
+  # isolated from the process-level mgmt listener below.
+  api:
+    enabled: true
+    host: 0.0.0.0
+    port: 9090
+    # Keep empty in source. Inject AUTHGUARD__AUTHZ__API__TOKEN from a Secret.
+    token: ""
   # Envoy verifies an AuthN-issued canonical token before forwarding it to
   # extAuth. AuthZ never resolves provider issuer/subject pairs.
   # An identity whose principal_id is absent from iam_principal is always
@@ -153,7 +161,7 @@ authz:
     direct_context_hmac_key: ""
     context_ttl: 30s
     scope_token_ttl: 30s
-  # Optional control-plane federation only. Login normalization and identity
+  # Optional API federation only. Login normalization and identity
   # binding belong to authguard-authn and never run on the AuthZ hot path.
   principal_discovery:
     # keycloak/ldap/custom are pull discovery sources. Disabled entries are
@@ -289,9 +297,6 @@ authz:
     # Effective expiry is min(max_ttl, source canonical JWT remaining lifetime).
     max_ttl: 60s
     private_key_b64: ""
-  # Keep empty in source. Inject AUTHGUARD__AUTHZ__API_TOKEN from a Secret.
-  api_token: ""
-
 storage:
   provider: SQLite
   bootstrap_policy: null

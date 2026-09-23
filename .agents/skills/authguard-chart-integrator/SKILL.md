@@ -31,8 +31,10 @@ Hosted Login theme customization as an optional extension, not the purpose of th
    dependencies, reuse the service's secret mechanism, and never commit secret values. Prefix
    child overrides accordingly, for example `authguard-middleware.authguard.authz.enabled`.
 6. Configure host-derived `authn.applications`, safe HTTPS return URIs, Gateway routes, protected
-   route labels, and namespace grants from the actual service topology. Keep the normal service
-   release independent from the explicit AuthGuard middleware release.
+   route labels, and namespace grants from the actual service topology. Route the browser-facing
+   business Web workload through the same Gateway origin as `/auth/*`; never validate UI behavior
+   through its NodePort, port-forward, or direct Service address. Keep the normal service release
+   independent from the explicit AuthGuard middleware release.
 7. Only when a custom Hosted Login theme is requested, create `files/authguard-theme/`, add the optional
    ConfigMap template, and apply the rules below. Use [assets/theme.css](assets/theme.css) and
    [assets/authguard-theme.yaml](assets/authguard-theme.yaml) as starting points without changing

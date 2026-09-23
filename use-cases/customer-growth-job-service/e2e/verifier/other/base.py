@@ -329,7 +329,7 @@ class BaseVerifier:
     ) -> tuple[int, str]:
         return self._http(
             port,
-            "authguard-management.local",
+            "authguard-api.local",
             path,
             method=method,
             headers={

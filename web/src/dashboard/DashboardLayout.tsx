@@ -2,13 +2,13 @@ import { Fingerprint, Gauge, KeyRound, LogOut, ShieldCheck, UsersRound } from 'l
 import { NavLink, Outlet } from 'react-router-dom'
 import { useState } from 'react'
 import { useAuth } from '../core/AuthContext'
-import { useControl } from '../core/ControlContext'
+import { useApi } from '../core/ApiContext'
 import { useI18n } from '../shared/i18n'
 import { Preferences } from '../shared/Preferences'
 
-export function Layout() {
+export function DashboardLayout() {
   const { authentication, signOut } = useAuth()
-  const { token, setToken } = useControl()
+  const { token, setToken } = useApi()
   const { t } = useI18n()
   const [draft, setDraft] = useState(token)
   return <div className="app-shell">
@@ -24,7 +24,7 @@ export function Layout() {
     </aside>
     <main>
       <header className="topbar">
-        <div className="control-token"><input data-testid="control-token" type="password" value={draft} onChange={event => setDraft(event.target.value)} placeholder={t('controlToken')}/><button data-testid="control-token-submit" onClick={() => setToken(draft)}>{t('saveToken')}</button></div>
+        <div className="api-token"><input data-testid="api-token" type="password" value={draft} onChange={event => setDraft(event.target.value)} placeholder={t('apiToken')}/><button data-testid="api-token-submit" onClick={() => setToken(draft)}>{t('saveToken')}</button></div>
         <Preferences/>
         <div className="profile"><span data-testid="authenticated-principal" title={authentication?.principal.principalId}>{authentication?.principal.principalId}</span><button data-testid="sign-out" title={t('signOut')} onClick={() => void signOut()}><LogOut size={17}/></button></div>
       </header>

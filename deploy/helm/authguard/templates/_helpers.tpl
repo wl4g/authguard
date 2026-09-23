@@ -54,6 +54,32 @@ app.kubernetes.io/component: web
 {{- default (printf "%s-canonical-jwks" (include "authguard.fullname" .)) .Values.authguard.authn.canonical_jwt.local_jwks.existing_config_map -}}
 {{- end -}}
 
+{{/* Render the runtime configuration once so ConfigMap content and rollout
+     checksum always describe exactly the same effective configuration. */}}
+{{- define "authguard.runtimeConfig" -}}
+{{- $runtimeConfig := index .Values.authguard "authguard-config" | default "" -}}
+{{- if not $runtimeConfig -}}
+{{- fail "authguard.authguard-config must contain the full authguard.yaml content" -}}
+{{- end -}}
+{{- $renderedConfig := tpl $runtimeConfig . -}}
+{{- $applications := .Values.authguard.authn.applications | default dict -}}
+{{- if $applications -}}
+{{- $parsedConfig := fromYaml $renderedConfig -}}
+{{- if not (kindIs "map" $parsedConfig) -}}
+{{- fail "authguard.authguard-config must render valid YAML" -}}
+{{- end -}}
+{{- $authnConfig := index $parsedConfig "authn" | default dict -}}
+{{- $_ := set $authnConfig "applications" $applications -}}
+{{- $_ := set $parsedConfig "authn" $authnConfig -}}
+{{- $renderedConfig = toYaml $parsedConfig -}}
+{{- end -}}
+{{- $renderedConfig -}}
+{{- end -}}
+
+{{- define "authguard.runtimeConfigChecksum" -}}
+{{- include "authguard.runtimeConfig" . | sha256sum -}}
+{{- end -}}
+
 {{- define "authguard.redisFullname" -}}
 {{- $redis := .Values.redis_cluster -}}
 {{- default (printf "%s-redis-cluster" .Release.Name | trunc 63 | trimSuffix "-") $redis.fullnameOverride -}}

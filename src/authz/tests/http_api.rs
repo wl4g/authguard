@@ -201,7 +201,7 @@ fn decode_direct_context(compact: &str) -> AccessContext {
 
 fn api_config() -> AppConfigProperties {
     let mut config = AppConfigProperties::default();
-    config.authz.api_token = "api-secret".to_string();
+    config.authz.api.token = "api-secret".to_string();
     config
 }
 
@@ -493,10 +493,9 @@ async fn large_scope_uses_opaque_token_resolved_by_grpc_service() {
 #[tokio::test]
 async fn principal_api_status_and_reference_conflict_are_enforced() {
     let runtime = runtime(ScopeDeliveryProperties::default()).await;
-    let app = AuthguardServer::management_router(
+    let app = AuthguardServer::api_router(
         runtime.policy,
         runtime.principals,
-        runtime.cache,
         runtime.metrics,
         &api_config(),
     );
@@ -541,10 +540,9 @@ async fn principal_api_status_and_reference_conflict_are_enforced() {
 #[tokio::test]
 async fn policy_crud_rejects_referenced_resources_and_stale_revision() {
     let runtime = runtime(ScopeDeliveryProperties::default()).await;
-    let app = AuthguardServer::management_router(
+    let app = AuthguardServer::api_router(
         runtime.policy,
         runtime.principals,
-        runtime.cache,
         runtime.metrics,
         &api_config(),
     );
@@ -646,10 +644,9 @@ async fn policy_crud_rejects_referenced_resources_and_stale_revision() {
 #[tokio::test]
 async fn action_role_and_role_binding_support_complete_api_crud() {
     let runtime = runtime(ScopeDeliveryProperties::default()).await;
-    let app = AuthguardServer::management_router(
+    let app = AuthguardServer::api_router(
         runtime.policy,
         runtime.principals,
-        runtime.cache,
         runtime.metrics,
         &api_config(),
     );
@@ -816,10 +813,9 @@ async fn action_role_and_role_binding_support_complete_api_crud() {
 async fn complete_policy_replace_rejects_disabled_binding_principal() {
     let runtime = runtime(ScopeDeliveryProperties::default()).await;
     runtime.principals.update_status(USER_ID, PrincipalStatus::Disabled).await.expect("disable");
-    let app = AuthguardServer::management_router(
+    let app = AuthguardServer::api_router(
         runtime.policy,
         runtime.principals,
-        runtime.cache,
         runtime.metrics,
         &api_config(),
     );
@@ -838,10 +834,9 @@ async fn complete_policy_replace_rejects_disabled_binding_principal() {
 #[tokio::test]
 async fn policy_delete_resets_the_authorization_catalog_with_revision_guard() {
     let runtime = runtime(ScopeDeliveryProperties::default()).await;
-    let app = AuthguardServer::management_router(
+    let app = AuthguardServer::api_router(
         runtime.policy,
         runtime.principals,
-        runtime.cache,
         runtime.metrics,
         &api_config(),
     );
@@ -883,12 +878,11 @@ async fn policy_delete_resets_the_authorization_catalog_with_revision_guard() {
 }
 
 #[tokio::test]
-async fn management_authorize_route_delegates_allow_and_default_deny_decisions() {
+async fn api_authorize_route_delegates_allow_and_default_deny_decisions() {
     let runtime = runtime(ScopeDeliveryProperties::default()).await;
-    let app = AuthguardServer::management_router(
+    let app = AuthguardServer::api_router(
         runtime.policy,
         runtime.principals,
-        runtime.cache,
         runtime.metrics,
         &api_config(),
     );
@@ -928,31 +922,47 @@ async fn management_authorize_route_delegates_allow_and_default_deny_decisions()
 }
 
 #[tokio::test]
-async fn readiness_requires_durable_storage() {
+async fn api_and_management_routes_are_isolated() {
     let runtime = runtime(ScopeDeliveryProperties::default()).await;
     runtime.policy.readiness().await.expect("reachable SQLite authorization storage");
 
-    let app = AuthguardServer::management_router(
-        runtime.policy,
-        runtime.principals,
+    let management = AuthguardServer::management_router(
+        runtime.policy.clone(),
         runtime.cache,
-        runtime.metrics,
+        runtime.metrics.clone(),
         &api_config(),
     );
-    let response = app
+    let response = management
+        .clone()
         .oneshot(api_request(Method::GET, "/readyz", &json!({})))
         .await
         .expect("readiness response");
     assert_eq!(response.status(), StatusCode::OK);
+    let response = management
+        .oneshot(api_request(Method::GET, "/api/v1/status", &json!({})))
+        .await
+        .expect("management boundary response");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let api = AuthguardServer::api_router(
+        runtime.policy,
+        runtime.principals,
+        runtime.metrics,
+        &api_config(),
+    );
+    let response = api
+        .oneshot(api_request(Method::GET, "/healthz", &json!({})))
+        .await
+        .expect("API boundary response");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
 async fn scim_user_and_group_resources_support_rfc_operations() {
     let runtime = runtime(ScopeDeliveryProperties::default()).await;
-    let app = AuthguardServer::management_router(
+    let app = AuthguardServer::api_router(
         runtime.policy,
         runtime.principals,
-        runtime.cache,
         runtime.metrics,
         &api_config(),
     );

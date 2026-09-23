@@ -18,7 +18,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/config: {{ include "authguard.runtimeConfigChecksum" . }}
         checksum/secrets: {{ .Values.secrets | toJson | sha256sum }}
         {{- if eq $provider "vault" }}
         {{- include "authguard.vaultAnnotations" . | nindent 8 }}
@@ -66,10 +66,16 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.authguard.authn.service.port }}
+            {{- if .Values.authguard.mgmt.enabled }}
+            - name: mgmt
+              containerPort: {{ .Values.authguard.mgmt.port }}
+            {{- end }}
+          {{- if .Values.authguard.mgmt.enabled }}
           livenessProbe:
-            httpGet: { path: /healthz, port: http }
+            httpGet: { path: /healthz, port: mgmt }
           readinessProbe:
-            httpGet: { path: /readyz, port: http }
+            httpGet: { path: /readyz, port: mgmt }
+          {{- end }}
           resources:
             {{- toYaml .Values.authguard.authn.resources | nindent 12 }}
           volumeMounts:

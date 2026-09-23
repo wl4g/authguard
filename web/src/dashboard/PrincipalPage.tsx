@@ -1,6 +1,6 @@
 import { CloudDownload, Plus, RefreshCw, Search, ToggleLeft, ToggleRight, Trash2, UserRound, X } from 'lucide-react'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { useControl } from '../core/ControlContext'
+import { useApi } from '../core/ApiContext'
 import { authn, control, metadata, type LoginResponse, type Principal } from '../core/api'
 import { useI18n } from '../shared/i18n'
 
@@ -8,7 +8,7 @@ type PrincipalPageData = { total: number; items: Principal[]; next_cursor?: stri
 type Projection = { reference: { provider_id: string; issuer: string; external_id: string }; kind: Principal['kind']; display_name: string; username?: string; email?: string; enabled: boolean }
 
 export function PrincipalPage() {
-  const { t } = useI18n(); const { token } = useControl()
+  const { t } = useI18n(); const { token } = useApi()
   const [page, setPage] = useState<PrincipalPageData>({ total: 0, items: [] }); const [query, setQuery] = useState('')
   const [mode, setMode] = useState<'local' | 'federated' | null>(null); const [error, setError] = useState(''); const [busy, setBusy] = useState(false)
   const load = useCallback(async () => {
@@ -32,7 +32,7 @@ export function PrincipalPage() {
     <div className="page-heading compact"><div><span className="eyebrow">CANONICAL IDENTITY</span><h1>{t('principals')}</h1><p>{page.total} canonical principals</p></div><button className="icon-button" onClick={load}><RefreshCw className={busy ? 'spin' : ''}/></button></div>
     <div className="data-card"><div className="data-toolbar"><div className="search-box"><Search/><input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => event.key === 'Enter' && load()} placeholder={t('search')}/></div><div><button data-testid="principal-federated-open" onClick={() => setMode('federated')}><CloudDownload/>{t('federatedSearch')}</button><button data-testid="principal-local-open" className="primary small" onClick={() => setMode('local')}><Plus/>{t('localCreate')}</button></div></div>
       {error && <div className="error-banner">{error}</div>}
-      {!page.items.length ? <div className="empty"><UserRound/><p>{token ? t('empty') : t('controlToken')}</p></div> : <div className="principal-table" data-testid="principal-list"><div className="table-head"><span>{t('principalId')}</span><span>{t('displayName')}</span><span>{t('kind')}</span><span>{t('status')}</span><span/></div>{page.items.map(principal => <div className="table-row" key={principal.id}><code>{principal.id}</code><strong>{principal.display_name}</strong><span>{principal.kind}</span><span className={`status ${principal.status.toLowerCase()}`}>{principal.status}</span><div className="row-actions"><button title={principal.status === 'ACTIVE' ? t('disabled') : t('active')} onClick={() => status(principal)}>{principal.status === 'ACTIVE' ? <ToggleRight/> : <ToggleLeft/>}</button><button className="danger" onClick={() => remove(principal)}><Trash2/></button></div></div>)}</div>}
+      {!page.items.length ? <div className="empty"><UserRound/><p>{token ? t('empty') : t('apiToken')}</p></div> : <div className="principal-table" data-testid="principal-list"><div className="table-head"><span>{t('principalId')}</span><span>{t('displayName')}</span><span>{t('kind')}</span><span>{t('status')}</span><span/></div>{page.items.map(principal => <div className="table-row" key={principal.id}><code>{principal.id}</code><strong>{principal.display_name}</strong><span>{principal.kind}</span><span className={`status ${principal.status.toLowerCase()}`}>{principal.status}</span><div className="row-actions"><button title={principal.status === 'ACTIVE' ? t('disabled') : t('active')} onClick={() => status(principal)}>{principal.status === 'ACTIVE' ? <ToggleRight/> : <ToggleLeft/>}</button><button className="danger" onClick={() => remove(principal)}><Trash2/></button></div></div>)}</div>}
     </div>
     {mode === 'local' && (
       <LocalAccountDialog onClose={() => setMode(null)} onCreated={async () => { setMode(null); await load() }}/>

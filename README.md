@@ -48,8 +48,8 @@ AuthGuard AuthZ is the PDP and never becomes a reverse proxy.
 - **Enterprise identity lifecycle** — Keycloak, LDAP, custom HTTP discovery, and
   SCIM provisioning support administrator pre-authorization without becoming
   runtime dependencies.
-- **Control-plane UI and CLI** — a multilingual React UI and the `authguard
-  console` manage Principals and revisioned authorization policy.
+- **Dashboard and API CLI** — a multilingual React Dashboard and the
+  `authguard api` client manage Principals and revisioned authorization policy.
 - **Production operations** — PostgreSQL/SQLite IAM storage, Redis-backed
   one-time challenges and authorization scope, Prometheus metrics, structured
   logs, OpenTelemetry traces, Docker images, and an OCI Helm chart.
@@ -194,8 +194,8 @@ The reproducible application and verifier suite lives in
 
 | Artifact | OCI reference | Purpose |
 |---|---|---|
-| Runtime | `ghcr.io/wl4g/authguard:<version>` | `authn`, `authz`, and `console` commands |
-| Web UI | `ghcr.io/wl4g/authguard-web:<version>` | Static React control plane and login UI |
+| Runtime | `ghcr.io/wl4g/authguard:<version>` | `authn`, `authz`, and `api` commands |
+| Web UI | `ghcr.io/wl4g/authguard-web:<version>` | Static React Dashboard and Hosted Login UI |
 | Helm chart | `oci://ghcr.io/wl4g/charts/authguard:<version>` | Envoy Gateway, AuthGuard, Redis Cluster, PostgreSQL, routes, and policies |
 
 `make release` builds and publishes exactly these two product images and the
@@ -276,14 +276,14 @@ complete runtime schema.
 
 ### Pre-authorize Principals and policy
 
-The CLI calls the AuthZ management API, preserving validation, reference checks,
+The CLI calls the AuthZ API, preserving validation, reference checks,
 cache invalidation, audit logs, metrics, and optimistic policy revisions.
 
 ```bash
 agctl() {
-  authguard console \
-    --endpoint http://authguard.authguard.svc:9091 \
-    --token '<control-plane-secret>' \
+  authguard api \
+    --endpoint http://authguard.authguard.svc:9090 \
+    --token '<api-token>' \
     "$@"
 }
 
@@ -294,9 +294,9 @@ agctl create action --file action.json
 agctl create role --file role.json
 agctl create role-binding --file role-binding.json
 
-authguard console list principals
-authguard console policy get
-authguard console status
+authguard api list principals
+authguard api policy get
+authguard api status
 ```
 
 ### Protect a business service
@@ -418,7 +418,7 @@ AuthGuard builds on excellent open-source projects and standards communities:
 - [SQLx](https://github.com/launchbadge/sqlx) — durable IAM storage; and
   [Redis](https://redis.io/) — atomic one-time state and short-lived scope.
 - [React](https://react.dev/), [Vite](https://vite.dev/), and
-  [Reown AppKit](https://docs.reown.com/appkit/overview) — control-plane UI and
+  [Reown AppKit](https://docs.reown.com/appkit/overview) — browser UI and
   optional client-side wallet discovery/signing UX. Reown is not a server
   dependency.
 - [OpenTelemetry](https://opentelemetry.io/) and

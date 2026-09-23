@@ -367,7 +367,7 @@ class DockerE2EDeployer(BaseE2EDeployer):
             "AUTHGUARD__AUTHN__STANDALONE__CREDENTIAL_ENCRYPTION_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
             "AUTHGUARD__STORAGE__POSTGRES__PASSWORD": "e2e-authguard-postgres-password",
             "AUTHGUARD__CACHE__REDIS__PASSWORD": "e2e-authguard-redis-password",
-            "AUTHGUARD__AUTHZ__API_TOKEN": "e2e-authguard-api-token",
+            "AUTHGUARD__AUTHZ__API__TOKEN": "e2e-authguard-api-token",
             "AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY": "e2e-authguard-access-context-hmac-key",
             "AUTHGUARD__AUTHN__TOKEN__PRIVATE_KEY_B64": base64.b64encode(
                 signing_key
@@ -521,7 +521,7 @@ class DockerE2EDeployer(BaseE2EDeployer):
         self._wait_for_json_rpc("solana", 8899, "getHealth")
 
     def _wait_for_runtime_services(self) -> None:
-        self._wait_for_http("authn", 8082, "/healthz")
+        self._wait_for_http("authn", 9091, "/healthz")
         self._wait_for_http("authz", 9091, "/healthz")
         self._wait_for_http("web", 8080, "/auth/login")
         for service in WORKLOAD_IMAGES:

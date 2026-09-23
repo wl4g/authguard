@@ -1,1 +1,1 @@
-"""Authorization control-plane and gateway scenarios."""
+"""Authorization API and gateway scenarios."""

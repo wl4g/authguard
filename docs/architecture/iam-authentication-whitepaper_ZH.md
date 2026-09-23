@@ -120,7 +120,7 @@ AuthN 成功后统一归一化为
 path，把同一份 AuthGuard JWT 写入 `HttpOnly; Secure; SameSite=Lax` Cookie，并在
 OAuth callback 直接重定向或向浏览器 API 返回安全 path。不需要 npm SDK、iframe、
 token localStorage，业务系统也不复制 wallet/WebAuthn/OAuth 前端逻辑。AuthGuard
-Console 使用独立 UI 路径，始终显示 AuthGuard 品牌。
+Dashboard 使用独立 UI 路径，始终显示 AuthGuard 品牌。
 
 Gateway 只使用一个 listener 承载业务系统和 AuthGuard 公共路径。SecurityPolicy
 仅选择带 `authguard.io/protected: "true"` 标签的业务 `HTTPRoute`；依靠路由精确度，

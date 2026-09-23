@@ -465,7 +465,7 @@ src/common                      authguard-common crate
 
 src/authz                        authguard-authz crate
   route/mod.rs                  AuthGuard APIs 认证与统一汇聚
-  route/{policy,principal}.rs   仅负责传输适配的控制面 APIs
+  route/{policy,principal}.rs   仅负责传输适配的产品 APIs
   route/authorization.rs        Envoy ext_authz/access-context gRPC 入口
   handler/{authorization,principal}.rs
                                 授权目录与 Principal 管理用例
@@ -474,7 +474,7 @@ src/authz                        authguard-authz crate
                                 不可变求值 runtime 与授权目录 CRUD
   principal/{ldap,keycloak,scim}/
                                 可选 2B 控制面 federation connectors
-  server.rs                     进程初始化与 listener 生命周期
+  server.rs                     隔离的 API (:9090) 与运维管理 (:9091) listeners
 
 migrations/                     唯一权威 IAM schema
 ```
@@ -482,6 +482,8 @@ migrations/                     唯一权威 IAM schema
 依赖规则：
 
 - AuthN 不依赖 AuthZ 的策略实现；
+- Dashboard 只访问产品 API listener；health、metrics、profiling 仅存在于内部
+  mgmt listener，且绝不注册为 Gateway 路由；
 - AuthZ 不依赖 AuthN 的 Provider 实现；
 - AuthN、AuthZ 和 Rust 业务 SDK 只向内依赖 `authguard-common`，SDK 不再依赖
   AuthZ 服务端 crate；

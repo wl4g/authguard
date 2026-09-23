@@ -1,0 +1,15 @@
+{{- $web := .Values.authguard.web -}}
+{{- if $web.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "authguard.fullname" . }}-web
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  selector:
+    {{- include "authguard.webSelectorLabels" . | nindent 4 }}
+  ports:
+    - { name: http, port: {{ $web.service.port }}, targetPort: http }
+{{- end }}

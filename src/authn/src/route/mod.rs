@@ -65,13 +65,17 @@ impl AuthnRoutes {
         if let Some(handler) = wallet {
             routes = routes.merge(wallet::WalletRoutes::router(handler));
         }
-        let management = management::router(
+        Ok(routes.layer(middleware::from_fn(propagate_http_trace_context)))
+    }
+
+    pub(crate) fn management(metrics: AuthnMetrics, runtime: &AuthnRuntime) -> Router {
+        management::router(
             AppConfig::get().get_mgmt(),
             ManagementState::new(
                 Arc::new(metrics),
                 Arc::new(AuthnReadiness { challenges: runtime.challenges.clone() }),
             ),
-        );
-        Ok(routes.merge(management).layer(middleware::from_fn(propagate_http_trace_context)))
+        )
+        .layer(middleware::from_fn(propagate_http_trace_context))
     }
 }

@@ -127,7 +127,7 @@ same-host URI or a safe relative path. AuthN
 normalizes successful values to a path, stores the unified JWT in an
 `HttpOnly; Secure; SameSite=Lax` cookie, and redirects (OAuth) or returns the
 safe path (browser API flows). No SDK, iframe, token localStorage, or business
-copy of wallet/WebAuthn/OAuth logic is required. The AuthGuard Console is a
+copy of wallet/WebAuthn/OAuth logic is required. The AuthGuard Dashboard is a
 separate UI route and always uses the AuthGuard brand.
 
 Gateway uses one listener for the relying application and AuthGuard public

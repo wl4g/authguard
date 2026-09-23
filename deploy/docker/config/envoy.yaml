@@ -73,7 +73,7 @@ static_resources:
                               "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
                               disabled: true
                         - match: { prefix: /api/ }
-                          route: { cluster: authz_management }
+                          route: { cluster: authz_api }
                           typed_per_filter_config:
                             envoy.filters.http.jwt_authn:
                               "@type": type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
@@ -130,16 +130,16 @@ static_resources:
               - endpoint:
                   address:
                     socket_address: { address: authn, port_value: 8082 }
-    - name: authz_management
+    - name: authz_api
       type: STRICT_DNS
       connect_timeout: 2s
       load_assignment:
-        cluster_name: authz_management
+        cluster_name: authz_api
         endpoints:
           - lb_endpoints:
               - endpoint:
                   address:
-                    socket_address: { address: authz, port_value: 9091 }
+                    socket_address: { address: authz, port_value: 9090 }
     - name: authz_grpc
       type: STRICT_DNS
       connect_timeout: 2s

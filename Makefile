@@ -17,6 +17,8 @@ AUTHGUARD_CARGO_FEATURES ?= web3
 VITE_AUTHN_BASE_URL ?=
 VITE_AUTHZ_BASE_URL ?=
 VITE_REOWN_PROJECT_ID ?=
+WEB_NODE_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/node:22-alpine
+WEB_RUNTIME_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/nginxinc_nginx-unprivileged:1.27-alpine
 HELM_OCI_REGISTRY ?= oci://ghcr.io/wl4g/charts
 RELEASE_DIR ?= dist
 USE_CASE_DIR := use-cases/customer-growth-job-service
@@ -57,7 +59,7 @@ help:
 	@echo ""
 	@echo "  Build:"
 	@echo "    make build         Build backend, AuthGuard Web, and Java modules."
-	@echo "    make build-web     Build the AuthGuard React control-plane UI."
+	@echo "    make build-web     Build the AuthGuard React Dashboard and Hosted Login UI."
 	@echo "    make build-image   Build AuthGuard runtime + AuthGuard Web release images."
 	@echo "    make docker-up     Start the local Docker Compose AuthGuard topology."
 	@echo "    make docker-down   Stop the local Docker Compose topology."
@@ -107,6 +109,8 @@ build-runtime-image:
 
 build-web-image:
 	$(CONTAINER_CLI) build $(CONTAINER_BUILD_FLAGS) -f $(WEB_DIR)/Dockerfile \
+		--build-arg NODE_IMAGE="$(WEB_NODE_IMAGE)" \
+		--build-arg WEB_IMAGE="$(WEB_RUNTIME_IMAGE)" \
 		--build-arg VITE_AUTHN_BASE_URL="$(VITE_AUTHN_BASE_URL)" \
 		--build-arg VITE_AUTHZ_BASE_URL="$(VITE_AUTHZ_BASE_URL)" \
 		--build-arg VITE_REOWN_PROJECT_ID="$(VITE_REOWN_PROJECT_ID)" \

@@ -49,7 +49,7 @@ class RuntimeEvidenceVerifier(BaseVerifier):
                 metrics = response.read().decode()
             self._verify_management_diagnostics(port, metrics, "authguard-authz")
         verify_authz_metrics(metrics)
-        with self._forward_service(self.authguard_authn_service, 8082) as port:
+        with self._forward_service(self.authguard_authn_service, 9091) as port:
             with request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=15) as response:
                 authn_metrics = response.read().decode()
             self._verify_management_diagnostics(port, authn_metrics, "authguard-authn")
@@ -58,7 +58,7 @@ class RuntimeEvidenceVerifier(BaseVerifier):
         )
         verify_authn_metrics(authn_metrics, providers, ("e2e-authguard-keycloak",))
         self.details.append(
-            "Positive OpenMetrics samples verified independently from AuthN :8082 and "
+            "Positive OpenMetrics samples verified independently from AuthN :9091 and "
             "AuthZ :9091: authorize/callback latency, allow/deny decisions, and "
             "direct/opaque scope delivery/resolution"
         )

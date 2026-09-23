@@ -486,11 +486,22 @@ pub enum LinkingStrategy {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AuthzProperties {
+    /// Product API consumed by the Dashboard and API clients. This listener is
+    /// deliberately separate from process management endpoints.
+    pub api: AuthzApiProperties,
     pub identity: IdentityProperties,
     pub scope_delivery: ScopeDeliveryProperties,
     pub principal_discovery: PrincipalDiscoveryProperties,
     pub resign: ResignProperties,
-    pub api_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AuthzApiProperties {
+    pub enabled: bool,
+    pub host: IpAddr,
+    pub port: u16,
+    pub token: String,
 }
 
 /// Re-signing of the short-lived JWT delivered to business microservices.
@@ -745,6 +756,12 @@ impl Default for ManagementProperties {
             metrics: MetricsProperties::default(),
             otel: OtelProperties::default(),
         }
+    }
+}
+
+impl Default for AuthzApiProperties {
+    fn default() -> Self {
+        Self { enabled: true, host: IpAddr::from([0, 0, 0, 0]), port: 9090, token: String::new() }
     }
 }
 
@@ -1159,6 +1176,11 @@ impl AppConfigProperties {
     pub fn mgmt_addr(&self) -> SocketAddr {
         SocketAddr::new(self.mgmt.host, self.mgmt.port)
     }
+
+    #[must_use]
+    pub fn authz_api_addr(&self) -> SocketAddr {
+        SocketAddr::new(self.authz.api.host, self.authz.api.port)
+    }
 }
 
 impl AppConfig {
@@ -1217,6 +1239,11 @@ impl AppConfigProperties {
     pub fn validate(&self) -> anyhow::Result<()> {
         validate_server(&self.server)?;
         validate_management(&self.mgmt)?;
+        validate_authz_api(&self.authz.api)?;
+        if self.mgmt.enabled && self.authz.api.enabled && self.mgmt_addr() == self.authz_api_addr()
+        {
+            bail!("authz.api and mgmt must use different listener addresses");
+        }
         validate_scope_delivery(&self.authz.scope_delivery)?;
         validate_identity(&self.authz.identity)?;
         validate_principal_discovery(&self.authz.principal_discovery)?;
@@ -1296,6 +1323,13 @@ fn validate_management(mgmt: &ManagementProperties) -> anyhow::Result<()> {
     }
     if mgmt.otel.timeout.is_zero() {
         bail!("mgmt.otel.timeout must be positive");
+    }
+    Ok(())
+}
+
+fn validate_authz_api(api: &AuthzApiProperties) -> anyhow::Result<()> {
+    if api.enabled && api.port == 0 {
+        bail!("authz.api.port must be positive when the API is enabled");
     }
     Ok(())
 }
@@ -2218,7 +2252,8 @@ authn:
   token:
     privateKey: ${AUTHN_ONLY_KEY}
 authz:
-  api_token: resolved-authz-secret
+  api:
+    token: resolved-authz-secret
 ",
         )
         .unwrap();
@@ -2233,7 +2268,8 @@ authz:
 authn:
   providers: {}
 authz:
-  api_token: ${AUTHZ_ONLY_SECRET}
+  api:
+    token: ${AUTHZ_ONLY_SECRET}
 storage: {}
 logging: {}
 mgmt: {}
@@ -2242,7 +2278,7 @@ mgmt: {}
         .unwrap();
         expand_authn_owned_env_refs(&mut authentication_view, &HashMap::new()).unwrap();
         assert_eq!(
-            authentication_view["authz"]["api_token"].as_str(),
+            authentication_view["authz"]["api"]["token"].as_str(),
             Some("${AUTHZ_ONLY_SECRET}")
         );
     }
@@ -2322,6 +2358,7 @@ providers:
         config.validate().expect("valid");
         assert_eq!(config.server.service_name, "authguard-authz");
         assert_eq!(config.mgmt.port, 9091);
+        assert_eq!(config.authz.api.port, 9090);
         assert_eq!(config.storage.provider, "SQLite");
         assert_eq!(config.cache.provider, "Memory");
         assert_eq!(config.cache.memory.max_capacity, 65_535);

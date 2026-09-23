@@ -235,7 +235,7 @@ class InfrastructureVerifier(BaseVerifier):
             "${AUTHGUARD__AUTHN__PROVIDERS__WECHAT__CLIENT_SECRET}",
             "${AUTHGUARD__AUTHN__PROVIDERS__QQ__CLIENT_SECRET}",
             "${AUTHGUARD__STORAGE__POSTGRES__PASSWORD}",
-            "${AUTHGUARD__AUTHZ__API_TOKEN}",
+            "${AUTHGUARD__AUTHZ__API__TOKEN}",
         )
         if missing := [value for value in required if value not in runtime]:
             raise RuntimeError(f"AuthZ discovery runtime configuration is incomplete: {missing}")
@@ -288,7 +288,7 @@ class InfrastructureVerifier(BaseVerifier):
             "AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__KEYCLOAK__INDEX_0__AUTH__CLIENT_SECRET",
             "AUTHGUARD__AUTHN__STANDALONE__CREDENTIAL_ENCRYPTION_KEY",
             "AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__LDAP__INDEX_0__AUTH__BIND_PASSWORD",
-            "AUTHGUARD__AUTHZ__API_TOKEN",
+            "AUTHGUARD__AUTHZ__API__TOKEN",
             "AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY",
         }
         if missing := expected - keys:

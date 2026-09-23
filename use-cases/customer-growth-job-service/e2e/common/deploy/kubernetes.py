@@ -703,9 +703,9 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                             CUSTOMER_GROWTH_HOST,
                             CUSTOMER_GROWTH_FALLBACK_HOST,
                         ],
-                        "console": {
+                        "dashboard": {
                             "enabled": True,
-                            "name": f"{self.authguard_web_route}-console",
+                            "name": f"{self.authguard_web_route}-dashboard",
                             "hostnames": [AUTHN_HOST, AUTHN_BROWSER_HOST],
                         },
                     },
@@ -718,14 +718,15 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                         "pullPolicy": "Never",
                     },
                     "disruptionBudget": {"enabled": False},
-                    "mgmt": {
-                        "enabled": True,
-                        "otelEnabled": True,
-                        "otelEndpoint": (
-                            f"http://{self.jaeger_service}.{self.namespace}"
-                            ".svc.cluster.local:4317"
-                        ),
-                    },
+                    "api": {"enabled": True},
+                },
+                "mgmt": {
+                    "enabled": True,
+                    "otelEnabled": True,
+                    "otelEndpoint": (
+                        f"http://{self.jaeger_service}.{self.namespace}"
+                        ".svc.cluster.local:4317"
+                    ),
                 },
                 # The complete main configuration is
                 # rendered by Helm tpl into the authguard ConfigMap. Policy

@@ -181,7 +181,7 @@ OPTIONAL_SCENARIOS = {
         "verifier.authz.other.s26_gateway_authorization",
     ),
     "30": (
-        "Web: real Chromium authentication and control-plane journeys",
+        "Web: real Chromium authentication and Dashboard journeys",
         "verifier.web.s30_authguard_ui",
     ),
     "31": (

@@ -1,6 +1,6 @@
 //! Unified `AuthGuard` executable.
 
-mod console;
+mod api;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -9,7 +9,7 @@ use anyhow::Context as _;
 use authguard_common::config::{AppConfig, DEFAULT_CONFIG};
 use clap::{Args, Parser, Subcommand};
 
-use crate::console::ConsoleOptions;
+use crate::api::ApiOptions;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -35,10 +35,10 @@ struct Cli {
 enum Command {
     /// Run unified OAuth, standalone credential, and optional wallet authentication.
     Authn(AuthnOptions),
-    /// Run the Envoy `ext_authz` and authorization control-plane service.
+    /// Run the Envoy `ext_authz`, workload scope, product API, and management listeners.
     Authz,
-    /// Manage canonical Principals and authorization resources.
-    Console(ConsoleOptions),
+    /// Call the `AuthGuard` API for canonical Principal and policy operations.
+    Api(ApiOptions),
 }
 
 #[derive(Debug, Args)]
@@ -54,7 +54,7 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Authn(options) => run_authn(&cli.config, options.bind),
         Command::Authz => run_authz(&cli.config),
-        Command::Console(options) => runtime(2)?.block_on(options.run()),
+        Command::Api(options) => runtime(2)?.block_on(options.run()),
     }
 }
 
