@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import json
 import shutil
 import socket
+import time
 from typing import Iterator
 from urllib import parse, request
 
@@ -17,26 +19,183 @@ from ..model import CommandResult, RunContext
 from ..process import run_command
 
 
-ALIYUN_ENVOY_IMAGE = (
-    "registry.cn-shenzhen.aliyuncs.com/wl4g/envoyproxy_envoy:distroless-v1.36.4"
-)
-ALIYUN_ENVOY_GATEWAY_IMAGE = (
-    "registry.cn-shenzhen.aliyuncs.com/wl4g/envoyproxy_gateway:v1.9.0"
-)
-ALIYUN_REDIS_IMAGE = (
-    "registry.cn-shenzhen.aliyuncs.com/wl4g-k8s/bitnami_redis-cluster:7.0.14"
-)
-ALIYUN_DOCKER_REDIS_IMAGE = ALIYUN_REDIS_IMAGE
-ALIYUN_KEYCLOAK_IMAGE = "registry.cn-shenzhen.aliyuncs.com/wl4g/keycloak:26.7.0"
-ALIYUN_LDAP_IMAGE = "registry.cn-shenzhen.aliyuncs.com/wl4g/glauth:v2.5.0"
-ALIYUN_JAEGER_IMAGE = (
-    "registry.cn-shenzhen.aliyuncs.com/wl4g/jaegertracing_all-in-one:1.76.0"
-)
-ALIYUN_POSTGRES_IMAGE = (
-    "registry.cn-shenzhen.aliyuncs.com/wl4g/bitnami_postgresql:18.3"
-)
-ALIYUN_ANVIL_IMAGE = "registry.cn-shenzhen.aliyuncs.com/wl4g/foundry_anvil:1.7.1"
-ALIYUN_SOLANA_IMAGE = "registry.cn-shenzhen.aliyuncs.com/wl4g/anza_solana:3.1.14"
+@dataclass(frozen=True)
+class E2EImageCatalog:
+    """Pinned equivalent images selected for the build host's network path."""
+
+    source: str
+    envoy: str
+    envoy_gateway: str
+    redis: str
+    keycloak: str
+    ldap: str
+    jaeger: str
+    postgres: str
+    anvil: str
+    solana: str
+    web_builder: str
+    web_runtime: str
+    chain_builder: str
+    go_builder: str
+    rust_builder: str
+    runtime: str
+    python_runtime: str
+    maven_builder: str
+    java_runtime: str
+    local_chain_images: tuple[str, ...] = ()
+
+    @classmethod
+    def from_environment(cls) -> "E2EImageCatalog":
+        source = os.getenv("AUTHGUARD_E2E_IMAGE_SOURCE", "aliyun").lower()
+        if source == "aliyun":
+            return cls(
+                source=source,
+                envoy=(
+                    "registry.cn-shenzhen.aliyuncs.com/wl4g/"
+                    "envoyproxy_envoy:distroless-v1.36.4"
+                ),
+                envoy_gateway=(
+                    "registry.cn-shenzhen.aliyuncs.com/wl4g/"
+                    "envoyproxy_gateway:v1.9.0"
+                ),
+                redis=(
+                    "registry.cn-shenzhen.aliyuncs.com/wl4g-k8s/"
+                    "bitnami_redis-cluster:7.0.14"
+                ),
+                keycloak=(
+                    "registry.cn-shenzhen.aliyuncs.com/wl4g/keycloak:26.7.0"
+                ),
+                ldap="registry.cn-shenzhen.aliyuncs.com/wl4g/glauth:v2.5.0",
+                jaeger=(
+                    "registry.cn-shenzhen.aliyuncs.com/wl4g/"
+                    "jaegertracing_all-in-one:1.76.0"
+                ),
+                postgres=(
+                    "registry.cn-shenzhen.aliyuncs.com/wl4g/"
+                    "bitnami_postgresql:18.3"
+                ),
+                anvil=(
+                    "registry.cn-shenzhen.aliyuncs.com/wl4g/"
+                    "foundry_anvil:1.7.1"
+                ),
+                solana=(
+                    "registry.cn-shenzhen.aliyuncs.com/wl4g/"
+                    "anza_solana:3.1.14"
+                ),
+                web_builder=(
+                    "registry.cn-shenzhen.aliyuncs.com/wl4g/node:22-alpine"
+                ),
+                web_runtime=(
+                    "registry.cn-shenzhen.aliyuncs.com/wl4g/"
+                    "nginxinc_nginx-unprivileged:1.27-alpine"
+                ),
+                chain_builder=(
+                    "registry.cn-shenzhen.aliyuncs.com/wl4g/rust:1.93-slim"
+                ),
+                go_builder=(
+                    "registry.cn-shenzhen.aliyuncs.com/wl4g/golang:1.26-alpine"
+                ),
+                rust_builder=(
+                    "registry.cn-shenzhen.aliyuncs.com/wl4g/"
+                    "authguard-rust-builder:1.94-bookworm"
+                ),
+                runtime=(
+                    "registry.cn-shenzhen.aliyuncs.com/wl4g/"
+                    "authguard-runtime:nonroot"
+                ),
+                python_runtime=(
+                    "registry.cn-shenzhen.aliyuncs.com/wl4g/python:3.12-slim"
+                ),
+                maven_builder=(
+                    "registry.cn-shenzhen.aliyuncs.com/wl4g/"
+                    "maven:3.9.9-eclipse-temurin-17"
+                ),
+                java_runtime=(
+                    "registry.cn-shenzhen.aliyuncs.com/wl4g/"
+                    "eclipse-temurin:17-jre"
+                ),
+            )
+        if source == "global":
+            local_chains = (
+                "authguard-e2e/foundry-anvil:e2e-local",
+                "authguard-e2e/anza-solana:e2e-local",
+            )
+            return cls(
+                source=source,
+                envoy="docker.io/envoyproxy/envoy:distroless-v1.36.4",
+                envoy_gateway="docker.io/envoyproxy/gateway:v1.9.0",
+                redis="docker.io/bitnamilegacy/redis-cluster:7.0.14",
+                keycloak="quay.io/keycloak/keycloak:26.7.0",
+                ldap="docker.io/glauth/glauth:v2.5.0",
+                jaeger="docker.io/jaegertracing/all-in-one:1.76.0",
+                postgres=(
+                    "docker.io/bitnami/postgresql@sha256:"
+                    "7d77a46bbf200709237318c27dec0eaeae2520e403dd18fdebde2be7a6b04993"
+                ),
+                anvil=local_chains[0],
+                solana=local_chains[1],
+                web_builder="docker.io/library/node:22-alpine",
+                web_runtime="docker.io/nginxinc/nginx-unprivileged:1.27-alpine",
+                chain_builder="docker.io/library/rust:1.93-slim",
+                go_builder="docker.io/library/golang:1.26-alpine",
+                rust_builder="docker.io/library/rust:1.94-bookworm",
+                runtime="gcr.io/distroless/cc-debian12:nonroot",
+                python_runtime="docker.io/library/python:3.12-slim",
+                maven_builder=(
+                    "docker.io/library/maven:3.9.9-eclipse-temurin-17"
+                ),
+                java_runtime="docker.io/library/eclipse-temurin:17-jre",
+                local_chain_images=local_chains,
+            )
+        raise ValueError(
+            "AUTHGUARD_E2E_IMAGE_SOURCE must be either 'aliyun' or 'global'"
+        )
+
+    @property
+    def pullable_images(self) -> tuple[str, ...]:
+        images = (
+            self.envoy,
+            self.envoy_gateway,
+            self.redis,
+            self.keycloak,
+            self.ldap,
+            self.jaeger,
+            self.postgres,
+            self.anvil,
+            self.solana,
+        )
+        return tuple(image for image in images if image not in self.local_chain_images)
+
+    @property
+    def docker_pullable_images(self) -> tuple[str, ...]:
+        return tuple(
+            image
+            for image in self.all_images
+            if image != self.envoy_gateway and image not in self.local_chain_images
+        )
+
+    @property
+    def all_images(self) -> tuple[str, ...]:
+        return (
+            self.envoy,
+            self.envoy_gateway,
+            self.redis,
+            self.keycloak,
+            self.ldap,
+            self.jaeger,
+            self.postgres,
+            self.anvil,
+            self.solana,
+        )
+
+    @staticmethod
+    def helm_image_parts(image: str) -> tuple[str, str, str]:
+        registry, repository_and_tag = image.split("/", 1)
+        repository, tag = repository_and_tag.rsplit(":", 1)
+        return registry, repository, tag
+
+
+E2E_IMAGES = E2EImageCatalog.from_environment()
 DEFAULT_AUTHGUARD_IMAGE = (
     "registry.cn-shenzhen.aliyuncs.com/wl4g/authguard:e2e-local"
 )
@@ -527,8 +686,8 @@ class BaseE2EDeployer(ABC):
                     "prebuilt E2E mode requires AUTHGUARD_E2E_AUTHGUARD_IMAGE "
                     "and AUTHGUARD_E2E_WEB_IMAGE"
                 )
-            self._run(("docker", "pull", AUTHGUARD_IMAGE))
-            self._run(("docker", "pull", AUTHGUARD_WEB_IMAGE))
+            self._pull_image(AUTHGUARD_IMAGE)
+            self._pull_image(AUTHGUARD_WEB_IMAGE)
         else:
             self._run(
                 (
@@ -539,6 +698,10 @@ class BaseE2EDeployer(ABC):
                     *build_args,
                     "-f",
                     str(PROJECT_ROOT / "deploy" / "docker" / "Dockerfile"),
+                    "--build-arg",
+                    f"RUST_BUILDER_IMAGE={E2E_IMAGES.rust_builder}",
+                    "--build-arg",
+                    f"RUNTIME_IMAGE={E2E_IMAGES.runtime}",
                     "--build-arg",
                     "AUTHGUARD_CARGO_FEATURES=web3",
                     "-t",
@@ -558,6 +721,10 @@ class BaseE2EDeployer(ABC):
                     "-f",
                     str(ui_dir / "Dockerfile"),
                     "--build-arg",
+                    f"NODE_IMAGE={E2E_IMAGES.web_builder}",
+                    "--build-arg",
+                    f"WEB_IMAGE={E2E_IMAGES.web_runtime}",
+                    "--build-arg",
                     f"VITE_REOWN_PROJECT_ID={os.getenv('VITE_REOWN_PROJECT_ID', '')}",
                     "-t",
                     AUTHGUARD_WEB_IMAGE,
@@ -565,8 +732,63 @@ class BaseE2EDeployer(ABC):
                 ),
                 cwd=PROJECT_ROOT,
             )
+        if E2E_IMAGES.local_chain_images:
+            chain_builds = (
+                (
+                    E2E_IMAGES.anvil,
+                    self.deploy_dir / "anvil" / "Dockerfile",
+                ),
+                (
+                    E2E_IMAGES.solana,
+                    self.deploy_dir / "solana" / "Dockerfile",
+                ),
+            )
+            for image, dockerfile in chain_builds:
+                self._run(
+                    (
+                        "docker",
+                        "build",
+                        "--network=host",
+                        "--pull=false",
+                        *build_args,
+                        "-f",
+                        str(dockerfile),
+                        "--build-arg",
+                        f"RUST_IMAGE={E2E_IMAGES.chain_builder}",
+                        "-t",
+                        image,
+                        str(dockerfile.parent),
+                    ),
+                    cwd=PROJECT_ROOT,
+                )
+        workload_build_args = {
+            "go-sqlx": (
+                f"GO_IMAGE={E2E_IMAGES.go_builder}",
+                f"RUNTIME_IMAGE={E2E_IMAGES.runtime}",
+            ),
+            "rust-sqlx": (
+                f"RUST_BUILDER_IMAGE={E2E_IMAGES.rust_builder}",
+                f"RUNTIME_IMAGE={E2E_IMAGES.runtime}",
+            ),
+            "python-sqlalchemy": (
+                f"PYTHON_IMAGE={E2E_IMAGES.python_runtime}",
+            ),
+            "spring-jdbc": (
+                f"MAVEN_IMAGE={E2E_IMAGES.maven_builder}",
+                f"JAVA_IMAGE={E2E_IMAGES.java_runtime}",
+            ),
+            "spring-jpa": (
+                f"MAVEN_IMAGE={E2E_IMAGES.maven_builder}",
+                f"JAVA_IMAGE={E2E_IMAGES.java_runtime}",
+            ),
+        }
         for component, image in WORKLOAD_IMAGES.items():
             service_dir = self.deploy_dir / WORKLOAD_DIRECTORIES[component]
+            image_build_args = tuple(
+                argument
+                for build_arg in workload_build_args[component]
+                for argument in ("--build-arg", build_arg)
+            )
             self._run(
                 (
                     "docker",
@@ -574,6 +796,7 @@ class BaseE2EDeployer(ABC):
                     "--network=host",
                     "--pull=false",
                     *build_args,
+                    *image_build_args,
                     "-f",
                     str(service_dir / "Dockerfile"),
                     "-t",
@@ -589,6 +812,8 @@ class BaseE2EDeployer(ABC):
                 "--network=host",
                 "--pull=false",
                 *build_args,
+                "--build-arg",
+                f"PYTHON_IMAGE={E2E_IMAGES.python_runtime}",
                 "-f",
                 str(self.deploy_dir / "mocksvc-idp-service" / "Dockerfile"),
                 "-t",
@@ -596,6 +821,45 @@ class BaseE2EDeployer(ABC):
                 ".",
             ),
             cwd=PROJECT_ROOT,
+        )
+
+    def _ensure_local_image(self, image: str) -> None:
+        """Populate the local image store without trusting one registry request."""
+        inspected = self._run(
+            # Docker returns 1 for a missing image; the Podman-compatible
+            # Docker CLI returns 125 for the same non-fatal cache miss.
+            ("docker", "image", "inspect", image), allowed_codes={0, 1, 125}
+        )
+        if inspected.return_code != 0:
+            self._pull_image(image)
+
+    def _pull_image(self, image: str) -> None:
+        """Retry image pulls that fail on transient registry transport errors."""
+        failures: list[str] = []
+        attempts = 3
+        for attempt in range(1, attempts + 1):
+            result = self._run(
+                ("docker", "pull", image), allowed_codes={0, 1, 125}
+            )
+            if result.return_code == 0:
+                if attempt > 1:
+                    self.details.append(
+                        f"pulled {image} after {attempt} registry attempts"
+                    )
+                return
+            failure = "\n".join(result.output.splitlines()[-8:]).strip()
+            failures.append(f"attempt {attempt}: {failure or 'no output'}")
+            if attempt < attempts:
+                delay_seconds = 2 ** attempt
+                print(
+                    f"        registry pull failed; retrying {image} in "
+                    f"{delay_seconds}s ({attempt}/{attempts})",
+                    flush=True,
+                )
+                time.sleep(delay_seconds)
+        raise RuntimeError(
+            f"docker pull failed after {attempts} attempts: {image}\n"
+            + "\n".join(failures)
         )
 
     def _run(

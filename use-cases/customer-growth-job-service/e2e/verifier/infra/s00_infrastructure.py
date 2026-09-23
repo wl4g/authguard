@@ -7,17 +7,10 @@ import time
 from urllib import request
 
 from common.deploy.base import (
-    ALIYUN_ANVIL_IMAGE,
-    ALIYUN_ENVOY_GATEWAY_IMAGE,
-    ALIYUN_ENVOY_IMAGE,
-    ALIYUN_JAEGER_IMAGE,
-    ALIYUN_KEYCLOAK_IMAGE,
-    ALIYUN_LDAP_IMAGE,
-    ALIYUN_POSTGRES_IMAGE,
-    ALIYUN_REDIS_IMAGE,
-    ALIYUN_SOLANA_IMAGE,
     AUTHGUARD_IMAGE,
     AUTHGUARD_WEB_IMAGE,
+    E2E_IMAGES,
+    MOCK_IDP_IMAGE,
     WORKLOAD_IMAGES,
 )
 from common.config import CONFIG_DIR
@@ -536,34 +529,21 @@ class InfrastructureVerifier(BaseVerifier):
             )
         }
         expected = {
-            ALIYUN_ENVOY_IMAGE,
-            ALIYUN_ENVOY_GATEWAY_IMAGE,
-            ALIYUN_REDIS_IMAGE,
-            ALIYUN_KEYCLOAK_IMAGE,
-            ALIYUN_LDAP_IMAGE,
-            ALIYUN_JAEGER_IMAGE,
-            ALIYUN_POSTGRES_IMAGE,
-            ALIYUN_ANVIL_IMAGE,
-            ALIYUN_SOLANA_IMAGE,
+            *E2E_IMAGES.all_images,
             AUTHGUARD_IMAGE,
             AUTHGUARD_WEB_IMAGE,
+            MOCK_IDP_IMAGE,
             *WORKLOAD_IMAGES.values(),
         }
         missing = expected - images
         if missing:
             raise RuntimeError(f"expected runtime images are not running: {sorted(missing)}")
-        configured_authguard_images = {AUTHGUARD_IMAGE, AUTHGUARD_WEB_IMAGE}
-        non_aliyun = sorted(
-            image
-            for image in images
-            if not image.startswith("registry.cn-shenzhen.aliyuncs.com/")
-            and image not in configured_authguard_images
-        )
-        if non_aliyun:
-            raise RuntimeError(f"unexpected runtime image registries: {non_aliyun}")
+        unexpected = images - expected
+        if unexpected:
+            raise RuntimeError(f"unexpected runtime images: {sorted(unexpected)}")
         self.details.append(
-            "all dependency images use registry.cn-shenzhen.aliyuncs.com and "
-            "AuthGuard uses its configured immutable runtime and Web images"
+            f"all dependency images use the {E2E_IMAGES.source} source and AuthGuard "
+            "uses its configured immutable runtime and Web images"
         )
 
     def _verify_zero_container_restarts(self) -> None:

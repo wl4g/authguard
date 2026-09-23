@@ -174,6 +174,10 @@ curl -fsS http://127.0.0.1:8082/.well-known/authn.json | jq
 ### Test
 
 ```bash
+# Inspect the auto-selected dependency source: Aliyun behind the GFW, otherwise
+# pinned official upstream images. Override with IN_CN_GFW=true|false when needed.
+make image-source
+
 # Rust, React, SDK, use-case, and Helm checks.
 make test
 

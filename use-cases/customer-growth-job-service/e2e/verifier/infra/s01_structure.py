@@ -490,6 +490,29 @@ def _verify(_context: RunContext) -> VerificationResult:
             f"AuthGuard Web defaults lack mainland-accessible base images: {missing}"
         )
 
+    makefile_source = (PROJECT_ROOT / "Makefile").read_text(encoding="utf-8")
+    image_catalog_source = (
+        USE_CASE_DIR / "e2e/common/deploy/base.py"
+    ).read_text(encoding="utf-8")
+    runtime_dockerfile_source = (
+        PROJECT_ROOT / "deploy/docker/Dockerfile"
+    ).read_text(encoding="utf-8")
+    image_source_markers = (
+        "AUTHGUARD_E2E_IMAGE_SOURCE",
+        "registry-1.docker.io/v2/",
+        "docker.io/envoyproxy/envoy:distroless-v1.36.4",
+        "registry.cn-shenzhen.aliyuncs.com/wl4g/",
+        "class E2EImageCatalog",
+        'RUN ["/usr/local/bin/authguard", "--version"]',
+    )
+    image_source_contract = (
+        makefile_source + image_catalog_source + runtime_dockerfile_source
+    )
+    if missing := [
+        marker for marker in image_source_markers if marker not in image_source_contract
+    ]:
+        errors.append(f"regional image-source selection is incomplete: {missing}")
+
     route_template_contracts = {
         "authn/public-route.yaml": ("value: /auth/", "value: /.well-known/"),
         "web/hosted-login-route.yaml": (

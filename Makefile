@@ -1,4 +1,4 @@
-.PHONY: help build build-web build-image build-runtime-image build-web-image docker-up docker-down docker-logs fmt fmt-rust lint lint-rust lint-web lint-helm test test-rust test-web test-go test-python test-python-deps test-java test-helm e2e-python e2e-prepare e2e e2e-k8s e2e-docker e2e-cleanup package-chart release release-push release-verify clean
+.PHONY: help image-source build build-web build-image build-runtime-image build-web-image docker-up docker-down docker-logs fmt fmt-rust lint lint-rust lint-web lint-helm test test-rust test-web test-go test-python test-python-deps test-java test-helm e2e-python e2e-prepare e2e e2e-k8s e2e-docker e2e-cleanup package-chart release release-push release-verify clean
 
 CARGO ?= cargo
 GO ?= go
@@ -17,8 +17,6 @@ AUTHGUARD_CARGO_FEATURES ?= web3
 VITE_AUTHN_BASE_URL ?=
 VITE_AUTHZ_BASE_URL ?=
 VITE_REOWN_PROJECT_ID ?=
-WEB_NODE_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/node:22-alpine
-WEB_RUNTIME_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/nginxinc_nginx-unprivileged:1.27-alpine
 HELM_OCI_REGISTRY ?= oci://ghcr.io/wl4g/charts
 RELEASE_DIR ?= dist
 USE_CASE_DIR := use-cases/customer-growth-job-service
@@ -37,15 +35,61 @@ WEB_DIR := web
 DOCKER_COMPOSE_FILE := deploy/docker/docker-compose.yaml
 DOCKER_ENV_FILE := deploy/docker/.env
 
-ifeq ($(IN_CN_GFW),true)
-HTTPS_PROXY ?= http://127.0.0.1:8800
-HTTP_PROXY ?= $(HTTPS_PROXY)
-export HTTPS_PROXY
-export HTTP_PROXY
-CONTAINER_BUILD_FLAGS += --network=host --build-arg HTTPS_PROXY=$(HTTPS_PROXY) --build-arg HTTP_PROXY=$(HTTP_PROXY)
+IMAGE_SOURCE_GOALS := image-source build-image build-runtime-image \
+	build-web-image e2e e2e-k8s e2e-docker release
+ifneq ($(strip $(filter $(IMAGE_SOURCE_GOALS),$(MAKECMDGOALS))),)
+ifeq ($(origin IN_CN_GFW),undefined)
+IN_CN_GFW := $(shell \
+	if command -v curl >/dev/null 2>&1; then \
+		status=$$(curl -sS --noproxy '*' -o /dev/null -w '%{http_code}' \
+			--connect-timeout 3 --max-time 5 https://registry-1.docker.io/v2/ \
+			2>/dev/null || true); \
+		if [ "$$status" = 200 ] || [ "$$status" = 401 ]; then \
+			echo false; \
+		else \
+			echo true; \
+		fi; \
+	else \
+		echo true; \
+	fi)
+endif
+else ifeq ($(origin IN_CN_GFW),undefined)
+# Formatting, unit tests, Helm rendering, and help do not consume container
+# images. Avoid adding a registry network probe to those unrelated targets.
+IN_CN_GFW := false
+endif
+ifeq ($(filter $(IN_CN_GFW),true false),)
+$(error IN_CN_GFW must be true or false)
 endif
 
 TEST_PROXY_PRESENT := $(strip $(HTTPS_PROXY)$(https_proxy)$(HTTP_PROXY)$(http_proxy))
+BUILD_PROXY := $(or $(HTTPS_PROXY),$(https_proxy),$(HTTP_PROXY),$(http_proxy))
+ifneq ($(TEST_PROXY_PRESENT),)
+CONTAINER_BUILD_FLAGS += --network=host --build-arg HTTPS_PROXY=$(BUILD_PROXY) --build-arg HTTP_PROXY=$(BUILD_PROXY)
+endif
+
+AUTHGUARD_IMAGE_SOURCE ?= $(if $(filter true,$(IN_CN_GFW)),aliyun,global)
+ifeq ($(filter $(AUTHGUARD_IMAGE_SOURCE),aliyun global),)
+$(error AUTHGUARD_IMAGE_SOURCE must be aliyun or global)
+endif
+AUTHGUARD_E2E_IMAGE_SOURCE ?= $(AUTHGUARD_IMAGE_SOURCE)
+ifeq ($(filter $(AUTHGUARD_E2E_IMAGE_SOURCE),aliyun global),)
+$(error AUTHGUARD_E2E_IMAGE_SOURCE must be aliyun or global)
+endif
+export AUTHGUARD_E2E_IMAGE_SOURCE
+
+ifeq ($(AUTHGUARD_IMAGE_SOURCE),aliyun)
+WEB_NODE_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/node:22-alpine
+WEB_RUNTIME_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/nginxinc_nginx-unprivileged:1.27-alpine
+RUST_BUILDER_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-rust-builder:1.94-bookworm
+RUNTIME_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-runtime:nonroot
+else
+WEB_NODE_IMAGE ?= docker.io/library/node:22-alpine
+WEB_RUNTIME_IMAGE ?= docker.io/nginxinc/nginx-unprivileged:1.27-alpine
+RUST_BUILDER_IMAGE ?= docker.io/library/rust:1.94-bookworm
+RUNTIME_IMAGE ?= gcr.io/distroless/cc-debian12:nonroot
+endif
+
 ifeq ($(TEST_PROXY_PRESENT),)
 GO_NETWORK_ENV := GOPROXY=$(GOPROXY)
 else
@@ -84,7 +128,16 @@ help:
 	@echo "    make release       Build, package, publish, and pull-verify image/chart artifacts."
 	@echo ""
 	@echo "  Utils:"
+	@echo "    make image-source  Show the auto-detected container image source."
 	@echo "    make clean         Remove local build artifacts."
+
+image-source:
+	@echo "IN_CN_GFW=$(IN_CN_GFW)"
+	@echo "AUTHGUARD_IMAGE_SOURCE=$(AUTHGUARD_IMAGE_SOURCE)"
+	@echo "AUTHGUARD_E2E_IMAGE_SOURCE=$(AUTHGUARD_E2E_IMAGE_SOURCE)"
+	@echo "WEB_NODE_IMAGE=$(WEB_NODE_IMAGE)"
+	@echo "RUST_BUILDER_IMAGE=$(RUST_BUILDER_IMAGE)"
+	@echo "RUNTIME_IMAGE=$(RUNTIME_IMAGE)"
 
 build: build-web
 	$(CARGO) build --workspace
@@ -104,6 +157,8 @@ build-runtime-image:
 	    $(CARGO) clean; \
 	  fi
 	$(CONTAINER_CLI) build $(CONTAINER_BUILD_FLAGS) -f deploy/docker/Dockerfile \
+		--build-arg RUST_BUILDER_IMAGE="$(RUST_BUILDER_IMAGE)" \
+		--build-arg RUNTIME_IMAGE="$(RUNTIME_IMAGE)" \
 		--build-arg AUTHGUARD_CARGO_FEATURES="$(AUTHGUARD_CARGO_FEATURES)" \
 		-t $(GHCR_IMAGE):$(VERSION) -t $(GHCR_IMAGE):latest .
 

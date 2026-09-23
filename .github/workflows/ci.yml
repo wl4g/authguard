@@ -75,7 +75,10 @@ jobs:
           context: .
           file: deploy/docker/Dockerfile
           push: true
-          build-args: AUTHGUARD_CARGO_FEATURES=web3
+          build-args: |
+            AUTHGUARD_CARGO_FEATURES=web3
+            RUST_BUILDER_IMAGE=docker.io/library/rust:1.94-bookworm
+            RUNTIME_IMAGE=gcr.io/distroless/cc-debian12:nonroot
           labels: |
             org.opencontainers.image.revision=${{ github.event.pull_request.head.sha }}
             org.opencontainers.image.version=${{ steps.dirty-tag.outputs.value }}
@@ -89,6 +92,9 @@ jobs:
           context: web
           file: web/Dockerfile
           push: true
+          build-args: |
+            NODE_IMAGE=docker.io/library/node:22-alpine
+            WEB_IMAGE=docker.io/nginxinc/nginx-unprivileged:1.27-alpine
           labels: |
             org.opencontainers.image.revision=${{ github.event.pull_request.head.sha }}
             org.opencontainers.image.version=${{ steps.dirty-tag.outputs.value }}
