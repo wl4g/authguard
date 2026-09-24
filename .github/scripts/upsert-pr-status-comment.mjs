@@ -129,7 +129,7 @@ const renderRelease = () => {
   }
 
   if (shouldRelease !== "true") {
-    details.push("- Status: ⏭️ No release. Only merged PR titles beginning with `refactor:`, `feat:`, or `fix:` publish artifacts.");
+    details.push("- Status: ⏭️ No release. Only merged PR titles beginning with `refactor:`, `feat:`, `fix:`, or `ci:` publish artifacts.");
     return details.join("\n");
   }
 
