@@ -15,7 +15,7 @@ jobs:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       issues: write
       pull-requests: write
     outputs:
@@ -77,36 +77,30 @@ jobs:
           echo "tag=v${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
           echo "should_release=true" >> "$GITHUB_OUTPUT"
 
-      - name: Tag release commit
-        if: steps.version.outputs.should_release == 'true' && steps.version.outputs.tag != ''
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
-            echo "Release tag ${TAG} already exists."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${TAG}" -m "Release ${TAG}"
-          git push origin "${TAG}"
-
-  publish:
-    name: Publish official artifacts
+  build-runtime:
+    name: Build runtime (${{ matrix.arch }})
     needs: prepare
     if: needs.prepare.outputs.should_release == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     permissions:
-      contents: write
+      contents: read
       packages: write
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare.outputs.tag }}
-          fetch-depth: 0
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
 
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
@@ -116,13 +110,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and publish runtime image
+      - name: Build and publish runtime digest
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: deploy/docker/Dockerfile
-          push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
           build-args: |
             AUTHGUARD_CARGO_FEATURES=web3
             RUST_BUILDER_IMAGE=docker.io/library/rust:1.94-bookworm
@@ -130,49 +124,219 @@ jobs:
           labels: |
             org.opencontainers.image.revision=${{ github.event.pull_request.merge_commit_sha }}
             org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
-          tags: |
-            ghcr.io/wl4g/authguard:${{ needs.prepare.outputs.version }}
-            ghcr.io/wl4g/authguard:latest
-          cache-from: type=gha,scope=authguard-runtime
-          cache-to: type=gha,mode=max,scope=authguard-runtime,ignore-error=true
+          outputs: type=image,name=ghcr.io/wl4g/authguard,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=authguard-runtime-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=authguard-runtime-${{ matrix.arch }},ignore-error=true
 
-      - name: Build and publish web image
+      - name: Export runtime digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          test -n "${DIGEST}"
+          mkdir -p /tmp/authguard-digests
+          touch "/tmp/authguard-digests/${DIGEST#sha256:}"
+
+      - name: Upload runtime digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: authguard-runtime-digest-${{ matrix.arch }}
+          path: /tmp/authguard-digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  build-web:
+    name: Build web (${{ matrix.arch }})
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish web digest
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: web
           file: web/Dockerfile
-          push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
           build-args: |
             NODE_IMAGE=docker.io/library/node:22-alpine
             WEB_IMAGE=docker.io/nginxinc/nginx-unprivileged:1.27-alpine
           labels: |
             org.opencontainers.image.revision=${{ github.event.pull_request.merge_commit_sha }}
             org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
-          tags: |
-            ghcr.io/wl4g/authguard-web:${{ needs.prepare.outputs.version }}
-            ghcr.io/wl4g/authguard-web:latest
-          cache-from: type=gha,scope=authguard-web
-          cache-to: type=gha,mode=max,scope=authguard-web,ignore-error=true
+          outputs: type=image,name=ghcr.io/wl4g/authguard-web,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=authguard-web-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=authguard-web-${{ matrix.arch }},ignore-error=true
+
+      - name: Export web digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          test -n "${DIGEST}"
+          mkdir -p /tmp/authguard-web-digests
+          touch "/tmp/authguard-web-digests/${DIGEST#sha256:}"
+
+      - name: Upload web digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: authguard-web-digest-${{ matrix.arch }}
+          path: /tmp/authguard-web-digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  package-chart:
+    name: Package Helm chart
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
 
       - name: Install Helm
         uses: azure/setup-helm@v4
         with:
           version: v3.17.0
 
-      - name: Package, publish, and pull-verify chart
+      - name: Package and verify chart
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          mkdir -p dist
+          helm dependency list deploy/helm/authguard
+          helm lint deploy/helm/authguard
+          helm package deploy/helm/authguard --destination dist --version "${VERSION}" --app-version "${VERSION}"
+          helm show chart "dist/authguard-${VERSION}.tgz" >/dev/null
+
+      - name: Upload Helm chart
+        uses: actions/upload-artifact@v4
+        with:
+          name: authguard-chart-${{ needs.prepare.outputs.version }}
+          path: dist/authguard-${{ needs.prepare.outputs.version }}.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish official artifacts
+    needs: [prepare, build-runtime, build-web, package-chart]
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download runtime digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: authguard-runtime-digest-*
+          path: /tmp/authguard-runtime-digests
+          merge-multiple: true
+
+      - name: Download web digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: authguard-web-digest-*
+          path: /tmp/authguard-web-digests
+          merge-multiple: true
+
+      - name: Download Helm chart
+        uses: actions/download-artifact@v4
+        with:
+          name: authguard-chart-${{ needs.prepare.outputs.version }}
+          path: dist
+
+      - name: Publish multi-architecture image indexes
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          mapfile -t runtime_digests < <(find /tmp/authguard-runtime-digests -maxdepth 1 -type f -printf 'ghcr.io/wl4g/authguard@sha256:%f\n' | sort)
+          mapfile -t web_digests < <(find /tmp/authguard-web-digests -maxdepth 1 -type f -printf 'ghcr.io/wl4g/authguard-web@sha256:%f\n' | sort)
+          test "${#runtime_digests[@]}" -eq 2
+          test "${#web_digests[@]}" -eq 2
+          docker buildx imagetools create \
+            --tag "ghcr.io/wl4g/authguard:${VERSION}" \
+            --tag ghcr.io/wl4g/authguard:latest \
+            "${runtime_digests[@]}"
+          docker buildx imagetools create \
+            --tag "ghcr.io/wl4g/authguard-web:${VERSION}" \
+            --tag ghcr.io/wl4g/authguard-web:latest \
+            "${web_digests[@]}"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.17.0
+
+      - name: Publish and pull-verify chart
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "${GH_TOKEN}" | helm registry login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
-          mkdir -p dist verify
-          helm dependency list deploy/helm/authguard
-          helm lint deploy/helm/authguard
-          helm package deploy/helm/authguard --destination dist --version "${VERSION}" --app-version "${VERSION}"
+          mkdir -p verify
           helm push "dist/authguard-${VERSION}.tgz" oci://ghcr.io/wl4g/charts
           helm pull oci://ghcr.io/wl4g/charts/authguard --version "${VERSION}" --destination verify
           helm show chart "verify/authguard-${VERSION}.tgz" >/dev/null
+
+      - name: Tag release commit
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            test "$(git rev-parse "${TAG}^{commit}")" = "${RELEASE_SHA}"
+            echo "Release tag ${TAG} already points to ${RELEASE_SHA}."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" "${RELEASE_SHA}" -m "Release ${TAG}"
+          git push origin "${TAG}"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
@@ -210,7 +374,7 @@ jobs:
 
   comment-final:
     name: Report release result
-    needs: [prepare, publish, cleanup-dirty-images]
+    needs: [prepare, build-runtime, build-web, package-chart, publish, cleanup-dirty-images]
     if: always() && github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:

@@ -75,6 +75,7 @@ jobs:
           context: .
           file: deploy/docker/Dockerfile
           push: true
+          platforms: linux/amd64
           build-args: |
             AUTHGUARD_CARGO_FEATURES=web3
             RUST_BUILDER_IMAGE=docker.io/library/rust:1.94-bookworm
@@ -83,8 +84,8 @@ jobs:
             org.opencontainers.image.revision=${{ github.event.pull_request.head.sha }}
             org.opencontainers.image.version=${{ steps.dirty-tag.outputs.value }}
           tags: ghcr.io/wl4g/authguard:${{ steps.dirty-tag.outputs.value }}
-          cache-from: type=gha,scope=authguard-runtime
-          cache-to: type=gha,mode=max,scope=authguard-runtime,ignore-error=true
+          cache-from: type=gha,scope=authguard-runtime-amd64
+          cache-to: type=gha,mode=max,scope=authguard-runtime-amd64,ignore-error=true
 
       - name: Build and push dirty web image
         uses: docker/build-push-action@v6
@@ -92,6 +93,7 @@ jobs:
           context: web
           file: web/Dockerfile
           push: true
+          platforms: linux/amd64
           build-args: |
             NODE_IMAGE=docker.io/library/node:22-alpine
             WEB_IMAGE=docker.io/nginxinc/nginx-unprivileged:1.27-alpine
@@ -99,8 +101,8 @@ jobs:
             org.opencontainers.image.revision=${{ github.event.pull_request.head.sha }}
             org.opencontainers.image.version=${{ steps.dirty-tag.outputs.value }}
           tags: ghcr.io/wl4g/authguard-web:${{ steps.dirty-tag.outputs.value }}
-          cache-from: type=gha,scope=authguard-web
-          cache-to: type=gha,mode=max,scope=authguard-web,ignore-error=true
+          cache-from: type=gha,scope=authguard-web-amd64
+          cache-to: type=gha,mode=max,scope=authguard-web-amd64,ignore-error=true
 
       - name: Drop package credentials before tests
         run: docker logout ghcr.io
