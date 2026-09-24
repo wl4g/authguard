@@ -49,10 +49,10 @@ jobs:
             bump=major
           elif grep -qiE '^feat:' <<< "${PR_TITLE}"; then
             bump=minor
-          elif grep -qiE '^fix:' <<< "${PR_TITLE}"; then
+          elif grep -qiE '^fix:|^ci(\([^)]+\))?:' <<< "${PR_TITLE}"; then
             bump=patch
           else
-            echo "PR title does not trigger a release (only refactor:, feat:, fix:)."
+            echo "PR title does not trigger a release (only refactor:, feat:, fix:, ci:)."
             echo "should_release=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
