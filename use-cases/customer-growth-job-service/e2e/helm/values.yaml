@@ -64,7 +64,7 @@ supportPostgresql:
     limits: { cpu: 1000m, memory: 1Gi }
 
 gateway:
-  name: e2e-authguard-customer-growth-gateway
+  name: e2e-authguard-system-gateway
 
 customerGrowth:
   hosts:

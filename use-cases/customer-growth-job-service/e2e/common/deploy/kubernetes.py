@@ -218,30 +218,67 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
     def __init__(self, context: RunContext) -> None:
         super().__init__(context)
         self.namespace = os.getenv(
-            "AUTHGUARD_E2E_NAMESPACE", "e2e-authguard-customer-growth"
+            "AUTHGUARD_E2E_NAMESPACE", "e2e-authguard-system"
         )
-        self.release = os.getenv(
-            "AUTHGUARD_E2E_RELEASE", "e2e-authguard-customer-growth"
-        )
+        self.release = os.getenv("AUTHGUARD_E2E_RELEASE", "e2e-authguard")
         if not self.namespace.startswith("e2e-authguard-"):
             raise ValueError("AUTHGUARD_E2E_NAMESPACE must start with e2e-authguard-")
-        if not self.release.startswith("e2e-authguard-"):
-            raise ValueError("AUTHGUARD_E2E_RELEASE must start with e2e-authguard-")
+        if not (
+            self.release == "e2e-authguard"
+            or self.release.startswith("e2e-authguard-")
+        ):
+            raise ValueError(
+                "AUTHGUARD_E2E_RELEASE must be e2e-authguard or start with e2e-authguard-"
+            )
         self.envoy_release = f"{self.release}-envoy"
         self.support_release = f"{self.release}-support"
-        self.authguard_release = f"{self.release}-authguard"
+        self.authguard_release = self.release
         self.authguard_authz_service = self.authguard_release
         self.authguard_authn_service = f"{self.authguard_release}-authn"
-        self.gateway_name = "e2e-authguard-customer-growth-gateway"
+        self.authn_route_name = f"{self.release}-authn"
+        # GatewayClass is cluster-scoped. Scope its name with the isolated
+        # namespace as well as the E2E prefix so concurrent suites and stale
+        # releases cannot claim the same cluster resource.
+        self.gateway_name = f"{self.namespace}-gateway"
+        self.envoy_gateway_deployment = f"{self.release}-envoy-gateway"
+        self.redis_service = f"{self.release}-redis"
         self.environment = {
-            "KUBECONFIG": os.getenv(
-                "KUBECONFIG", str(Path.home() / ".kube" / "config")
-            )
+            "KUBECONFIG": self._resolve_kubeconfig(),
+            "AUTHGUARD_E2E_ENVOY_GATEWAY_NAME": self.envoy_gateway_deployment,
         }
         self.helm_chart = PROJECT_ROOT / "deploy" / "helm" / "authguard"
         self.support_chart = E2E_DIR / "helm"
         self.deploy_dir = E2E_DIR / "deploy"
         self._image_loader: KubernetesLocalImageLoader | None = None
+
+    @staticmethod
+    def _resolve_kubeconfig() -> str:
+        """Prefer the user's active context, then a readable local K3s context."""
+        if configured := os.getenv("KUBECONFIG"):
+            return configured
+        user_config = Path.home() / ".kube" / "config"
+        if KubernetesE2EDeployer._has_current_context(user_config):
+            return str(user_config)
+        k3s_config = Path("/etc/rancher/k3s/k3s.yaml")
+        if KubernetesE2EDeployer._has_current_context(k3s_config):
+            return str(k3s_config)
+        raise RuntimeError(
+            "no usable Kubernetes context: set KUBECONFIG or configure "
+            "~/.kube/config (local K3s fallback was unavailable)"
+        )
+
+    @staticmethod
+    def _has_current_context(kubeconfig: Path) -> bool:
+        if not kubeconfig.is_file():
+            return False
+        result = subprocess.run(
+            ("kubectl", "--kubeconfig", str(kubeconfig), "config", "current-context"),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=5,
+        )
+        return result.returncode == 0
 
     @property
     def keycloak_service(self) -> str:
@@ -281,7 +318,7 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
 
     @property
     def authguard_web_route(self) -> str:
-        return "e2e-authguard-customer-growth-web"
+        return f"{self.release}-web"
 
     @property
     def gateway_controller_name(self) -> str:
@@ -304,7 +341,7 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
 
     @property
     def redis_node(self) -> str:
-        return f"redis://e2e-redis-cluster.{self.namespace}.svc.cluster.local:6379"
+        return f"redis://{self.redis_service}.{self.namespace}.svc.cluster.local:6379"
 
     @property
     def iam_postgres_url(self) -> str:
@@ -335,10 +372,13 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
         # kubelet never records an ErrImageNeverPull before that tag exists.
         self._prepare_workload_images()
         self._install_support_services()
-        # Support Pods now reference their immutable images. Re-check after the
-        # mutable imports so a local cluster image cache cannot lose a large,
-        # previously idle chain image before Pod startup.
+        # Support Pods now exist. Re-check pinned external dependencies before
+        # waiting because a constrained local image cache may evict idle layers.
         self._prepare_external_images()
+        # The large chain images above can make K3s evict unreferenced local
+        # workload tags. The consumer Pods now exist, so immediately restore
+        # every local tag before waiting for their startup.
+        self._prepare_workload_images()
         self._wait_for_support_services()
         self._import_image(AUTHGUARD_IMAGE)
         # The Web Pod is created by the AuthGuard chart, not the support chart.
@@ -469,6 +509,8 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                 "global.images.envoyProxy.pullPolicy=Never",
                 "--set-string",
                 f"config.envoyGateway.gateway.controllerName={self.gateway_controller_name}",
+                "--post-renderer",
+                str(self.deploy_dir / "envoy_gateway_post_renderer.py"),
                 "--wait",
                 f"--timeout={self.context.timeout_seconds}s",
             )
@@ -588,7 +630,7 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
         return {
             "envoy_gateway": {
                 "enabled": False,
-                "nameOverride": "envoy-gateway",
+                "fullnameOverride": self.envoy_gateway_deployment,
                 "global": {
                     "images": {
                         "envoyProxy": {
@@ -609,7 +651,7 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                     "authguardRoute": {"enabled": False},
                     "authnRoute": {
                         "enabled": True,
-                        "name": "e2e-authguard-customer-growth-authn",
+                        "name": self.authn_route_name,
                         "hostnames": [
                             AUTHN_HOST,
                             AUTHN_BROWSER_HOST,
@@ -629,7 +671,7 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                 # Keep the StatefulSet controller-revision label below the
                 # Kubernetes 63-character limit even when the E2E release
                 # name is intentionally descriptive.
-                "fullnameOverride": "e2e-redis-cluster",
+                "fullnameOverride": self.redis_service,
                 "image": {
                     "registry": redis_registry,
                     "repository": redis_repository,
@@ -731,7 +773,7 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
 
     def _wait_for_resources(self) -> None:
         for deployment in (
-            "envoy-gateway",
+            self.envoy_gateway_deployment,
             self.keycloak_service,
             self.ldap_service,
             self.jaeger_service,

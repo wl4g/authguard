@@ -45,6 +45,10 @@ class InfrastructureVerifier(BaseVerifier):
             self._verify_business_chart_authguard_integration,
         )
         self.step(
+            "verify the isolated E2E namespace and component naming contract",
+            self._verify_namespace_and_pod_names,
+        )
+        self.step(
             "wait for accepted Gateway API resources",
             self._wait_for_gateway_api_acceptance,
         )
@@ -172,6 +176,47 @@ class InfrastructureVerifier(BaseVerifier):
             "Chart files only in AuthGuard Web, without building a theme image"
         )
 
+    def _verify_namespace_and_pod_names(self) -> None:
+        """Keep E2E-owned resources obvious during interactive review and cleanup."""
+        if self.namespace != "e2e-authguard-system":
+            raise RuntimeError(
+                "the Kubernetes E2E default namespace must be e2e-authguard-system; "
+                f"received {self.namespace!r}"
+            )
+        pods = json.loads(
+            self._run(
+                ("kubectl", "get", "pods", "-n", self.namespace, "-o", "json")
+            ).output
+        )
+        names = sorted(
+            item.get("metadata", {}).get("name", "")
+            for item in pods.get("items", [])
+        )
+        # Envoy Gateway owns this data-plane Deployment and prefixes the
+        # namespace before the Gateway name, truncating the latter as needed.
+        generated_proxy_prefix = f"envoy-{self.namespace}-"
+        unexpected = [
+            name
+            for name in names
+            if not name.startswith("e2e-authguard-")
+            and not name.startswith(generated_proxy_prefix)
+        ]
+        if unexpected:
+            raise RuntimeError(
+                "E2E Pod names must use e2e-authguard-*; unexpected Pods: "
+                f"{unexpected}"
+            )
+        if not any(name.startswith(generated_proxy_prefix) for name in names):
+            raise RuntimeError(
+                "Envoy Gateway did not create its generated data-plane Pod with the "
+                f"expected {generated_proxy_prefix!r} prefix"
+            )
+        self.details.append(
+            "all directly managed E2E Pods use e2e-authguard-* in the isolated "
+            "e2e-authguard-system namespace; Envoy Gateway's generated data-plane Pod "
+            "retains its mandatory upstream envoy- prefix and names this E2E Gateway"
+        )
+
     def _verify_identity_middleware_initialization(self) -> None:
         """Verify that enterprise directories and OAuth test IdPs initialized."""
         deployments = json.loads(
@@ -296,7 +341,7 @@ class InfrastructureVerifier(BaseVerifier):
         expected_routes = {
             self.workload_service(component) for component in WORKLOAD_IMAGES
         }
-        expected_routes.add("e2e-authguard-customer-growth-authn")
+        expected_routes.add(self.authn_route_name)
         expected_routes.add(self.authguard_web_route)
         last_state = "Gateway API status was not observed"
         while time.monotonic() < deadline:

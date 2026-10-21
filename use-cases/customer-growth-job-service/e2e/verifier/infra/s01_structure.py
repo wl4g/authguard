@@ -322,7 +322,8 @@ def _verify(_context: RunContext) -> VerificationResult:
         )
     )
     required_prefixes = (
-        "e2e-authguard-customer-growth",
+        "e2e-authguard-system",
+        "e2e-authguard-",
         "e2e_authguard_customer_growth",
         "range(28800, 28900)",
     )

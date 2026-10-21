@@ -48,6 +48,9 @@ envoy_gateway:
       # same browser origin. E2E may override this to 8082 for port-forwarding.
       listenerPort: 80
       className: authguard
+      # Optional stable name for the Envoy data-plane Deployment/Service.
+      # This avoids Envoy Gateway's namespace/gateway-derived long name.
+      envoyDeploymentName: ""
       # Use a distinct controller name only when operating an isolated Envoy
       # Gateway controller (for example the disposable E2E topology).
       controllerName: gateway.envoyproxy.io/gatewayclass-controller
