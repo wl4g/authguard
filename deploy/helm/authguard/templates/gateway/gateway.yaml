@@ -21,6 +21,9 @@ spec:
     type: Kubernetes
     kubernetes:
       envoyDeployment:
+        {{- with $gateway.envoyDeploymentName }}
+        name: {{ . | quote }}
+        {{- end }}
         container:
           image: {{ $envoyGateway.global.images.envoyProxy.image }}
   {{- if $ext.enabled }}

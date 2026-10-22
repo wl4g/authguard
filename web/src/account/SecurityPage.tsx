@@ -1,5 +1,6 @@
 import { Fingerprint, KeyRound, LogOut, ShieldCheck } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../core/AuthContext'
 import { authn, metadata as loadMetadata, type AuthMetadata, type LoginResponse } from '../core/api'
 import { useApplicationTheme } from '../shared/ApplicationTheme'
@@ -16,6 +17,8 @@ type CreationOptionsJSON = Omit<PublicKeyCredentialCreationOptions, 'challenge' 
 export function SecurityPage() {
   const { authentication, accept, signOut } = useAuth()
   const { t } = useI18n()
+  const [searchParams] = useSearchParams()
+  const embedded = searchParams.get('embedded') === '1'
   const [meta, setMeta] = useState<AuthMetadata | null>(null)
   const [login, setLogin] = useState('')
   const [password, setPassword] = useState('')
@@ -50,11 +53,15 @@ export function SecurityPage() {
   const brand = meta?.application
   const principalId = authentication?.principal.principalId || ''
   const shortId = principalId.length > 18 ? `${principalId.slice(0, 10)}…${principalId.slice(-6)}` : principalId
-  return <div className="account-security-page">
-    <header className="account-security-header">
+  return <div
+    className={`account-security-page${embedded ? ' account-security-page--embedded' : ''}`}
+    data-testid="account-security-page"
+    data-embedded={embedded}
+  >
+    {!embedded && <header className="account-security-header">
       <div className="visual-brand">{brand?.logo ? <img src={brand.logo} alt=""/> : <Fingerprint/>}<b>{brand?.displayName || t('product')}</b></div>
       <div className="account-security-tools"><Preferences/><button data-testid="account-sign-out" title={t('signOut')} onClick={() => void signOut().then(() => window.location.assign('/auth/login'))}><LogOut size={17}/></button></div>
-    </header>
+    </header>}
     <main className="security-card">
       <span className="eyebrow"><ShieldCheck size={14}/> {t('accountSecurity')}</span>
       <h1>{t('manageCredentials')}</h1>
@@ -68,7 +75,7 @@ export function SecurityPage() {
       </form>
       {completed && <div data-testid="account-security-result" className="success-banner">{t('passkeyAdded')} · {authentication?.principal.amr.join(' + ')}</div>}
       {error && <div className="error-banner">{error}</div>}
-      <button className="back-link" onClick={() => window.location.assign('/')}>{t('backToApplication')}</button>
+      {!embedded && <button className="back-link" onClick={() => window.location.assign('/')}>{t('backToApplication')}</button>}
     </main>
   </div>
 }

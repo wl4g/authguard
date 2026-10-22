@@ -3,7 +3,7 @@ server:
   shutdown: graceful
 spring:
   application:
-    name: e2e-authguard-spring-jpa
+    name: ${OTEL_SERVICE_NAME:spring-jpa}
   datasource:
     url: ${DATABASE_URL}
     username: ${DATABASE_USERNAME}

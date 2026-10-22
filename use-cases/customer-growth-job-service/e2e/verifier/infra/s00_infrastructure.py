@@ -45,6 +45,10 @@ class InfrastructureVerifier(BaseVerifier):
             self._verify_business_chart_authguard_integration,
         )
         self.step(
+            "verify the isolated E2E namespace and component naming contract",
+            self._verify_namespace_and_pod_names,
+        )
+        self.step(
             "wait for accepted Gateway API resources",
             self._wait_for_gateway_api_acceptance,
         )
@@ -172,6 +176,52 @@ class InfrastructureVerifier(BaseVerifier):
             "Chart files only in AuthGuard Web, without building a theme image"
         )
 
+    def _verify_namespace_and_pod_names(self) -> None:
+        """Keep E2E-owned resources obvious during interactive review and cleanup."""
+        if self.namespace != "e2e-authguard-system":
+            raise RuntimeError(
+                "the Kubernetes E2E default namespace must be e2e-authguard-system; "
+                f"received {self.namespace!r}"
+            )
+        pods = json.loads(
+            self._run(
+                ("kubectl", "get", "pods", "-n", self.namespace, "-o", "json")
+            ).output
+        )
+        names = sorted(
+            item.get("metadata", {}).get("name", "")
+            for item in pods.get("items", [])
+        )
+        expected_prefixes = (
+            f"{self.authguard_release}-",
+            f"{self.envoy_gateway_deployment}-",
+            f"{self.envoy_proxy_deployment}-",
+            f"{self.keycloak_service}-",
+            f"{self.ldap_service}-",
+            f"{self.jaeger_service}-",
+            f"{self.postgresql_service}-",
+            f"{self.mock_idp_service}-",
+            f"{self.anvil_service}-",
+            f"{self.solana_service}-",
+            f"{self.redis_service}-",
+            *[f"{self.workload_service(component)}-" for component in WORKLOAD_IMAGES],
+        )
+        unexpected = [name for name in names if not name.startswith(expected_prefixes)]
+        if unexpected:
+            raise RuntimeError(
+                "E2E namespace contains non-component Pod names: "
+                f"{unexpected}; expected prefixes={expected_prefixes}"
+            )
+        if not any(name.startswith(f"{self.envoy_proxy_deployment}-") for name in names):
+            raise RuntimeError(
+                "Envoy Gateway did not create its generated data-plane Pod with the "
+                f"expected {self.envoy_proxy_deployment!r} prefix"
+            )
+        self.details.append(
+            "the e2e-authguard-system namespace isolates the suite while every Pod uses "
+            "its normal component name; the generated Envoy data plane is envoygateway-*"
+        )
+
     def _verify_identity_middleware_initialization(self) -> None:
         """Verify that enterprise directories and OAuth test IdPs initialized."""
         deployments = json.loads(
@@ -206,7 +256,7 @@ class InfrastructureVerifier(BaseVerifier):
         }
         if (
             not any(port.get("containerPort") == 389 for port in ldap_container.get("ports", []))
-            or f"{self.support_release}-keycloak-credentials" not in secret_names
+            or "keycloak-credentials" not in secret_names
         ):
             raise RuntimeError("LDAP fixture/bind-secret bootstrap configuration is incomplete")
 
@@ -296,7 +346,7 @@ class InfrastructureVerifier(BaseVerifier):
         expected_routes = {
             self.workload_service(component) for component in WORKLOAD_IMAGES
         }
-        expected_routes.add("e2e-authguard-customer-growth-authn")
+        expected_routes.add(self.authn_route_name)
         expected_routes.add(self.authguard_web_route)
         last_state = "Gateway API status was not observed"
         while time.monotonic() < deadline:
@@ -430,7 +480,7 @@ class InfrastructureVerifier(BaseVerifier):
             raise RuntimeError("SecurityPolicy does not require the E2E AuthN issuer")
         if "customer-growth-job-service" not in provider.get("audiences", []):
             raise RuntimeError("SecurityPolicy does not validate the workload JWT audience")
-        expected_jwks_config_map = f"{self.support_release}-keycloak-realm-jwks"
+        expected_jwks_config_map = f"{self.keycloak_service}-realm-jwks"
         local_jwks = provider.get("localJWKS", {})
         value_ref = local_jwks.get("valueRef", {})
         if "remoteJWKS" in provider:

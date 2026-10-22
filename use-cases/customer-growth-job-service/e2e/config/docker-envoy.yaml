@@ -23,7 +23,9 @@ static_resources:
                       grpc_service:
                         envoy_grpc: { cluster_name: jaeger_otlp }
                         timeout: 2s
-                      service_name: e2e-authguard-envoy-proxy
+                      # Keep the deployment-neutral trace service identity
+                      # identical to Envoy Gateway's Kubernetes configuration.
+                      service_name: envoygateway
                 route_config:
                   name: customer_growth_routes
                   virtual_hosts:

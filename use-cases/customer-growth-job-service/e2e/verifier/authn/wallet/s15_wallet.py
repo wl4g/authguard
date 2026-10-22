@@ -8,15 +8,15 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
-import subprocess
 import time
 from typing import Any
 from urllib import request
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, utils
+from eth_account import Account
+from eth_account.messages import encode_defunct
 
-from common.config import PROJECT_ROOT
 from common.deploy.base import AUTHN_HOST
 from verifier.authn.other.protocol import AuthenticatedLogin, AuthnProtocolVerifier
 from verifier.authn.password.s13_password_totp import StandaloneFixture
@@ -87,41 +87,27 @@ class EvmWallet:
 
     @staticmethod
     def sign(message: str, private_key: str = ANVIL_ACCOUNT_0_PRIVATE_KEY) -> str:
-        script = (
-            "import {privateKeyToAccount} from 'viem/accounts';"
-            "const account=privateKeyToAccount(process.argv[1]);"
-            "console.log(await account.signMessage({message:process.argv[2]}));"
-        )
-        completed = subprocess.run(
-            ("node", "--input-type=module", "-e", script, private_key, message),
-            cwd=PROJECT_ROOT / "web",
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        signature = completed.stdout.strip()
+        signature = bytes(
+            Account.sign_message(
+                encode_defunct(text=message), private_key=private_key
+            ).signature
+        ).hex()
+        signature = f"0x{signature}"
         if len(signature) != 132 or not signature.startswith("0x"):
-            raise RuntimeError("viem returned a malformed EIP-191 signature")
+            raise RuntimeError("eth-account returned a malformed EIP-191 signature")
         return signature
 
     @staticmethod
     def message_hash(message: str) -> str:
-        script = (
-            "import {hashMessage} from 'viem';"
-            "console.log(hashMessage(process.argv[1]));"
-        )
-        completed = subprocess.run(
-            ("node", "--input-type=module", "-e", script, message),
-            cwd=PROJECT_ROOT / "web",
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        digest = completed.stdout.strip()
+        digest = bytes(
+            Account.sign_message(
+                encode_defunct(text=message),
+                private_key=ANVIL_ACCOUNT_0_PRIVATE_KEY,
+            ).message_hash
+        ).hex()
+        digest = f"0x{digest}"
         if len(digest) != 66 or not digest.startswith("0x"):
-            raise RuntimeError("viem returned a malformed EIP-191 message hash")
+            raise RuntimeError("eth-account returned a malformed EIP-191 message hash")
         return digest
 
 

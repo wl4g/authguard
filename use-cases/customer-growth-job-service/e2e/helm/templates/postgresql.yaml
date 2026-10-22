@@ -72,11 +72,11 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
-    app.kubernetes.io/component: e2e-authguard-postgresql
+    app.kubernetes.io/component: postgresql
 spec:
   selector:
     app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/component: e2e-authguard-postgresql
+    app.kubernetes.io/component: postgresql
   ports:
     - { name: postgresql, port: 5432, targetPort: postgresql }
 ---
@@ -86,18 +86,18 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
-    app.kubernetes.io/component: e2e-authguard-postgresql
+    app.kubernetes.io/component: postgresql
 spec:
   replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/instance: {{ .Release.Name }}
-      app.kubernetes.io/component: e2e-authguard-postgresql
+      app.kubernetes.io/component: postgresql
   template:
     metadata:
       labels:
         app.kubernetes.io/instance: {{ .Release.Name }}
-        app.kubernetes.io/component: e2e-authguard-postgresql
+        app.kubernetes.io/component: postgresql
     spec:
       automountServiceAccountToken: false
       securityContext:
