@@ -393,7 +393,7 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
         self._wait_for_resources()
 
     def cleanup(self) -> None:
-        """Remove every namespaced E2E Helm release and its isolated namespace."""
+        """Remove the E2E namespace, force-finalizing it only when normal GC stalls."""
         for release in (
             self.authguard_release,
             self.support_release,
@@ -407,7 +407,7 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                     "-n",
                     self.namespace,
                     "--wait",
-                    "--timeout=90s",
+                    "--timeout=30s",
                 ),
                 allowed_codes={0, 1},
             )
@@ -421,7 +421,7 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                 "--wait=false",
             )
         )
-        deadline = time.monotonic() + self.context.timeout_seconds
+        deadline = time.monotonic() + min(self.context.timeout_seconds, 90)
         while time.monotonic() < deadline:
             existing = self._run(
                 ("kubectl", "get", "namespace", self.namespace, "-o", "name"),
@@ -430,7 +430,41 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
             if existing.return_code != 0:
                 return
             time.sleep(1)
-        raise RuntimeError(f"timed out deleting namespace {self.namespace}")
+        self._force_finalize_namespace()
+
+    def _force_finalize_namespace(self) -> None:
+        """Use Kubernetes' finalize endpoint only for this stalled E2E namespace."""
+        namespace = json.loads(
+            self._run(
+                ("kubectl", "get", "namespace", self.namespace, "-o", "json")
+            ).output
+        )
+        namespace.setdefault("spec", {})["finalizers"] = []
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as payload_file:
+            json.dump(namespace, payload_file)
+            payload_file.flush()
+            self._run(
+                (
+                    "kubectl",
+                    "replace",
+                    "--raw",
+                    f"/api/v1/namespaces/{self.namespace}/finalize",
+                    "-f",
+                    payload_file.name,
+                )
+            )
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            existing = self._run(
+                ("kubectl", "get", "namespace", self.namespace, "-o", "name"),
+                allowed_codes={0, 1},
+            )
+            if existing.return_code != 0:
+                return
+            time.sleep(1)
+        raise RuntimeError(
+            f"namespace {self.namespace} remained after force-finalizing its E2E-only finalizers"
+        )
 
     def _prepare_external_images(self) -> None:
         loader = self._local_image_loader()
