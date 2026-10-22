@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import tarfile
 import time
 
 from common.config import CONFIG_DIR, DEPLOY_DIR, PROJECT_ROOT, PROJECTS, USE_CASE_DIR
+from common.deploy.base import WORKLOAD_IMAGES
 from common.model import RunContext, VerificationResult
 from verifier.other.base import BaseVerifier
 
@@ -218,11 +220,38 @@ E2E_NAMESPACE = "e2e-authguard-system"
 E2E_SQL_PREFIX = "e2e_authguard_"
 
 
+def _verify_vendored_authguard_chart(errors: list[str]) -> None:
+    """Keep the business-chart dependency byte-for-byte aligned with its source Chart."""
+    source_chart = PROJECT_ROOT / "deploy/helm/authguard"
+    archive = USE_CASE_DIR / "e2e/helm/charts/authguard-0.1.0.tgz"
+    source_files = (
+        source_chart / "values.yaml",
+        *(source_chart / "templates").rglob("*.yaml"),
+        *(source_chart / "templates").rglob("*.tpl"),
+    )
+    try:
+        with tarfile.open(archive, "r:gz") as chart:
+            for source in source_files:
+                member_name = f"authguard/{source.relative_to(source_chart)}"
+                member = chart.extractfile(member_name)
+                if member is None:
+                    errors.append(f"vendored AuthGuard Chart is missing {member_name}")
+                elif member.read() != source.read_bytes():
+                    errors.append(
+                        "vendored AuthGuard Chart is stale: "
+                        f"{source.relative_to(PROJECT_ROOT)}"
+                    )
+    except (OSError, tarfile.TarError) as error:
+        errors.append(f"cannot read vendored AuthGuard Chart: {error}")
+
+
 def _verify(_context: RunContext) -> VerificationResult:
     started = time.monotonic()
     errors: list[str] = []
     actual_projects = {
-        path.name for path in DEPLOY_DIR.iterdir() if path.is_dir()
+        path.name
+        for path in DEPLOY_DIR.iterdir()
+        if path.is_dir() and path.name != "__pycache__"
     }
     expected_projects = set(PROJECTS) | SUPPORT_PROJECTS
     if actual_projects != expected_projects:
@@ -718,10 +747,34 @@ def _verify(_context: RunContext) -> VerificationResult:
         source = path.read_text(encoding="utf-8")
         if missing := [marker for marker in markers if marker not in source]:
             errors.append(f"{component} OTel wiring is incomplete: {missing}")
-    for project in ("springboot-jdbc-service", "springboot-jpa-service"):
+    docker_e2e_source = (USE_CASE_DIR / "e2e/docker-compose.yaml").read_text(
+        encoding="utf-8"
+    )
+    docker_envoy_source = (USE_CASE_DIR / "e2e/config/docker-envoy.yaml").read_text(
+        encoding="utf-8"
+    )
+    if "service_name: envoygateway" not in docker_envoy_source:
+        errors.append("Docker Envoy tracing must use the envoygateway service identity")
+    for component in WORKLOAD_IMAGES:
+        if f"OTEL_SERVICE_NAME: {component}" not in docker_e2e_source:
+            errors.append(
+                f"Docker {component} must use its component name as the OTel service"
+            )
+    spring_trace_services = {
+        "springboot-jdbc-service": "spring-jdbc",
+        "springboot-jpa-service": "spring-jpa",
+    }
+    for project, component in spring_trace_services.items():
         pom = (DEPLOY_DIR / project / "pom.xml").read_text(encoding="utf-8")
         if "micrometer-tracing-bridge-otel" not in pom or "opentelemetry-exporter-otlp" not in pom:
             errors.append(f"{project}: Spring OTel exporter dependencies are incomplete")
+        application = (DEPLOY_DIR / project / "src/main/resources/application.yaml").read_text(
+            encoding="utf-8"
+        )
+        if f"${{OTEL_SERVICE_NAME:{component}}}" not in application:
+            errors.append(
+                f"{project}: Spring application name must follow OTEL_SERVICE_NAME"
+            )
 
     for protocol in ("keycloak", "ldap"):
         actual = {
@@ -748,6 +801,7 @@ def _verify(_context: RunContext) -> VerificationResult:
     for relative in AUTHGUARD_FORBIDDEN_PATHS:
         if (PROJECT_ROOT / relative).exists():
             errors.append(f"AuthGuard source boundary: obsolete path remains: {relative}")
+    _verify_vendored_authguard_chart(errors)
 
     details = [
         "One use-case root",
@@ -760,6 +814,7 @@ def _verify(_context: RunContext) -> VerificationResult:
         "Runner selects a deployer and supports one-shot or post-run cleanup of owned resources",
         "Docker Compose uses the same reflected AuthGuard keys, real dependencies, and Envoy PEP order as Helm",
         "Hosted Login theming uses an immutable Web image plus a business service Helm Chart local directory mounted as a ConfigMap",
+        "The vendored AuthGuard dependency is byte-for-byte aligned with the source Chart templates and values",
     ]
     details.extend(errors)
     return VerificationResult(

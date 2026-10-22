@@ -171,7 +171,7 @@ services:
     image: ${AUTHGUARD_E2E_GO_SQLX_IMAGE}
     environment:
       <<: *workload-environment
-      OTEL_SERVICE_NAME: e2e-authguard-go-sqlx
+      OTEL_SERVICE_NAME: go-sqlx
       DATABASE_URL: postgresql://e2e_authguard_customer_growth_go_sqlx:e2e-authguard-customer-growth-go-sqlx-password@postgresql:5432/e2e_authguard_customer_growth?sslmode=disable&options=-csearch_path%3De2e_authguard_customer_growth_go_sqlx
 
   rust-sqlx:
@@ -179,7 +179,7 @@ services:
     image: ${AUTHGUARD_E2E_RUST_SQLX_IMAGE}
     environment:
       <<: *workload-environment
-      OTEL_SERVICE_NAME: e2e-authguard-rust-sqlx
+      OTEL_SERVICE_NAME: rust-sqlx
       DATABASE_URL: postgresql://e2e_authguard_customer_growth_rust_sqlx:e2e-authguard-customer-growth-rust-sqlx-password@postgresql:5432/e2e_authguard_customer_growth?sslmode=disable&options=-csearch_path%3De2e_authguard_customer_growth_rust_sqlx
       RESIGN_TOKEN_PUBLIC_KEY_FILE: /etc/e2e/resign-jwt-public-key.pem
     volumes:
@@ -190,7 +190,7 @@ services:
     image: ${AUTHGUARD_E2E_PYTHON_SQLALCHEMY_IMAGE}
     environment:
       <<: *workload-environment
-      OTEL_SERVICE_NAME: e2e-authguard-python-sqlalchemy
+      OTEL_SERVICE_NAME: python-sqlalchemy
       DATABASE_URL: postgresql://e2e_authguard_customer_growth_python_sqlalchemy:e2e-authguard-customer-growth-python-sqlalchemy-password@postgresql:5432/e2e_authguard_customer_growth?sslmode=disable&options=-csearch_path%3De2e_authguard_customer_growth_python_sqlalchemy
 
   spring-jdbc:
@@ -198,7 +198,7 @@ services:
     image: ${AUTHGUARD_E2E_SPRING_JDBC_IMAGE}
     environment:
       <<: *workload-environment
-      OTEL_SERVICE_NAME: e2e-authguard-spring-jdbc
+      OTEL_SERVICE_NAME: spring-jdbc
       DATABASE_URL: jdbc:postgresql://postgresql:5432/e2e_authguard_customer_growth?sslmode=disable&currentSchema=e2e_authguard_customer_growth_spring_jdbc
       DATABASE_USERNAME: e2e_authguard_customer_growth_spring_jdbc
       DATABASE_PASSWORD: e2e-authguard-customer-growth-spring-jdbc-password
@@ -209,7 +209,7 @@ services:
     image: ${AUTHGUARD_E2E_SPRING_JPA_IMAGE}
     environment:
       <<: *workload-environment
-      OTEL_SERVICE_NAME: e2e-authguard-spring-jpa
+      OTEL_SERVICE_NAME: spring-jpa
       DATABASE_URL: jdbc:postgresql://postgresql:5432/e2e_authguard_customer_growth?sslmode=disable&currentSchema=e2e_authguard_customer_growth_spring_jpa
       DATABASE_USERNAME: e2e_authguard_customer_growth_spring_jpa
       DATABASE_PASSWORD: e2e-authguard-customer-growth-spring-jpa-password
