@@ -306,7 +306,7 @@ class AuthnJaegerTraceVerifier:
 
     provider: str
     principal_id: str
-    envoy_service: str = "e2e-authguard-envoy-proxy"
+    envoy_service: str = "envoygateway"
     authn_service: str = "authguard-authn"
     verifier_service: str = "e2e-authguard-verifier"
 
@@ -356,7 +356,7 @@ class OidcJaegerTraceVerifier:
 
     principal_id: str
     provider: str = "e2e-authguard-keycloak"
-    envoy_service: str = "e2e-authguard-envoy-proxy"
+    envoy_service: str = "envoygateway"
     authn_service: str = "authguard-authn"
     verifier_service: str = "e2e-authguard-verifier"
 
@@ -409,7 +409,7 @@ class AuthorizationJaegerTraceVerifier:
     """Proves client -> Envoy -> AuthZ and Envoy -> Biz in one request trace."""
 
     workload_service: str
-    envoy_service: str = "e2e-authguard-envoy-proxy"
+    envoy_service: str = "envoygateway"
     authz_service: str = "authguard-authz"
     verifier_service: str = "e2e-authguard-verifier"
 

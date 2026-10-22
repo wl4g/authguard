@@ -33,7 +33,7 @@ class RuntimeEvidenceVerifier(BaseVerifier):
         expected = {
             "authguard-authn",
             "authguard-authz",
-            *{f"e2e-authguard-{component}" for component in WORKLOAD_IMAGES},
+            *set(WORKLOAD_IMAGES),
         }
         with self._forward_service(self.jaeger_service, 16686) as port:
             jaeger = self._jaeger_query(port)

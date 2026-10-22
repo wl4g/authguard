@@ -192,29 +192,34 @@ class InfrastructureVerifier(BaseVerifier):
             item.get("metadata", {}).get("name", "")
             for item in pods.get("items", [])
         )
-        # Envoy Gateway owns this data-plane Deployment and prefixes the
-        # namespace before the Gateway name, truncating the latter as needed.
-        generated_proxy_prefix = f"envoy-{self.namespace}-"
-        unexpected = [
-            name
-            for name in names
-            if not name.startswith("e2e-authguard-")
-            and not name.startswith(generated_proxy_prefix)
-        ]
+        expected_prefixes = (
+            f"{self.authguard_release}-",
+            f"{self.envoy_gateway_deployment}-",
+            f"{self.envoy_proxy_deployment}-",
+            f"{self.keycloak_service}-",
+            f"{self.ldap_service}-",
+            f"{self.jaeger_service}-",
+            f"{self.postgresql_service}-",
+            f"{self.mock_idp_service}-",
+            f"{self.anvil_service}-",
+            f"{self.solana_service}-",
+            f"{self.redis_service}-",
+            *[f"{self.workload_service(component)}-" for component in WORKLOAD_IMAGES],
+        )
+        unexpected = [name for name in names if not name.startswith(expected_prefixes)]
         if unexpected:
             raise RuntimeError(
-                "E2E Pod names must use e2e-authguard-*; unexpected Pods: "
-                f"{unexpected}"
+                "E2E namespace contains non-component Pod names: "
+                f"{unexpected}; expected prefixes={expected_prefixes}"
             )
-        if not any(name.startswith(generated_proxy_prefix) for name in names):
+        if not any(name.startswith(f"{self.envoy_proxy_deployment}-") for name in names):
             raise RuntimeError(
                 "Envoy Gateway did not create its generated data-plane Pod with the "
-                f"expected {generated_proxy_prefix!r} prefix"
+                f"expected {self.envoy_proxy_deployment!r} prefix"
             )
         self.details.append(
-            "all directly managed E2E Pods use e2e-authguard-* in the isolated "
-            "e2e-authguard-system namespace; Envoy Gateway's generated data-plane Pod "
-            "retains its mandatory upstream envoy- prefix and names this E2E Gateway"
+            "the e2e-authguard-system namespace isolates the suite while every Pod uses "
+            "its normal component name; the generated Envoy data plane is envoygateway-*"
         )
 
     def _verify_identity_middleware_initialization(self) -> None:
@@ -251,7 +256,7 @@ class InfrastructureVerifier(BaseVerifier):
         }
         if (
             not any(port.get("containerPort") == 389 for port in ldap_container.get("ports", []))
-            or f"{self.support_release}-keycloak-credentials" not in secret_names
+            or "keycloak-credentials" not in secret_names
         ):
             raise RuntimeError("LDAP fixture/bind-secret bootstrap configuration is incomplete")
 
@@ -475,7 +480,7 @@ class InfrastructureVerifier(BaseVerifier):
             raise RuntimeError("SecurityPolicy does not require the E2E AuthN issuer")
         if "customer-growth-job-service" not in provider.get("audiences", []):
             raise RuntimeError("SecurityPolicy does not validate the workload JWT audience")
-        expected_jwks_config_map = f"{self.support_release}-keycloak-realm-jwks"
+        expected_jwks_config_map = f"{self.keycloak_service}-realm-jwks"
         local_jwks = provider.get("localJWKS", {})
         value_ref = local_jwks.get("valueRef", {})
         if "remoteJWKS" in provider:

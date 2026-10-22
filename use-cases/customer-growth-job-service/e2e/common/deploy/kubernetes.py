@@ -220,31 +220,31 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
         self.namespace = os.getenv(
             "AUTHGUARD_E2E_NAMESPACE", "e2e-authguard-system"
         )
-        self.release = os.getenv("AUTHGUARD_E2E_RELEASE", "e2e-authguard")
+        # Namespace isolation identifies this disposable environment. Resource
+        # names therefore stay identical to a production installation, which
+        # makes an in-cluster E2E review useful instead of visually noisy.
+        self.release = os.getenv("AUTHGUARD_E2E_RELEASE", "authguard")
         if not self.namespace.startswith("e2e-authguard-"):
             raise ValueError("AUTHGUARD_E2E_NAMESPACE must start with e2e-authguard-")
-        if not (
-            self.release == "e2e-authguard"
-            or self.release.startswith("e2e-authguard-")
-        ):
-            raise ValueError(
-                "AUTHGUARD_E2E_RELEASE must be e2e-authguard or start with e2e-authguard-"
-            )
-        self.envoy_release = f"{self.release}-envoy"
-        self.support_release = f"{self.release}-support"
+        if not self.release:
+            raise ValueError("AUTHGUARD_E2E_RELEASE must not be empty")
+        self.envoy_release = "envoy"
+        self.support_release = "customer-growth"
         self.authguard_release = self.release
         self.authguard_authz_service = self.authguard_release
         self.authguard_authn_service = f"{self.authguard_release}-authn"
-        self.authn_route_name = f"{self.release}-authn"
-        # GatewayClass is cluster-scoped. Scope its name with the isolated
-        # namespace as well as the E2E prefix so concurrent suites and stale
-        # releases cannot claim the same cluster resource.
-        self.gateway_name = f"{self.namespace}-gateway"
-        self.envoy_gateway_deployment = f"{self.release}-envoy-gateway"
+        self.authn_route_name = "authn"
+        # The Gateway is namespaced, so its formal component name is enough.
+        # GatewayClass is cluster-scoped and must retain the namespace-derived
+        # name to prevent concurrent E2E suites from claiming one controller.
+        self.gateway_name = "gateway"
+        self.gateway_class_name = f"{self.namespace}-gateway"
+        self.envoy_gateway_deployment = "envoy-gateway"
+        self.envoy_proxy_deployment = "envoygateway"
         self.redis_service = f"{self.release}-redis"
         self.environment = {
             "KUBECONFIG": self._resolve_kubeconfig(),
-            "AUTHGUARD_E2E_ENVOY_GATEWAY_NAME": self.envoy_gateway_deployment,
+            "AUTHGUARD_E2E_CLUSTER_RESOURCE_PREFIX": self.namespace,
         }
         self.helm_chart = PROJECT_ROOT / "deploy" / "helm" / "authguard"
         self.support_chart = E2E_DIR / "helm"
@@ -282,35 +282,35 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
 
     @property
     def keycloak_service(self) -> str:
-        return f"{self.support_release}-keycloak"
+        return "keycloak"
 
     @property
     def postgresql_service(self) -> str:
-        return f"{self.support_release}-postgresql"
+        return "postgresql"
 
     @property
     def jaeger_service(self) -> str:
-        return f"{self.support_release}-jaeger"
+        return "jaeger"
 
     @property
     def ldap_service(self) -> str:
-        return f"{self.support_release}-ldap"
+        return "ldap"
 
     @property
     def principal_discovery_secret(self) -> str:
-        return f"{self.support_release}-principal-discovery-credentials"[:63].rstrip("-")
+        return "principal-discovery-credentials"
 
     @property
     def mock_idp_service(self) -> str:
-        return f"{self.support_release}-mock-idp"
+        return "mock-idp"
 
     @property
     def anvil_service(self) -> str:
-        return f"{self.support_release}-anvil"
+        return "anvil"
 
     @property
     def solana_service(self) -> str:
-        return f"{self.support_release}-solana"
+        return "solana"
 
     @property
     def authguard_web_service(self) -> str:
@@ -318,15 +318,15 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
 
     @property
     def authguard_web_route(self) -> str:
-        return f"{self.release}-web"
+        return "web"
 
     @property
     def gateway_controller_name(self) -> str:
         """Controller identity dedicated to this isolated E2E GatewayClass."""
-        return f"e2e.authguard.io/{self.gateway_name}"
+        return f"e2e.authguard.io/{self.gateway_class_name}"
 
     def workload_service(self, component: str) -> str:
-        return f"{self.support_release}-{component}"
+        return component
 
     @property
     def issuer(self) -> str:
@@ -643,9 +643,10 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                     "enabled": True,
                     "gateway": {
                         "create": True,
-                        "className": self.gateway_name,
+                        "className": self.gateway_class_name,
                         "name": self.gateway_name,
                         "listenerPort": 8082,
+                        "envoyDeploymentName": self.envoy_proxy_deployment,
                         "controllerName": self.gateway_controller_name,
                     },
                     "authguardRoute": {"enabled": False},
@@ -662,7 +663,7 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                     "tracing": {
                         "enabled": True,
                         "backendRef": {"name": self.jaeger_service, "port": 4317},
-                        "serviceName": "e2e-authguard-envoy-proxy",
+                        "serviceName": "envoygateway",
                     },
                 },
             },
@@ -712,9 +713,7 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                         "issuer": self.authn_issuer,
                         "audiences": ["customer-growth-job-service"],
                         "local_jwks": {
-                            "existing_config_map": (
-                                f"{self.support_release}-keycloak-realm-jwks"
-                            ),
+                            "existing_config_map": f"{self.keycloak_service}-realm-jwks",
                             "inline": "",
                         },
                         "remote_jwks": {"uri": "", "backend_refs": []},
@@ -1018,7 +1017,7 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                 "-n",
                 self.namespace,
                 "-l",
-                "app.kubernetes.io/component=e2e-authguard-postgresql",
+                "app.kubernetes.io/component=postgresql",
                 "-o",
                 "jsonpath={.items[0].metadata.name}",
             )

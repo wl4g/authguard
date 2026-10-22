@@ -9,11 +9,11 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
-    app.kubernetes.io/component: e2e-authguard-mock-idp
+    app.kubernetes.io/component: mock-idp
 spec:
   selector:
     app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/component: e2e-authguard-mock-idp
+    app.kubernetes.io/component: mock-idp
   ports:
     - { name: http, port: 8080, targetPort: http }
 ---
@@ -23,18 +23,18 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
-    app.kubernetes.io/component: e2e-authguard-mock-idp
+    app.kubernetes.io/component: mock-idp
 spec:
   replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/instance: {{ .Release.Name }}
-      app.kubernetes.io/component: e2e-authguard-mock-idp
+      app.kubernetes.io/component: mock-idp
   template:
     metadata:
       labels:
         app.kubernetes.io/instance: {{ .Release.Name }}
-        app.kubernetes.io/component: e2e-authguard-mock-idp
+        app.kubernetes.io/component: mock-idp
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -44,7 +44,7 @@ spec:
         fsGroup: 65532
         seccompProfile: { type: RuntimeDefault }
       containers:
-        - name: e2e-authguard-mock-idp
+        - name: mock-idp
           image: {{ .Values.mockIdp.image | quote }}
           imagePullPolicy: {{ .Values.mockIdp.pullPolicy }}
           env:

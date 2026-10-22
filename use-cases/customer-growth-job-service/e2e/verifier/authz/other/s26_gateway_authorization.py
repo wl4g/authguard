@@ -181,7 +181,7 @@ class GatewayAuthorizationVerifier(BaseVerifier):
         seeded_job_ids: frozenset[int],
         row_access_oracle: dict[str, frozenset[int]],
     ) -> None:
-        label = f"e2e-authguard-{component}"
+        label = component
         status, _ = self._http(gateway_port, host, "/customer-growth/jobs")
         self._expect_status(f"{label}: missing JWT", status, 401)
 
@@ -563,7 +563,7 @@ class GatewayAuthorizationVerifier(BaseVerifier):
             self._verify_row_access_matrix(
                 gateway_port,
                 host,
-                f"e2e-authguard-{component}",
+                component,
                 seeded_job_ids,
                 row_access_oracle,
                 {"principal-growth-job-runner": workload_token},
@@ -796,7 +796,7 @@ class GatewayAuthorizationVerifier(BaseVerifier):
 
         with self._forward_service(self.jaeger_service, 16686) as query_port:
             verifier = AuthorizationJaegerTraceVerifier(
-                workload_service=f"e2e-authguard-{component}"
+                workload_service=component
             )
             payload = self._jaeger_query(query_port).wait_for_trace(trace, verifier)
         verifier.verify(payload, trace)

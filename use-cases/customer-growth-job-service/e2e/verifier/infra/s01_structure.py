@@ -214,7 +214,7 @@ KUBERNETES_FORBIDDEN_METHODS = (
     "_expect_job_ids",
 )
 
-E2E_RESOURCE_PREFIX = "e2e-authguard-"
+E2E_NAMESPACE = "e2e-authguard-system"
 E2E_SQL_PREFIX = "e2e_authguard_"
 
 
@@ -322,8 +322,9 @@ def _verify(_context: RunContext) -> VerificationResult:
         )
     )
     required_prefixes = (
-        "e2e-authguard-system",
-        "e2e-authguard-",
+        E2E_NAMESPACE,
+        'self.authguard_release = self.release',
+        'self.envoy_proxy_deployment = "envoygateway"',
         "e2e_authguard_customer_growth",
         "range(28800, 28900)",
     )
@@ -358,7 +359,7 @@ def _verify(_context: RunContext) -> VerificationResult:
         marker for marker in real_wallet_markers if marker not in wallet_verifier_source
     ]:
         errors.append(f"wallet E2E lacks real/offline chain assertions: {missing}")
-    if "e2e-authguard-anvil" not in wallet_nodes_source or "e2e-authguard-solana" not in wallet_nodes_source:
+    if "app.kubernetes.io/component: anvil" not in wallet_nodes_source or "app.kubernetes.io/component: solana" not in wallet_nodes_source:
         errors.append("Helm does not deploy both real local wallet nodes")
     successful_rpc_routes = (
         '@app.post("/ethereum/<chain_id>")',
@@ -753,7 +754,7 @@ def _verify(_context: RunContext) -> VerificationResult:
         f"Five business projects plus UI, IdP, and local-chain support: {', '.join(sorted(expected_projects))}",
         "Each project keeps authorization, controller, DTO, entity, repository, service, and E2E test boundaries",
         "AuthGuard common/AuthN/AuthZ source boundaries match the converged module contract",
-        f"Deployed resources use {E2E_RESOURCE_PREFIX} / {E2E_SQL_PREFIX}; host forwards use 288xx",
+        f"The {E2E_NAMESPACE} namespace isolates formal component resource names; SQL uses {E2E_SQL_PREFIX}; host forwards use 288xx",
         "Kubernetes and Docker phases share 00 deployment -> 10 AuthN -> 20 pre-authorization "
         "-> 26 Envoy/AuthZ/Biz -> 30/31 UI -> 40 runtime evidence",
         "Runner selects a deployer and supports one-shot or post-run cleanup of owned resources",

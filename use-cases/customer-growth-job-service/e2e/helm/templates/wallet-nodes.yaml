@@ -6,11 +6,11 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
-    app.kubernetes.io/component: e2e-authguard-anvil
+    app.kubernetes.io/component: anvil
 spec:
   selector:
     app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/component: e2e-authguard-anvil
+    app.kubernetes.io/component: anvil
   ports:
     - { name: json-rpc, port: 8545, targetPort: json-rpc }
 ---
@@ -20,18 +20,18 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
-    app.kubernetes.io/component: e2e-authguard-anvil
+    app.kubernetes.io/component: anvil
 spec:
   replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/instance: {{ .Release.Name }}
-      app.kubernetes.io/component: e2e-authguard-anvil
+      app.kubernetes.io/component: anvil
   template:
     metadata:
       labels:
         app.kubernetes.io/instance: {{ .Release.Name }}
-        app.kubernetes.io/component: e2e-authguard-anvil
+        app.kubernetes.io/component: anvil
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -83,11 +83,11 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
-    app.kubernetes.io/component: e2e-authguard-solana
+    app.kubernetes.io/component: solana
 spec:
   selector:
     app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/component: e2e-authguard-solana
+    app.kubernetes.io/component: solana
   ports:
     - { name: json-rpc, port: 8899, targetPort: json-rpc }
     - { name: faucet, port: 8900, targetPort: faucet }
@@ -98,18 +98,18 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "customer-growth-e2e.labels" . | nindent 4 }}
-    app.kubernetes.io/component: e2e-authguard-solana
+    app.kubernetes.io/component: solana
 spec:
   replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/instance: {{ .Release.Name }}
-      app.kubernetes.io/component: e2e-authguard-solana
+      app.kubernetes.io/component: solana
   template:
     metadata:
       labels:
         app.kubernetes.io/instance: {{ .Release.Name }}
-        app.kubernetes.io/component: e2e-authguard-solana
+        app.kubernetes.io/component: solana
     spec:
       automountServiceAccountToken: false
       securityContext:

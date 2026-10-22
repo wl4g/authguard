@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Normalize Envoy Gateway's fixed upstream resource names for E2E review."""
+"""Isolate only Envoy Gateway's cluster-scoped RBAC for an E2E deployment."""
 
 from __future__ import annotations
 
@@ -7,39 +7,42 @@ import os
 import sys
 
 
-class EnvoyGatewayManifestPrefixer:
-    """Apply the E2E resource prefix before Helm submits the vendor manifests."""
+class EnvoyGatewayClusterScopeIsolator:
+    """Namespace only the vendor ClusterRole and ClusterRoleBinding names.
 
-    upstream_name = "envoy-gateway"
-    certgen_secret_name = "envoy-gateway"
+    The Envoy Gateway control plane and generated data plane keep their normal
+    component names inside the disposable E2E namespace.  Only these two RBAC
+    objects are cluster-scoped, therefore they need an E2E namespace-derived
+    suffix to allow a concurrent suite to install another controller safely.
+    """
+
+    role_name = "envoy-gateway-helm-envoy-gateway-role"
+    binding_name = "envoy-gateway-helm-envoy-gateway-rolebinding"
 
     def __init__(self) -> None:
-        self.e2e_name = os.getenv(
-            "AUTHGUARD_E2E_ENVOY_GATEWAY_NAME", "e2e-authguard-envoy-gateway"
+        self.cluster_scope_prefix = os.getenv(
+            "AUTHGUARD_E2E_CLUSTER_RESOURCE_PREFIX", "e2e-authguard-system"
+        )
+        self.isolated_role_name = f"{self.cluster_scope_prefix}-envoy-gateway-role"
+        self.isolated_binding_name = (
+            f"{self.cluster_scope_prefix}-envoy-gateway-rolebinding"
         )
 
     def run(self) -> None:
-        manifest = sys.stdin.read().replace(self.upstream_name, self.e2e_name)
-        # The upstream `envoy-gateway certgen` binary owns this Secret at runtime
-        # and has no configurable name. Keep the Deployment reference aligned with
-        # that internal contract; it creates no user-facing Pod name.
-        manifest = manifest.replace(
-            f"secretName: {self.e2e_name}",
-            f"secretName: {self.certgen_secret_name}",
-        )
-        sys.stdout.write(self._restore_control_plane_service_name(manifest))
+        documents = sys.stdin.read().split("\n---\n")
+        sys.stdout.write("\n---\n".join(self._isolate(document) for document in documents))
 
-    def _restore_control_plane_service_name(self, manifest: str) -> str:
-        """Keep Envoy Gateway's fixed xDS Service discovery contract intact."""
-        documents = manifest.split("\n---\n")
-        service_marker = "\nkind: Service\n"
-        renamed_name = f"  name: {self.e2e_name}\n"
-        original_name = f"  name: {self.upstream_name}\n"
-        for index, document in enumerate(documents):
-            if service_marker in f"\n{document}" and renamed_name in document:
-                documents[index] = document.replace(renamed_name, original_name, 1)
-        return "\n---\n".join(documents)
+    def _isolate(self, document: str) -> str:
+        """Rewrite references only within the two expected cluster-scoped kinds."""
+        scoped_document = f"\n{document}"
+        if "\nkind: ClusterRole\n" in scoped_document:
+            return document.replace(self.role_name, self.isolated_role_name)
+        if "\nkind: ClusterRoleBinding\n" in scoped_document:
+            return document.replace(self.binding_name, self.isolated_binding_name).replace(
+                self.role_name, self.isolated_role_name
+            )
+        return document
 
 
 if __name__ == "__main__":
-    EnvoyGatewayManifestPrefixer().run()
+    EnvoyGatewayClusterScopeIsolator().run()
