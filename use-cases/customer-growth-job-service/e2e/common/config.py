@@ -38,7 +38,7 @@ JAVA_ADAPTER_INSTALL = (
     "install",
 )
 
-PYTHON_SERVICE = DEPLOY_DIR / "python-sqlalchemy-service"
+PYTHON_SERVICE = DEPLOY_DIR / "biz-python-sqlalchemy-service"
 
 
 def _maven_environment() -> dict[str, str]:
@@ -58,19 +58,19 @@ def _maven_environment() -> dict[str, str]:
 MAVEN_ENVIRONMENT = _maven_environment()
 
 PROJECTS = {
-    "golang-sqlx-service": ProjectSpec(
-        name="golang-sqlx-service",
+    "biz-golang-sqlx-service": ProjectSpec(
+        name="biz-golang-sqlx-service",
         title="Go + sqlx + SQLite",
-        path=DEPLOY_DIR / "golang-sqlx-service",
+        path=DEPLOY_DIR / "biz-golang-sqlx-service",
         setup_commands=(),
         clean_commands=(("go", "clean", "-testcache"),),
         test_command=("go", "test", "-count=1", "-v", "./..."),
         environment={"GOPROXY": os.environ.get("GOPROXY", "https://goproxy.cn,direct")},
     ),
-    "rust-sqlx-service": ProjectSpec(
-        name="rust-sqlx-service",
+    "biz-rust-sqlx-service": ProjectSpec(
+        name="biz-rust-sqlx-service",
         title="Rust + sqlx + SQLite",
-        path=DEPLOY_DIR / "rust-sqlx-service",
+        path=DEPLOY_DIR / "biz-rust-sqlx-service",
         setup_commands=(),
         clean_commands=(
             ("cargo", "clean", "-p", "authguard-customer-growth-job-rust-service"),
@@ -87,8 +87,8 @@ PROJECTS = {
         ),
         environment={},
     ),
-    "python-sqlalchemy-service": ProjectSpec(
-        name="python-sqlalchemy-service",
+    "biz-python-sqlalchemy-service": ProjectSpec(
+        name="biz-python-sqlalchemy-service",
         title="Python + SQLAlchemy + SQLite",
         path=PYTHON_SERVICE,
         setup_commands=(),
@@ -108,19 +108,19 @@ PROJECTS = {
             )
         },
     ),
-    "springboot-jdbc-service": ProjectSpec(
-        name="springboot-jdbc-service",
+    "biz-springboot-jdbc-service": ProjectSpec(
+        name="biz-springboot-jdbc-service",
         title="Spring Boot + JDBC + SQLite",
-        path=DEPLOY_DIR / "springboot-jdbc-service",
+        path=DEPLOY_DIR / "biz-springboot-jdbc-service",
         setup_commands=(JAVA_ADAPTER_INSTALL,),
         clean_commands=(("mvn", "-q", "clean"),),
         test_command=("mvn", "-q", "test"),
         environment=MAVEN_ENVIRONMENT,
     ),
-    "springboot-jpa-service": ProjectSpec(
-        name="springboot-jpa-service",
+    "biz-springboot-jpa-service": ProjectSpec(
+        name="biz-springboot-jpa-service",
         title="Spring Boot + JPA + H2",
-        path=DEPLOY_DIR / "springboot-jpa-service",
+        path=DEPLOY_DIR / "biz-springboot-jpa-service",
         setup_commands=(JAVA_ADAPTER_INSTALL,),
         clean_commands=(("mvn", "-q", "clean"),),
         test_command=("mvn", "-q", "test"),
@@ -142,23 +142,23 @@ DEFAULT_SCENARIOS = {
         "verifier.infra.s03_adapter_contract",
     ),
     "21": (
-        PROJECTS["golang-sqlx-service"].title,
+        PROJECTS["biz-golang-sqlx-service"].title,
         "verifier.authz.sdk-golang.s21_sqlx",
     ),
     "22": (
-        PROJECTS["rust-sqlx-service"].title,
+        PROJECTS["biz-rust-sqlx-service"].title,
         "verifier.authz.sdk-rust.s22_sqlx",
     ),
     "23": (
-        PROJECTS["python-sqlalchemy-service"].title,
+        PROJECTS["biz-python-sqlalchemy-service"].title,
         "verifier.authz.sdk-python.s23_sqlalchemy",
     ),
     "24": (
-        PROJECTS["springboot-jdbc-service"].title,
+        PROJECTS["biz-springboot-jdbc-service"].title,
         "verifier.authz.sdk-java.s24_springboot_jdbc",
     ),
     "25": (
-        PROJECTS["springboot-jpa-service"].title,
+        PROJECTS["biz-springboot-jpa-service"].title,
         "verifier.authz.sdk-java.s25_springboot_jpa",
     ),
 }

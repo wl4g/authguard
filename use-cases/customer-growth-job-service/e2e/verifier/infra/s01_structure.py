@@ -12,7 +12,7 @@ from verifier.other.base import BaseVerifier
 
 
 REQUIRED_PATHS = {
-    "golang-sqlx-service": (
+    "biz-golang-sqlx-service": (
         "pkg/authorization",
         "pkg/controller",
         "pkg/dto",
@@ -22,7 +22,7 @@ REQUIRED_PATHS = {
         "pkg/telemetry/telemetry.go",
         "tests/customer_growth_job_e2e_test.go",
     ),
-    "rust-sqlx-service": (
+    "biz-rust-sqlx-service": (
         "src/authorization",
         "src/config.rs",
         "src/controller",
@@ -33,7 +33,7 @@ REQUIRED_PATHS = {
         "src/service",
         "tests/customer_growth_job_e2e.rs",
     ),
-    "python-sqlalchemy-service": (
+    "biz-python-sqlalchemy-service": (
         "app/authorization",
         "app/controller",
         "app/dto",
@@ -43,7 +43,7 @@ REQUIRED_PATHS = {
         "app/telemetry.py",
         "tests/test_customer_growth_job_e2e.py",
     ),
-    "springboot-jdbc-service": (
+    "biz-springboot-jdbc-service": (
         "src/main/java/com/authguard/usecases/authorization",
         "src/main/java/com/authguard/usecases/config",
         "src/main/java/com/authguard/usecases/controller",
@@ -53,7 +53,7 @@ REQUIRED_PATHS = {
         "src/main/java/com/authguard/usecases/service",
         "src/test/java/com/authguard/usecases/controller/CustomerGrowthJobControllerE2ETest.java",
     ),
-    "springboot-jpa-service": (
+    "biz-springboot-jpa-service": (
         "src/main/java/com/authguard/usecases/authorization",
         "src/main/java/com/authguard/usecases/config",
         "src/main/java/com/authguard/usecases/controller",
@@ -67,7 +67,7 @@ REQUIRED_PATHS = {
 
 SUPPORT_PROJECTS = {
     "anvil",
-    "mocksvc-idp-service",
+    "mock-external-idp-service",
     "solana",
 }
 
@@ -375,7 +375,7 @@ def _verify(_context: RunContext) -> VerificationResult:
         verifier_dir / "authn/wallet/s15_wallet.py"
     ).read_text(encoding="utf-8")
     mock_idp_source = (
-        DEPLOY_DIR / "mocksvc-idp-service/app/server.py"
+        DEPLOY_DIR / "mock-external-idp-service/app/server.py"
     ).read_text(encoding="utf-8")
     real_wallet_markers = (
         "anvil_setCode",
@@ -430,8 +430,8 @@ def _verify(_context: RunContext) -> VerificationResult:
     business_logout_sources = "\n".join(
         path.read_text(encoding="utf-8")
         for path in (
-            DEPLOY_DIR / "python-sqlalchemy-service/app/server.py",
-            USE_CASE_DIR / "e2e/config/docker-envoy.yaml",
+            DEPLOY_DIR / "biz-python-sqlalchemy-service/app/server.py",
+            USE_CASE_DIR / "e2e/config/envoy/e2e-envoy.yaml",
             USE_CASE_DIR / "e2e/helm/templates/workloads.yaml",
         )
     )
@@ -678,7 +678,7 @@ def _verify(_context: RunContext) -> VerificationResult:
         "helm pull",
         "helm dependency update",
         "authguard-middleware.enabled: false",
-        "exactly one top-level `authguard-middleware:` map",
+        "exactly one top-level `authguard:` map",
         "--application-host",
         "--deploy-release",
         "--deploy-namespace",
@@ -731,15 +731,15 @@ def _verify(_context: RunContext) -> VerificationResult:
             ("OTEL_SERVICE_NAME", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"),
         ),
         "Go workload": (
-            DEPLOY_DIR / "golang-sqlx-service/pkg/telemetry/telemetry.go",
+            DEPLOY_DIR / "biz-golang-sqlx-service/pkg/telemetry/telemetry.go",
             ("otlptracehttp.New", "otelhttp.NewHandler"),
         ),
         "Rust workload": (
-            DEPLOY_DIR / "rust-sqlx-service/src/controller/http.rs",
+            DEPLOY_DIR / "biz-rust-sqlx-service/src/controller/http.rs",
             ("propagate_http_trace_context",),
         ),
         "Python workload": (
-            DEPLOY_DIR / "python-sqlalchemy-service/app/telemetry.py",
+            DEPLOY_DIR / "biz-python-sqlalchemy-service/app/telemetry.py",
             ("OTLPSpanExporter", "FlaskInstrumentor"),
         ),
     }
@@ -750,7 +750,7 @@ def _verify(_context: RunContext) -> VerificationResult:
     docker_e2e_source = (USE_CASE_DIR / "e2e/docker-compose.yaml").read_text(
         encoding="utf-8"
     )
-    docker_envoy_source = (USE_CASE_DIR / "e2e/config/docker-envoy.yaml").read_text(
+    docker_envoy_source = (USE_CASE_DIR / "e2e/config/envoy/e2e-envoy.yaml").read_text(
         encoding="utf-8"
     )
     if "service_name: envoygateway" not in docker_envoy_source:
@@ -761,8 +761,8 @@ def _verify(_context: RunContext) -> VerificationResult:
                 f"Docker {component} must use its component name as the OTel service"
             )
     spring_trace_services = {
-        "springboot-jdbc-service": "spring-jdbc",
-        "springboot-jpa-service": "spring-jpa",
+        "biz-springboot-jdbc-service": "spring-jdbc",
+        "biz-springboot-jpa-service": "spring-jpa",
     }
     for project, component in spring_trace_services.items():
         pom = (DEPLOY_DIR / project / "pom.xml").read_text(encoding="utf-8")

@@ -13,23 +13,23 @@ from verifier.other.base import BaseVerifier
 
 
 PROJECT_SOURCES = {
-    "golang-sqlx-service": (
+    "biz-golang-sqlx-service": (
         "tests/customer_growth_job_e2e_test.go",
         "pkg/authorization/customer_growth_job_resource_mapping.go",
     ),
-    "rust-sqlx-service": (
+    "biz-rust-sqlx-service": (
         "tests/customer_growth_job_e2e.rs",
         "src/authorization/mod.rs",
     ),
-    "python-sqlalchemy-service": (
+    "biz-python-sqlalchemy-service": (
         "tests/test_customer_growth_job_e2e.py",
         "app/authorization/customer_growth_job_resource_mapping.py",
     ),
-    "springboot-jdbc-service": (
+    "biz-springboot-jdbc-service": (
         "src/test/java/com/authguard/usecases/support/E2EFixtures.java",
         "src/main/java/com/authguard/usecases/authorization/CustomerGrowthJobResourceMappings.java",
     ),
-    "springboot-jpa-service": (
+    "biz-springboot-jpa-service": (
         "src/test/java/com/authguard/usecases/support/E2EFixtures.java",
         "src/main/java/com/authguard/usecases/authorization/CustomerGrowthJobResourceMappings.java",
     ),
@@ -37,24 +37,24 @@ PROJECT_SOURCES = {
 
 BUSINESS_TABLE = "e2e_authguard_customer_growth_jobs"
 PROJECT_REPOSITORIES = {
-    "golang-sqlx-service": "pkg/repository/customer_growth_job_repository.go",
-    "rust-sqlx-service": "src/repository/mod.rs",
-    "python-sqlalchemy-service": "app/repository/customer_growth_job_repository.py",
-    "springboot-jdbc-service": (
+    "biz-golang-sqlx-service": "pkg/repository/customer_growth_job_repository.go",
+    "biz-rust-sqlx-service": "src/repository/mod.rs",
+    "biz-python-sqlalchemy-service": "app/repository/customer_growth_job_repository.py",
+    "biz-springboot-jdbc-service": (
         "src/main/java/com/authguard/usecases/repository/CustomerGrowthJobJdbcRepository.java"
     ),
-    "springboot-jpa-service": (
+    "biz-springboot-jpa-service": (
         "src/main/java/com/authguard/usecases/repository/CustomerGrowthJobJpaRepository.java"
     ),
 }
 PROJECT_EXECUTION_TESTS = {
-    "golang-sqlx-service": "tests/customer_growth_job_e2e_test.go",
-    "rust-sqlx-service": "tests/customer_growth_job_e2e.rs",
-    "python-sqlalchemy-service": "tests/test_customer_growth_job_e2e.py",
-    "springboot-jdbc-service": (
+    "biz-golang-sqlx-service": "tests/customer_growth_job_e2e_test.go",
+    "biz-rust-sqlx-service": "tests/customer_growth_job_e2e.rs",
+    "biz-python-sqlalchemy-service": "tests/test_customer_growth_job_e2e.py",
+    "biz-springboot-jdbc-service": (
         "src/test/java/com/authguard/usecases/controller/CustomerGrowthJobControllerE2ETest.java"
     ),
-    "springboot-jpa-service": (
+    "biz-springboot-jpa-service": (
         "src/test/java/com/authguard/usecases/controller/CustomerGrowthJobControllerE2ETest.java"
     ),
 }
@@ -67,7 +67,7 @@ def _verify(_context: RunContext) -> VerificationResult:
     fixture = json.loads(
         (CONFIG_DIR / "authguard-e2e-scenarios.json").read_text(encoding="utf-8")
     )
-    mock_idp = (DEPLOY_DIR / "mocksvc-idp-service/app/server.py").read_text(
+    mock_idp = (DEPLOY_DIR / "mock-external-idp-service/app/server.py").read_text(
         encoding="utf-8"
     )
     authorization_verifier = (

@@ -218,11 +218,11 @@ WORKLOAD_IMAGES = {
     "spring-jpa": "registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-spring-jpa:e2e-local",
 }
 WORKLOAD_DIRECTORIES = {
-    "go-sqlx": "golang-sqlx-service",
-    "rust-sqlx": "rust-sqlx-service",
-    "python-sqlalchemy": "python-sqlalchemy-service",
-    "spring-jdbc": "springboot-jdbc-service",
-    "spring-jpa": "springboot-jpa-service",
+    "go-sqlx": "biz-golang-sqlx-service",
+    "rust-sqlx": "biz-rust-sqlx-service",
+    "python-sqlalchemy": "biz-python-sqlalchemy-service",
+    "spring-jdbc": "biz-springboot-jdbc-service",
+    "spring-jpa": "biz-springboot-jpa-service",
 }
 WORKLOAD_HOSTS = {
     component: f"e2e-authguard-{component}.customer-growth.local"
@@ -815,7 +815,7 @@ class BaseE2EDeployer(ABC):
                 "--build-arg",
                 f"PYTHON_IMAGE={E2E_IMAGES.python_runtime}",
                 "-f",
-                str(self.deploy_dir / "mocksvc-idp-service" / "Dockerfile"),
+                str(self.deploy_dir / "mock-external-idp-service" / "Dockerfile"),
                 "-t",
                 MOCK_IDP_IMAGE,
                 ".",

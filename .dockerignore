@@ -3,7 +3,6 @@
 target
 **/target
 web
-use-cases/customer-growth-job-service/e2e/deploy/customer-growth-ui-service
 **/__pycache__
 **/.pytest_cache
 **/.mypy_cache
@@ -15,6 +14,7 @@ use-cases/customer-growth-job-service/e2e/deploy/customer-growth-ui-service
 deploy/helm/authguard/charts
 use-cases/**/node_modules
 use-cases/customer-growth-job-service/e2e/config/*
-!use-cases/customer-growth-job-service/e2e/config/maven-settings.xml
+!use-cases/customer-growth-job-service/e2e/config/maven/settings.xml
+use-cases/customer-growth-job-service/e2e/deploy/customer-growth-ui-service
 use-cases/customer-growth-job-service/e2e/helm
 use-cases/customer-growth-job-service/e2e/reports

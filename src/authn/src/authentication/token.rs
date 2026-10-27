@@ -222,7 +222,7 @@ mod tests {
 
     const TEST_PRIVATE_KEY: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../use-cases/customer-growth-job-service/e2e/config/e2e-jwt-keys/resign-jwt-key.pem"
+        "/../../use-cases/customer-growth-job-service/e2e/config/authguard/e2e-jwt-keys/resign-jwt-key.pem"
     ));
 
     #[test]

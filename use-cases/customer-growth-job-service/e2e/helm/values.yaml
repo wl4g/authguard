@@ -48,7 +48,7 @@ jaeger:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 500m, memory: 512Mi }
 
-supportPostgresql:
+postgresql:
   image: registry.cn-shenzhen.aliyuncs.com/wl4g/bitnami_postgresql:18.3
   pullPolicy: IfNotPresent
   database: e2e_authguard_customer_growth
@@ -102,7 +102,7 @@ solana:
     requests: { cpu: 50m, memory: 512Mi }
     limits: { cpu: 250m, memory: 1536Mi }
 
-authguard-middleware:
+authguard:
   # Disabled for every normal business release. The E2E bootstrap installs the
   # vendored AuthGuard dependency as a separate Helm release.
   enabled: false

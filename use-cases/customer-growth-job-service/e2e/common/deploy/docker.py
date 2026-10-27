@@ -494,7 +494,7 @@ class DockerE2EDeployer(BaseE2EDeployer):
                 lines.append(
                     f"PGPASSWORD='{password}' PGOPTIONS='-c search_path={schema}' psql "
                     f"--host=127.0.0.1 --username='{role}' --dbname=\"$POSTGRESQL_DATABASE\" "
-                    "--set=ON_ERROR_STOP=1 --file=/e2e-authguard-fixture/init.sql"
+                    "--set=ON_ERROR_STOP=1 --file=/e2e-authguard-fixture/e2e-init.sql"
                 )
         return "\n".join(lines) + "\n"
 

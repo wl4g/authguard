@@ -22,7 +22,7 @@ Replace every placeholder with developer-provided values.
 
 ```yaml
 # values.yaml
-authguard-middleware:
+authguard:
   enabled: false
   envoy_gateway:
     # Keep false when the cluster already owns a compatible controller.

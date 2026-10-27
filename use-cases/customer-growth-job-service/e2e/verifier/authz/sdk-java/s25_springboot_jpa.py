@@ -10,7 +10,7 @@ class SpringBootJpaVerifier(BaseVerifier):
     title = "Spring Boot + JPA + H2"
 
     def run(self) -> VerificationResult:
-        return verify_project(self.context, self.scenario_id, "springboot-jpa-service")
+        return verify_project(self.context, self.scenario_id, "biz-springboot-jpa-service")
 
 
 def verify(context: RunContext) -> VerificationResult:
