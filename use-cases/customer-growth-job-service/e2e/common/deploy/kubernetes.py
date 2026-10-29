@@ -26,11 +26,16 @@ from .base import (
     MOCK_IDP_IMAGE,
     WORKLOAD_IMAGES,
 )
-from ..config import CONFIG_DIR, E2E_DIR, PROJECT_ROOT
+from ..config import (
+    AUTHGUARD_INIT_SQL_PATH,
+    AUTHGUARD_JWT_KEYS_DIR,
+    E2E_DIR,
+    KEYCLOAK_REALM_PATH,
+    PROJECT_ROOT,
+)
 from ..model import RunContext
 
 
-E2E_KEYS_DIR = CONFIG_DIR / "e2e-jwt-keys"
 KUBERNETES_IMAGE_LOADER_ENV = "AUTHGUARD_E2E_KUBERNETES_IMAGE_LOADER"
 KUBERNETES_CLUSTER_ENV = "AUTHGUARD_E2E_KUBERNETES_CLUSTER"
 
@@ -544,7 +549,7 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                 "--set-string",
                 f"config.envoyGateway.gateway.controllerName={self.gateway_controller_name}",
                 "--post-renderer",
-                str(self.deploy_dir / "envoy_gateway_post_renderer.py"),
+                str(self.deploy_dir / "hook/envoy_gateway_post_renderer.py"),
                 "--wait",
                 f"--timeout={self.context.timeout_seconds}s",
             )
@@ -562,19 +567,19 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                 "-n",
                 self.namespace,
                 "--set-file",
-                f"keycloak.realm={CONFIG_DIR / 'keycloak-realm.json'}",
+                f"keycloak.realm={KEYCLOAK_REALM_PATH}",
                 "--set-file",
-                f"supportPostgresql.initSQL={CONFIG_DIR / 'init.sql'}",
+                f"postgresql.initSQL={AUTHGUARD_INIT_SQL_PATH}",
                 "--set-file",
-                f"keycloak.realmSigningPrivateKey={E2E_KEYS_DIR / 'realm-signing-key.pem'}",
+                f"keycloak.realmSigningPrivateKey={AUTHGUARD_JWT_KEYS_DIR / 'realm-signing-key.pem'}",
                 "--set-file",
-                f"keycloak.realmSigningCertificate={E2E_KEYS_DIR / 'realm-signing-cert.pem'}",
+                f"keycloak.realmSigningCertificate={AUTHGUARD_JWT_KEYS_DIR / 'realm-signing-cert.pem'}",
                 "--set-file",
-                f"keycloak.realmSigningJwks={E2E_KEYS_DIR / 'realm-signing-jwk.json'}",
+                f"keycloak.realmSigningJwks={AUTHGUARD_JWT_KEYS_DIR / 'realm-signing-jwk.json'}",
                 "--set-file",
-                f"keycloak.resignJwtPrivateKey={E2E_KEYS_DIR / 'resign-jwt-key.pem'}",
+                f"keycloak.resignJwtPrivateKey={AUTHGUARD_JWT_KEYS_DIR / 'resign-jwt-key.pem'}",
                 "--set-file",
-                f"keycloak.resignJwtPublicKey={E2E_KEYS_DIR / 'resign-jwt-key.pub.pem'}",
+                f"keycloak.resignJwtPublicKey={AUTHGUARD_JWT_KEYS_DIR / 'resign-jwt-key.pub.pem'}",
                 "--set",
                 f"authguard-middleware.grpcTarget={grpc_target}",
                 "--set",
@@ -586,7 +591,7 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                 "--set",
                 f"jaeger.image={E2E_IMAGES.jaeger}",
                 "--set",
-                f"supportPostgresql.image={E2E_IMAGES.postgres}",
+                f"postgresql.image={E2E_IMAGES.postgres}",
                 "--set",
                 f"anvil.image={E2E_IMAGES.anvil}",
                 "--set",

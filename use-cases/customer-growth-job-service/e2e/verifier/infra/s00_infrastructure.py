@@ -13,7 +13,7 @@ from common.deploy.base import (
     MOCK_IDP_IMAGE,
     WORKLOAD_IMAGES,
 )
-from common.config import CONFIG_DIR
+from common.config import AUTHGUARD_JWT_KEYS_DIR
 from common.model import RunContext, VerificationResult
 from verifier.other.base import BaseVerifier
 
@@ -495,7 +495,7 @@ class InfrastructureVerifier(BaseVerifier):
                 f"support ConfigMap {expected_jwks_config_map}"
             )
         jwks = json.loads(
-            (CONFIG_DIR / "e2e-jwt-keys/realm-signing-jwk.json").read_text(encoding="utf-8")
+            (AUTHGUARD_JWT_KEYS_DIR / "realm-signing-jwk.json").read_text(encoding="utf-8")
         )
         if not isinstance(jwks.get("keys"), list) or not jwks["keys"]:
             raise RuntimeError("the deterministic Envoy local JWKS must contain keys")

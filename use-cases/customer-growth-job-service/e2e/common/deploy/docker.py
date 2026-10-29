@@ -24,7 +24,11 @@ from .base import (
     MOCK_IDP_IMAGE,
     WORKLOAD_IMAGES,
 )
-from ..config import CONFIG_DIR, E2E_DIR
+from ..config import (
+    AUTHGUARD_JWT_KEYS_DIR,
+    E2E_DIR,
+    KEYCLOAK_REALM_PATH,
+)
 from ..model import RunContext
 
 
@@ -349,8 +353,8 @@ class DockerE2EDeployer(BaseE2EDeployer):
         postgres_init.chmod(0o755)
 
     def _write_authguard_environment(self) -> None:
-        signing_key = (CONFIG_DIR / "e2e-jwt-keys/realm-signing-key.pem").read_bytes()
-        resign_key = (CONFIG_DIR / "e2e-jwt-keys/resign-jwt-key.pem").read_bytes()
+        signing_key = (AUTHGUARD_JWT_KEYS_DIR / "realm-signing-key.pem").read_bytes()
+        resign_key = (AUTHGUARD_JWT_KEYS_DIR / "resign-jwt-key.pem").read_bytes()
         values = {
             "AUTHGUARD__AUTHN__PROVIDERS__E2E_AUTHGUARD_KEYCLOAK__CLIENT_SECRET": "e2e-authguard-principal-discovery-client-secret",
             "AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__KEYCLOAK__INDEX_0__AUTH__CLIENT_SECRET": "e2e-authguard-principal-discovery-client-secret",
@@ -378,14 +382,14 @@ class DockerE2EDeployer(BaseE2EDeployer):
 
     def _write_keycloak_realm(self) -> None:
         source = json.loads(
-            (CONFIG_DIR / "keycloak-realm.json").read_text(encoding="utf-8")
+            KEYCLOAK_REALM_PATH.read_text(encoding="utf-8")
         )
         replacements = {
             "${E2E_AUTHGUARD_REALM_SIGNING_PRIVATE_KEY}": (
-                CONFIG_DIR / "e2e-jwt-keys/realm-signing-key.pem"
+                AUTHGUARD_JWT_KEYS_DIR / "realm-signing-key.pem"
             ).read_text(encoding="utf-8"),
             "${E2E_AUTHGUARD_REALM_SIGNING_CERTIFICATE}": (
-                CONFIG_DIR / "e2e-jwt-keys/realm-signing-cert.pem"
+                AUTHGUARD_JWT_KEYS_DIR / "realm-signing-cert.pem"
             ).read_text(encoding="utf-8"),
             "${E2E_AUTHGUARD_PRINCIPAL_DISCOVERY_CLIENT_SECRET}": "e2e-authguard-principal-discovery-client-secret",
             "${E2E_AUTHGUARD_WORKLOAD_CLIENT_SECRET}": "e2e-authguard-workload-client-secret",
@@ -494,7 +498,7 @@ class DockerE2EDeployer(BaseE2EDeployer):
                 lines.append(
                     f"PGPASSWORD='{password}' PGOPTIONS='-c search_path={schema}' psql "
                     f"--host=127.0.0.1 --username='{role}' --dbname=\"$POSTGRESQL_DATABASE\" "
-                    "--set=ON_ERROR_STOP=1 --file=/e2e-authguard-fixture/init.sql"
+                    "--set=ON_ERROR_STOP=1 --file=/e2e-authguard-fixture/e2e-init.sql"
                 )
         return "\n".join(lines) + "\n"
 

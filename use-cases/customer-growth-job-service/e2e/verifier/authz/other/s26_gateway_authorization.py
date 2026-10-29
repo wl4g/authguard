@@ -6,7 +6,7 @@ import json
 import sqlite3
 from urllib import parse, request
 
-from common.config import CONFIG_DIR
+from common.config import AUTHGUARD_INIT_SQL_PATH
 from common.deploy.base import AUTHN_HOST, WORKLOAD_HOSTS, WORKLOAD_IMAGES
 from common.model import RunContext, VerificationResult
 from common.telemetry import E2ETrace
@@ -843,7 +843,7 @@ class GatewayAuthorizationVerifier(BaseVerifier):
         )
         with sqlite3.connect(":memory:") as database:
             database.row_factory = sqlite3.Row
-            database.executescript((CONFIG_DIR / "init.sql").read_text(encoding="utf-8"))
+            database.executescript(AUTHGUARD_INIT_SQL_PATH.read_text(encoding="utf-8"))
             expected = [
                 dict(row)
                 for row in database.execute(

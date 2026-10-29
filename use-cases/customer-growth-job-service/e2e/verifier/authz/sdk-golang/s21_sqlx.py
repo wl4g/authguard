@@ -10,7 +10,7 @@ class GolangSqlxVerifier(BaseVerifier):
     title = "Go + sqlx + SQLite"
 
     def run(self) -> VerificationResult:
-        return verify_project(self.context, self.scenario_id, "golang-sqlx-service")
+        return verify_project(self.context, self.scenario_id, "biz-golang-sqlx-service")
 
 
 def verify(context: RunContext) -> VerificationResult:

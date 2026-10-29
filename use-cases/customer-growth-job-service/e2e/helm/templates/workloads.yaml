@@ -48,9 +48,9 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       initContainers:
         - name: wait-postgresql
-          image: {{ $root.Values.supportPostgresql.image | quote }}
-          imagePullPolicy: {{ $root.Values.supportPostgresql.pullPolicy }}
-          command: ["bash", "-ec", "until pg_isready -h {{ $postgresqlName }} -U $DATABASE_USERNAME -d {{ $root.Values.supportPostgresql.database }}; do sleep 1; done"]
+          image: {{ $root.Values.postgresql.image | quote }}
+          imagePullPolicy: {{ $root.Values.postgresql.pullPolicy }}
+          command: ["bash", "-ec", "until pg_isready -h {{ $postgresqlName }} -U $DATABASE_USERNAME -d {{ $root.Values.postgresql.database }}; do sleep 1; done"]
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }

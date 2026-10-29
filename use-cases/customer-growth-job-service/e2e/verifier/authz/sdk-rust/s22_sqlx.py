@@ -10,7 +10,7 @@ class RustSqlxVerifier(BaseVerifier):
     title = "Rust + sqlx + SQLite"
 
     def run(self) -> VerificationResult:
-        return verify_project(self.context, self.scenario_id, "rust-sqlx-service")
+        return verify_project(self.context, self.scenario_id, "biz-rust-sqlx-service")
 
 
 def verify(context: RunContext) -> VerificationResult:

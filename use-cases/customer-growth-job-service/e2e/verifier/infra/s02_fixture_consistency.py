@@ -7,29 +7,33 @@ import re
 import sqlite3
 import time
 
-from common.config import CONFIG_DIR, DEPLOY_DIR
+from common.config import (
+    AUTHGUARD_INIT_SQL_PATH,
+    AUTHGUARD_SCENARIOS_PATH,
+    DEPLOY_DIR,
+)
 from common.model import RunContext, VerificationResult
 from verifier.other.base import BaseVerifier
 
 
 PROJECT_SOURCES = {
-    "golang-sqlx-service": (
+    "biz-golang-sqlx-service": (
         "tests/customer_growth_job_e2e_test.go",
         "pkg/authorization/customer_growth_job_resource_mapping.go",
     ),
-    "rust-sqlx-service": (
+    "biz-rust-sqlx-service": (
         "tests/customer_growth_job_e2e.rs",
         "src/authorization/mod.rs",
     ),
-    "python-sqlalchemy-service": (
+    "biz-python-sqlalchemy-service": (
         "tests/test_customer_growth_job_e2e.py",
         "app/authorization/customer_growth_job_resource_mapping.py",
     ),
-    "springboot-jdbc-service": (
+    "biz-springboot-jdbc-service": (
         "src/test/java/com/authguard/usecases/support/E2EFixtures.java",
         "src/main/java/com/authguard/usecases/authorization/CustomerGrowthJobResourceMappings.java",
     ),
-    "springboot-jpa-service": (
+    "biz-springboot-jpa-service": (
         "src/test/java/com/authguard/usecases/support/E2EFixtures.java",
         "src/main/java/com/authguard/usecases/authorization/CustomerGrowthJobResourceMappings.java",
     ),
@@ -37,24 +41,24 @@ PROJECT_SOURCES = {
 
 BUSINESS_TABLE = "e2e_authguard_customer_growth_jobs"
 PROJECT_REPOSITORIES = {
-    "golang-sqlx-service": "pkg/repository/customer_growth_job_repository.go",
-    "rust-sqlx-service": "src/repository/mod.rs",
-    "python-sqlalchemy-service": "app/repository/customer_growth_job_repository.py",
-    "springboot-jdbc-service": (
+    "biz-golang-sqlx-service": "pkg/repository/customer_growth_job_repository.go",
+    "biz-rust-sqlx-service": "src/repository/mod.rs",
+    "biz-python-sqlalchemy-service": "app/repository/customer_growth_job_repository.py",
+    "biz-springboot-jdbc-service": (
         "src/main/java/com/authguard/usecases/repository/CustomerGrowthJobJdbcRepository.java"
     ),
-    "springboot-jpa-service": (
+    "biz-springboot-jpa-service": (
         "src/main/java/com/authguard/usecases/repository/CustomerGrowthJobJpaRepository.java"
     ),
 }
 PROJECT_EXECUTION_TESTS = {
-    "golang-sqlx-service": "tests/customer_growth_job_e2e_test.go",
-    "rust-sqlx-service": "tests/customer_growth_job_e2e.rs",
-    "python-sqlalchemy-service": "tests/test_customer_growth_job_e2e.py",
-    "springboot-jdbc-service": (
+    "biz-golang-sqlx-service": "tests/customer_growth_job_e2e_test.go",
+    "biz-rust-sqlx-service": "tests/customer_growth_job_e2e.rs",
+    "biz-python-sqlalchemy-service": "tests/test_customer_growth_job_e2e.py",
+    "biz-springboot-jdbc-service": (
         "src/test/java/com/authguard/usecases/controller/CustomerGrowthJobControllerE2ETest.java"
     ),
-    "springboot-jpa-service": (
+    "biz-springboot-jpa-service": (
         "src/test/java/com/authguard/usecases/controller/CustomerGrowthJobControllerE2ETest.java"
     ),
 }
@@ -63,11 +67,9 @@ PROJECT_EXECUTION_TESTS = {
 def _verify(_context: RunContext) -> VerificationResult:
     started = time.monotonic()
     errors: list[str] = []
-    sql = (CONFIG_DIR / "init.sql").read_text(encoding="utf-8")
-    fixture = json.loads(
-        (CONFIG_DIR / "authguard-e2e-scenarios.json").read_text(encoding="utf-8")
-    )
-    mock_idp = (DEPLOY_DIR / "mocksvc-idp-service/app/server.py").read_text(
+    sql = AUTHGUARD_INIT_SQL_PATH.read_text(encoding="utf-8")
+    fixture = json.loads(AUTHGUARD_SCENARIOS_PATH.read_text(encoding="utf-8"))
+    mock_idp = (DEPLOY_DIR / "mock-external-idp-service/app/server.py").read_text(
         encoding="utf-8"
     )
     authorization_verifier = (
@@ -227,7 +229,7 @@ def _verify(_context: RunContext) -> VerificationResult:
         mapping_text = (DEPLOY_DIR / project_name / mapping_source).read_text(
             encoding="utf-8"
         )
-        for fixture_name in ("init.sql", "authguard-e2e-scenarios.json"):
+        for fixture_name in ("e2e-init.sql", "e2e-scenarios.json"):
             if fixture_name not in test_text:
                 errors.append(f"{project_name}: does not consume {fixture_name}")
         if "customer-growth" not in mapping_text:
@@ -275,6 +277,7 @@ def _verify(_context: RunContext) -> VerificationResult:
 class FixtureConsistencyVerifier(BaseVerifier):
     scenario_id = "02"
     title = "Shared SQL and authorization fixture consistency"
+    requires_deployer = False
 
     def run(self) -> VerificationResult:
         return self.step("validate SQL seeds and all authorization scenario contracts", lambda: _verify(self.context))

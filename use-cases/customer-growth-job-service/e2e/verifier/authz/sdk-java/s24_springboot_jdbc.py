@@ -10,7 +10,7 @@ class SpringBootJdbcVerifier(BaseVerifier):
     title = "Spring Boot + JDBC + SQLite"
 
     def run(self) -> VerificationResult:
-        return verify_project(self.context, self.scenario_id, "springboot-jdbc-service")
+        return verify_project(self.context, self.scenario_id, "biz-springboot-jdbc-service")
 
 
 def verify(context: RunContext) -> VerificationResult:

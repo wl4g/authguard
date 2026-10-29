@@ -10,7 +10,7 @@ class PythonSqlalchemyVerifier(BaseVerifier):
     title = "Python + SQLAlchemy + SQLite"
 
     def run(self) -> VerificationResult:
-        return verify_project(self.context, self.scenario_id, "python-sqlalchemy-service")
+        return verify_project(self.context, self.scenario_id, "biz-python-sqlalchemy-service")
 
 
 def verify(context: RunContext) -> VerificationResult:
