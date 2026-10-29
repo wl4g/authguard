@@ -9,7 +9,7 @@ import re
 import shutil
 import time
 
-from .config import CONFIG_DIR, PROJECTS, PROJECT_ROOT
+from .config import AUTHGUARD_SCENARIOS_PATH, PROJECTS, PROJECT_ROOT
 from .model import RunContext, VerificationResult
 from .process import run_command
 
@@ -118,7 +118,7 @@ def verify_scenario_matrix(results: list[VerificationResult]) -> VerificationRes
 
 def _authorization_scenario_ids() -> tuple[str, ...]:
     fixture = json.loads(
-        (CONFIG_DIR / "authguard-e2e-scenarios.json").read_text(encoding="utf-8")
+        AUTHGUARD_SCENARIOS_PATH.read_text(encoding="utf-8")
     )
     return tuple(scenario["id"] for scenario in fixture["authz"]["scenarios"])
 

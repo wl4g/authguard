@@ -20,7 +20,7 @@ public final class E2EFixtures {
 
   public static AuthorizationFixture authorizationScenarios() {
     try {
-      var root = OBJECT_MAPPER.readTree(configPath("authguard-e2e-scenarios.json").toFile());
+      var root = OBJECT_MAPPER.readTree(authguardConfigPath("e2e-scenarios.json").toFile());
       return OBJECT_MAPPER.treeToValue(root.required("authz"), AuthorizationFixture.class);
     } catch (IOException error) {
       throw new IllegalStateException("Cannot load shared authorization scenarios", error);
@@ -31,7 +31,7 @@ public final class E2EFixtures {
     var connection = DataSourceUtils.getConnection(dataSource);
     try {
       ScriptUtils.executeSqlScript(
-          connection, new FileSystemResource(configPath("init.sql")));
+          connection, new FileSystemResource(authguardConfigPath("e2e-init.sql")));
     } catch (Exception error) {
       throw new IllegalStateException("Cannot load shared customer growth job SQL", error);
     } finally {
@@ -39,17 +39,17 @@ public final class E2EFixtures {
     }
   }
 
-  private static Path configPath(String name) {
+  private static Path authguardConfigPath(String name) {
     Path current = Path.of("").toAbsolutePath().normalize();
     while (current != null) {
-      Path local = current.resolve("e2e/config").resolve(name);
+      Path local = current.resolve("e2e/config/authguard").resolve(name);
       if (Files.isRegularFile(local)
           && current.getFileName() != null
           && current.getFileName().toString().equals("customer-growth-job-service")) {
         return local;
       }
       Path repositoryRelative =
-          current.resolve("use-cases/customer-growth-job-service/e2e/config").resolve(name);
+          current.resolve("use-cases/customer-growth-job-service/e2e/config/authguard").resolve(name);
       if (Files.isRegularFile(repositoryRelative)) {
         return repositoryRelative;
       }

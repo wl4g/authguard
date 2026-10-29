@@ -38,10 +38,12 @@ resign-JWT Authguard-origin boundary inside a business microservice.
 customer-growth-job-service/
   e2e/
     config/
-      init.sql                       shared schema and deterministic rows
-      authguard-e2e-scenarios.json   AuthN, federation, and 53 AuthZ scenarios
-      keycloak-realm.json            external IdP and workload-client fixture
-      e2e-jwt-keys/                  fixed realm-signing and resign-JWT keys
+      authguard/
+        e2e-init.sql                 shared schema and deterministic rows
+        e2e-scenarios.json           AuthN, federation, and 53 AuthZ scenarios
+        e2e-jwt-keys/                fixed realm-signing and resign-JWT keys
+      keycloak/
+        e2e-realm.json               external IdP and workload-client fixture
     common/
       deploy/base.py                   backend-neutral E2E lifecycle contract
       deploy/kubernetes.py             Helm/Gateway API deployment backend

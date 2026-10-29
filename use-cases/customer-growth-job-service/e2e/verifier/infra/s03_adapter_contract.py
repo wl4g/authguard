@@ -84,6 +84,7 @@ def _verify(_context: RunContext) -> VerificationResult:
 class AdapterContractVerifier(BaseVerifier):
     scenario_id = "03"
     title = "Cross-language adapter contract parity"
+    requires_deployer = False
 
     def run(self) -> VerificationResult:
         return self.step("compare all Go/Rust/Python/Java adapter cases", lambda: _verify(self.context))

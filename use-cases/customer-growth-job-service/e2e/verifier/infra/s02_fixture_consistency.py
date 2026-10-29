@@ -7,7 +7,11 @@ import re
 import sqlite3
 import time
 
-from common.config import CONFIG_DIR, DEPLOY_DIR
+from common.config import (
+    AUTHGUARD_INIT_SQL_PATH,
+    AUTHGUARD_SCENARIOS_PATH,
+    DEPLOY_DIR,
+)
 from common.model import RunContext, VerificationResult
 from verifier.other.base import BaseVerifier
 
@@ -63,10 +67,8 @@ PROJECT_EXECUTION_TESTS = {
 def _verify(_context: RunContext) -> VerificationResult:
     started = time.monotonic()
     errors: list[str] = []
-    sql = (CONFIG_DIR / "init.sql").read_text(encoding="utf-8")
-    fixture = json.loads(
-        (CONFIG_DIR / "authguard-e2e-scenarios.json").read_text(encoding="utf-8")
-    )
+    sql = AUTHGUARD_INIT_SQL_PATH.read_text(encoding="utf-8")
+    fixture = json.loads(AUTHGUARD_SCENARIOS_PATH.read_text(encoding="utf-8"))
     mock_idp = (DEPLOY_DIR / "mock-external-idp-service/app/server.py").read_text(
         encoding="utf-8"
     )
@@ -227,7 +229,7 @@ def _verify(_context: RunContext) -> VerificationResult:
         mapping_text = (DEPLOY_DIR / project_name / mapping_source).read_text(
             encoding="utf-8"
         )
-        for fixture_name in ("init.sql", "authguard-e2e-scenarios.json"):
+        for fixture_name in ("e2e-init.sql", "e2e-scenarios.json"):
             if fixture_name not in test_text:
                 errors.append(f"{project_name}: does not consume {fixture_name}")
         if "customer-growth" not in mapping_text:
@@ -275,6 +277,7 @@ def _verify(_context: RunContext) -> VerificationResult:
 class FixtureConsistencyVerifier(BaseVerifier):
     scenario_id = "02"
     title = "Shared SQL and authorization fixture consistency"
+    requires_deployer = False
 
     def run(self) -> VerificationResult:
         return self.step("validate SQL seeds and all authorization scenario contracts", lambda: _verify(self.context))

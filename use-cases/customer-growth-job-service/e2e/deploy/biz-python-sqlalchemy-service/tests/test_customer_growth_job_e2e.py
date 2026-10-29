@@ -20,7 +20,7 @@ from app.repository.customer_growth_job_repository import CustomerGrowthJobRepos
 from app.service.customer_growth_job_service import CustomerGrowthJobService
 
 
-CONFIG_DIR = Path(__file__).resolve().parents[3] / "config"
+AUTHGUARD_CONFIG_DIR = Path(__file__).resolve().parents[3] / "config" / "authguard"
 TEST_SIGNING_KEY = "test-access-context-hmac-key-32-bytes-minimum"
 
 
@@ -174,7 +174,7 @@ def new_customer_growth_job_controller(db: Connection) -> CustomerGrowthJobContr
 
 
 def seed_customer_growth_jobs(db: Connection) -> None:
-    sql = (CONFIG_DIR / "init.sql").read_text(encoding="utf-8")
+    sql = (AUTHGUARD_CONFIG_DIR / "e2e-init.sql").read_text(encoding="utf-8")
     for statement in sql.split(";"):
         if statement.strip():
             db.exec_driver_sql(statement)
@@ -182,7 +182,7 @@ def seed_customer_growth_jobs(db: Connection) -> None:
 
 def load_authorization_fixture() -> dict[str, object]:
     fixture = json.loads(
-        (CONFIG_DIR / "authguard-e2e-scenarios.json").read_text(encoding="utf-8")
+        (AUTHGUARD_CONFIG_DIR / "e2e-scenarios.json").read_text(encoding="utf-8")
     )
     return fixture["authz"]
 

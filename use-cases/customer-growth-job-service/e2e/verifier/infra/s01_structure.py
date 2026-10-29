@@ -5,7 +5,14 @@ from __future__ import annotations
 import tarfile
 import time
 
-from common.config import CONFIG_DIR, DEPLOY_DIR, PROJECT_ROOT, PROJECTS, USE_CASE_DIR
+from common.config import (
+    AUTHGUARD_INIT_SQL_PATH,
+    AUTHGUARD_SCENARIOS_PATH,
+    DEPLOY_DIR,
+    PROJECT_ROOT,
+    PROJECTS,
+    USE_CASE_DIR,
+)
 from common.deploy.base import WORKLOAD_IMAGES
 from common.model import RunContext, VerificationResult
 from verifier.other.base import BaseVerifier
@@ -67,6 +74,7 @@ REQUIRED_PATHS = {
 
 SUPPORT_PROJECTS = {
     "anvil",
+    "hook",
     "mock-external-idp-service",
     "solana",
 }
@@ -260,9 +268,9 @@ def _verify(_context: RunContext) -> VerificationResult:
             f"expected={sorted(expected_projects)}"
         )
 
-    for file_name in ("init.sql", "authguard-e2e-scenarios.json"):
-        if not (CONFIG_DIR / file_name).is_file():
-            errors.append(f"missing shared config/{file_name}")
+    for fixture_path in (AUTHGUARD_INIT_SQL_PATH, AUTHGUARD_SCENARIOS_PATH):
+        if not fixture_path.is_file():
+            errors.append(f"missing shared fixture {fixture_path.name}")
     verifier_dir = USE_CASE_DIR / "e2e" / "verifier"
     if not (verifier_dir / "other/base.py").is_file():
         errors.append("missing shared verifier.other.base.py")
@@ -829,6 +837,7 @@ def _verify(_context: RunContext) -> VerificationResult:
 class StructureVerifier(BaseVerifier):
     scenario_id = "01"
     title = "Use-case structure and project boundaries"
+    requires_deployer = False
 
     def run(self) -> VerificationResult:
         return self.step("inspect source, deployment, and verifier boundaries", lambda: _verify(self.context))

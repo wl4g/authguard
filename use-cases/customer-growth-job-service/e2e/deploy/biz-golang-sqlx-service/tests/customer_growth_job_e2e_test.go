@@ -252,7 +252,7 @@ func newCustomerGrowthJobController(t *testing.T) (*sqlx.DB, *controller.Custome
 
 func seedCustomerGrowthJobs(t *testing.T, db *sqlx.DB) {
 	t.Helper()
-	content, err := os.ReadFile(configPath(t, "init.sql"))
+	content, err := os.ReadFile(authguardConfigPath(t, "e2e-init.sql"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +268,7 @@ func seedCustomerGrowthJobs(t *testing.T, db *sqlx.DB) {
 
 func loadAuthorizationFixture(t *testing.T) authorizationFixture {
 	t.Helper()
-	content, err := os.ReadFile(configPath(t, "authguard-e2e-scenarios.json"))
+	content, err := os.ReadFile(authguardConfigPath(t, "e2e-scenarios.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,13 +279,13 @@ func loadAuthorizationFixture(t *testing.T) authorizationFixture {
 	return fixture.Authz
 }
 
-func configPath(t *testing.T, name string) string {
+func authguardConfigPath(t *testing.T, name string) string {
 	t.Helper()
 	_, sourceFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("cannot resolve Go test source path")
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", "..", "..", "config", name))
+	return filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", "..", "..", "config", "authguard", name))
 }
 
 func valueOrEmpty(value *string) string {
