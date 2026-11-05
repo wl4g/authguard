@@ -6,10 +6,10 @@ WORKDIR /workspace
 COPY rust-toolchain.toml ./
 RUN cargo --version
 COPY . .
-RUN cargo build --release --locked --package authguard-customer-growth-job-rust-service --bin authguard-customer-growth-job-rust-service
+RUN cargo build --release --manifest-path use-cases/customer-growth-job-service/e2e/deploy/biz-rust-sqlx-service/Cargo.toml --bin authguard-customer-growth-job-rust-service
 
 FROM ${RUNTIME_IMAGE}
-COPY --from=builder /workspace/target/release/authguard-customer-growth-job-rust-service /usr/local/bin/e2e-authguard-rust-sqlx
+COPY --from=builder /workspace/use-cases/customer-growth-job-service/e2e/deploy/biz-rust-sqlx-service/target/release/authguard-customer-growth-job-rust-service /usr/local/bin/e2e-authguard-rust-sqlx
 USER nonroot:nonroot
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/e2e-authguard-rust-sqlx"]
