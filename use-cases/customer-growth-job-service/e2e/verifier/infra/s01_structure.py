@@ -652,7 +652,13 @@ def _verify(_context: RunContext) -> VerificationResult:
             business_chart_root / "Chart.yaml",
             business_chart_root / "values.yaml",
             business_chart_root / "templates/authguard-theme.yaml",
+            business_chart_root / "templates/_helpers.tpl",
+            business_chart_root / "templates/authguard-access-context.yaml",
+            business_chart_root / "templates/keycloak.yaml",
+            business_chart_root / "templates/workloads.yaml",
             USE_CASE_DIR / "e2e/common/deploy/kubernetes.py",
+            USE_CASE_DIR / "e2e/common/deploy/docker.py",
+            USE_CASE_DIR / "e2e/docker-compose.yaml",
         )
     )
     business_chart_markers = (
@@ -663,6 +669,11 @@ def _verify(_context: RunContext) -> VerificationResult:
         "global.authguard.themeConfigMap",
         'authguard_values["enabled"] = True',
         '"authguard-middleware": authguard_values',
+        "authguard-middleware:\n  enabled: false",
+        "$authguard := .Values.authguard",
+        "authguard.grpcTarget=",
+        'self.runtime_dir / "keycloak" / "e2e-realm.json"',
+        "${AUTHGUARD_E2E_RUNTIME_DIR}/keycloak/e2e-realm.json",
         "str(self.support_chart)",
     )
     if missing := [

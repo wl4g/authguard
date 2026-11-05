@@ -140,6 +140,11 @@ authguard:
           displayName: Customer Growth
           returnUris: [https://customer-growth-default.local/**]
 
+# The vendored child Chart is a separately managed middleware release. Normal
+# business releases consume only the top-level authguard integration settings.
+authguard-middleware:
+  enabled: false
+
 workloads:
   go-sqlx:
     host: e2e-authguard-go-sqlx.customer-growth.local

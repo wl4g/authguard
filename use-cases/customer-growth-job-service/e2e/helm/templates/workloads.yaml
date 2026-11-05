@@ -1,6 +1,6 @@
 {{- if .Values.support.enabled }}
 {{- $root := . -}}
-{{- $authguard := index .Values "authguard-middleware" -}}
+{{- $authguard := .Values.authguard -}}
 {{- $postgresqlName := include "customer-growth-e2e.postgresqlName" . -}}
 {{- $jaegerName := include "customer-growth-e2e.jaegerName" . -}}
 {{- range $component, $workload := .Values.workloads }}
@@ -70,7 +70,7 @@ spec:
             - { name: DATABASE_USERNAME, valueFrom: { secretKeyRef: { name: {{ $postgresqlName }}-credentials, key: {{ $component }}-username } } }
             - { name: DATABASE_PASSWORD, valueFrom: { secretKeyRef: { name: {{ $postgresqlName }}-credentials, key: {{ $component }}-password } } }
             - { name: DATABASE_SCHEMA, valueFrom: { secretKeyRef: { name: {{ $postgresqlName }}-credentials, key: {{ $component }}-schema } } }
-            - { name: AUTHGUARD_GRPC_TARGET, value: {{ required "authguard-middleware.grpcTarget is required" $authguard.grpcTarget | quote }} }
+            - { name: AUTHGUARD_GRPC_TARGET, value: {{ required "authguard.grpcTarget is required" $authguard.grpcTarget | quote }} }
             - { name: AUTHGUARD_GRPC_TLS, value: {{ $authguard.grpcTLS | quote }} }
             - { name: OTEL_SERVICE_NAME, value: {{ $component | quote }} }
             - { name: OTEL_TRACING_ENABLED, value: "true" }

@@ -581,7 +581,7 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
                 "--set-file",
                 f"keycloak.resignJwtPublicKey={AUTHGUARD_JWT_KEYS_DIR / 'resign-jwt-key.pub.pem'}",
                 "--set",
-                f"authguard-middleware.grpcTarget={grpc_target}",
+                f"authguard.grpcTarget={grpc_target}",
                 "--set",
                 f"gateway.name={self.gateway_name}",
                 "--set",
@@ -667,6 +667,7 @@ class KubernetesE2EDeployer(BaseE2EDeployer):
             E2E_IMAGES.redis
         )
         return {
+            "theme": {"files": "files/authguard-theme/*"},
             "envoy_gateway": {
                 "enabled": False,
                 "fullnameOverride": self.envoy_gateway_deployment,

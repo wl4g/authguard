@@ -5,12 +5,12 @@ FROM ${MAVEN_IMAGE} AS builder
 ARG MAVEN_PROXY_HOST
 ARG MAVEN_PROXY_PORT
 WORKDIR /workspace
-COPY use-cases/customer-growth-job-service/e2e/config/maven/e2e-settings.xml /workspace/maven/e2e-settings.xml
+COPY use-cases/customer-growth-job-service/e2e/config/maven/settings.xml /workspace/maven/settings.xml
 RUN if [ -n "${MAVEN_PROXY_HOST:-}" ]; then \
         sed \
           -e "s/@MAVEN_PROXY_HOST@/${MAVEN_PROXY_HOST}/g" \
           -e "s/@MAVEN_PROXY_PORT@/${MAVEN_PROXY_PORT}/g" \
-          /workspace/maven/e2e-settings.xml > /workspace/maven-settings-active.xml; \
+          /workspace/maven/settings.xml > /workspace/maven-settings-active.xml; \
     fi
 COPY src/adapters/java /workspace/adapter
 RUN set -eu; \

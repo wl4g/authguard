@@ -406,7 +406,9 @@ class DockerE2EDeployer(BaseE2EDeployer):
                 return {key: replace(item) for key, item in value.items()}
             return value
 
-        (self.runtime_dir / "keycloak-realm.json").write_text(
+        target = self.runtime_dir / "keycloak" / "e2e-realm.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
             json.dumps(replace(source), indent=2) + "\n", encoding="utf-8"
         )
 
