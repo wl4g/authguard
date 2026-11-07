@@ -622,5 +622,5 @@ fn transport_error(
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "../../tests/principal/custom.rs"]
 mod tests;

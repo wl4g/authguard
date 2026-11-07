@@ -651,5 +651,5 @@ fn append_segments(base: &Url, segments: &[&str]) -> Result<Url, PrincipalDiscov
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "../../../tests/principal/keycloak/keycloak.rs"]
 mod tests;

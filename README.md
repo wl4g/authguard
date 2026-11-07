@@ -48,8 +48,8 @@ AuthGuard AuthZ is the PDP and never becomes a reverse proxy.
 - **Enterprise identity lifecycle** — Keycloak, LDAP, custom HTTP discovery, and
   SCIM provisioning support administrator pre-authorization without becoming
   runtime dependencies.
-- **Dashboard and API CLI** — a multilingual React Dashboard and the
-  `authguard api` client manage Principals and revisioned authorization policy.
+- **Dashboard and administrative console** — a multilingual React Dashboard
+  and `authguard console` manage Principals and revisioned authorization policy.
 - **Production operations** — PostgreSQL/SQLite IAM storage, Redis-backed
   one-time challenges and authorization scope, Prometheus metrics, structured
   logs, OpenTelemetry traces, Docker images, and an OCI Helm chart.
@@ -285,7 +285,7 @@ cache invalidation, audit logs, metrics, and optimistic policy revisions.
 
 ```bash
 agctl() {
-  authguard api \
+  authguard console \
     --endpoint http://authguard.authguard.svc:9090 \
     --token '<api-token>' \
     "$@"
@@ -298,9 +298,9 @@ agctl create action --file action.json
 agctl create role --file role.json
 agctl create role-binding --file role-binding.json
 
-authguard api list principals
-authguard api policy get
-authguard api status
+authguard console list principals
+authguard console policy get
+authguard console status
 ```
 
 ### Protect a business service

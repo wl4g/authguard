@@ -66,15 +66,6 @@ impl LdapPrincipalDiscovery {
         Ok(Self { config: config.clone(), client })
     }
 
-    #[cfg(test)]
-    fn with_client(
-        config: &LdapPrincipalDiscoveryProperties,
-        client: Arc<dyn ILdapSearchClient>,
-    ) -> Result<Self, PrincipalDiscoveryError> {
-        Self::validate_config(config)?;
-        Ok(Self { config: config.clone(), client })
-    }
-
     fn validate_config(
         config: &LdapPrincipalDiscoveryProperties,
     ) -> Result<(), PrincipalDiscoveryError> {
@@ -566,5 +557,5 @@ impl ILdapSearchClient for DefaultLdapSearchClient {
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "../../../tests/principal/ldap/ldap.rs"]
 mod tests;

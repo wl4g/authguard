@@ -165,52 +165,7 @@ mod condition {
 
     #[cfg(test)]
     mod tests {
-        use super::*;
-
-        #[test]
-        fn combines_network_transport_and_subject_conditions() {
-            let conditions = AuthorizationConditionSpec {
-                source_ip: Some(SourceIpConditionSpec {
-                    in_cidr: vec!["10.0.0.0/8".to_string()],
-                    not_in_cidr: vec!["10.20.0.0/16".to_string()],
-                }),
-                request: RequestConditionSpec {
-                    methods: vec!["GET".to_string()],
-                    secure_transport: Some(true),
-                },
-                subject: SubjectConditionSpec {
-                    mfa: Some(true),
-                    claims: BTreeMap::from([("department".to_string(), "risk".to_string())]),
-                },
-            }
-            .compile()
-            .expect("conditions");
-            let context = EvaluationContext {
-                source_ip: Some("10.10.1.8".parse().expect("ip")),
-                request_method: Some("get".to_string()),
-                secure_transport: Some(true),
-                claims: BTreeMap::from([
-                    ("mfa".to_string(), "true".to_string()),
-                    ("department".to_string(), "risk".to_string()),
-                ]),
-            };
-            assert!(conditions.matches(&context));
-        }
-
-        #[test]
-        fn required_attributes_fail_closed() {
-            let conditions = AuthorizationConditionSpec {
-                source_ip: Some(SourceIpConditionSpec {
-                    in_cidr: vec!["10.0.0.0/8".to_string()],
-                    not_in_cidr: Vec::new(),
-                }),
-                request: RequestConditionSpec { methods: Vec::new(), secure_transport: Some(true) },
-                subject: SubjectConditionSpec { mfa: Some(true), claims: BTreeMap::new() },
-            }
-            .compile()
-            .expect("conditions");
-            assert!(!conditions.matches(&EvaluationContext::default()));
-        }
+        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/utils/context/condition.rs"));
     }
 }
 pub use condition::*;
@@ -439,59 +394,7 @@ mod access {
 
     #[cfg(test)]
     mod tests {
-        use super::*;
-
-        #[test]
-        fn access_context_round_trips_as_base64url_json() {
-            let now = epoch_seconds();
-            let expected = AccessContext::new(
-                AccessContextInput {
-                    principal_id: "principal-user-1".to_string(),
-                    action: "job.read".to_string(),
-                    resource_urn: "urn:iam:prod:customer-growth:global:example-corp:job/1"
-                        .to_string(),
-                    allow_resource_urns: vec![
-                        "urn:iam:prod:customer-growth:global:example-corp:job/*".to_string(),
-                    ],
-                    deny_resource_urns: Vec::new(),
-                    policy_revision: 7,
-                },
-                now,
-                std::time::Duration::from_secs(30),
-            );
-            let encoded = expected.encode().expect("encode");
-            assert!(!encoded.contains('='));
-            assert_eq!(AccessContext::decode(&encoded).expect("decode"), expected);
-        }
-
-        #[test]
-        fn expired_context_is_rejected() {
-            let context = AccessContext::new(
-                AccessContextInput {
-                    principal_id: "principal-user-1".to_string(),
-                    action: "job.read".to_string(),
-                    resource_urn: "urn:iam:prod:customer-growth:global:example-corp:job/1"
-                        .to_string(),
-                    allow_resource_urns: Vec::new(),
-                    deny_resource_urns: Vec::new(),
-                    policy_revision: 7,
-                },
-                100,
-                std::time::Duration::from_secs(1),
-            );
-            assert!(matches!(context.validate(101), Err(AccessContextError::Expired)));
-        }
-
-        #[test]
-        fn direct_context_signature_detects_tampering() {
-            let codec = AccessContextSigner::new([7_u8; 32]).expect("signer");
-            let compact = codec.sign_encoded("payload").expect("sign");
-            assert_eq!(codec.verify(&compact).expect("verify"), "payload");
-            assert!(matches!(
-                codec.verify(&compact.replace("payload", "tampered")),
-                Err(AccessContextError::InvalidSignature)
-            ));
-        }
+        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/utils/context/access.rs"));
     }
 }
 pub use access::*;
