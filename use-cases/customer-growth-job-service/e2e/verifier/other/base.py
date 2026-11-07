@@ -12,7 +12,7 @@ import traceback
 from typing import Callable, Iterator, TypeVar
 from urllib import error, parse, request
 
-from common.config import CONFIG_DIR, REPORTS_DIR
+from common.config import AUTHGUARD_SCENARIOS_PATH, REPORTS_DIR
 from common.deploy.base import AUTHGUARD_API_TOKEN, create_deployer
 from common.model import EvidenceArtifact, RunContext, VerificationResult
 from common.telemetry import E2ETrace
@@ -23,19 +23,22 @@ T = TypeVar("T")
 
 
 class BaseVerifier:
-    """Compose disposable infrastructure with fail-closed verifier utilities."""
+    """Shared verifier utilities with an optional disposable deployment backend."""
 
     scenario_id = ""
     title = ""
+    requires_deployer = True
 
     def __init__(self, context: RunContext) -> None:
-        self.infrastructure = create_deployer(context)
         self.context = context
-        self.commands = self.infrastructure.commands
-        self.details = self.infrastructure.details
+        self._infrastructure = None
+        self.commands: list = []
+        self.details: list[str] = []
+        if self.requires_deployer:
+            self._activate_deployer()
         self._step_number = 0
         fixture = json.loads(
-            (CONFIG_DIR / "authguard-e2e-scenarios.json").read_text(encoding="utf-8")
+            AUTHGUARD_SCENARIOS_PATH.read_text(encoding="utf-8")
         )
         if fixture.get("version") != 4:
             raise ValueError("AuthGuard E2E fixture version must be 4")
@@ -47,6 +50,18 @@ class BaseVerifier:
         self.evidence: list[EvidenceArtifact] = []
         self._active_case_id: str | None = None
         self._active_exchanges: list[dict[str, object]] = []
+
+    @property
+    def infrastructure(self):
+        """Create the selected deployer only for scenarios that need runtime access."""
+        if self._infrastructure is None:
+            self._activate_deployer()
+        return self._infrastructure
+
+    def _activate_deployer(self) -> None:
+        self._infrastructure = create_deployer(self.context)
+        self.commands = self._infrastructure.commands
+        self.details = self._infrastructure.details
 
     def __getattr__(self, name: str):
         return getattr(self.infrastructure, name)

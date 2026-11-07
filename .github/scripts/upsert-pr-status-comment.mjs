@@ -53,7 +53,7 @@ const appendE2eSummary = (details, name, result, summary, artifactUrl) => {
     return;
   }
   details.push(`  - Evidence: [reports and screenshots](${artifactUrl})`);
-  details.push("", `### ${name} summary`, "", "```text", decodeSummary(summary).replaceAll("```", "``\\`"), "```");
+  details.push("", `### ${name} summary`, "", decodeSummary(summary));
 };
 
 const renderCi = () => {

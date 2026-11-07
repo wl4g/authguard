@@ -25,7 +25,7 @@ Hosted Login theme customization as an optional extension, not the purpose of th
    `authguard-middleware`, gate it with `authguard-middleware.enabled`, and run
    `helm dependency update` to generate `Chart.lock`; never hand-edit the lock or leave a floating
    dependency.
-5. Use exactly one top-level `authguard-middleware:` map in business `values.yaml`. Put
+5. Use exactly one top-level `authguard:` map in business `values.yaml`. Put
    `enabled: false`, the AuthGuard Chart values unchanged, and business integration fields under
    that map; never add a parallel AuthGuard root. Configure only required components and runtime
    dependencies, reuse the service's secret mechanism, and never commit secret values. Prefix

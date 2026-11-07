@@ -6,7 +6,6 @@ members = [
   "src/authn",
   "src/authz",
   "src/adapters/rust",
-  "use-cases/customer-growth-job-service/e2e/deploy/rust-sqlx-service",
 ]
 
 [workspace.package]

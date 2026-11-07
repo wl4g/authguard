@@ -43,7 +43,7 @@ services:
       POSTGRESQL_DATABASE: e2e_authguard_customer_growth
     volumes:
       - ${AUTHGUARD_E2E_RUNTIME_DIR}/postgres-init.sh:/docker-entrypoint-initdb.d/10-e2e-authguard-init.sh:ro
-      - ./config/init.sql:/e2e-authguard-fixture/init.sql:ro
+      - ./config/authguard/e2e-init.sql:/e2e-authguard-fixture/e2e-init.sql:ro
     healthcheck:
       test: [CMD-SHELL, 'PGPASSWORD="$${POSTGRESQL_PASSWORD}" pg_isready -U "$${POSTGRESQL_USERNAME}" -d "$${POSTGRESQL_DATABASE}"']
       interval: 3s
@@ -83,7 +83,7 @@ services:
       KC_HOSTNAME: http://keycloak:8080
       KC_HOSTNAME_STRICT: "false"
     volumes:
-      - ${AUTHGUARD_E2E_RUNTIME_DIR}/keycloak-realm.json:/opt/keycloak/data/import/example-corp-realm.json:ro
+      - ${AUTHGUARD_E2E_RUNTIME_DIR}/keycloak/e2e-realm.json:/opt/keycloak/data/import/example-corp-realm.json:ro
     ports: ["127.0.0.1::8080"]
 
   ldap:
@@ -183,7 +183,7 @@ services:
       DATABASE_URL: postgresql://e2e_authguard_customer_growth_rust_sqlx:e2e-authguard-customer-growth-rust-sqlx-password@postgresql:5432/e2e_authguard_customer_growth?sslmode=disable&options=-csearch_path%3De2e_authguard_customer_growth_rust_sqlx
       RESIGN_TOKEN_PUBLIC_KEY_FILE: /etc/e2e/resign-jwt-public-key.pem
     volumes:
-      - ./config/e2e-jwt-keys/resign-jwt-key.pub.pem:/etc/e2e/resign-jwt-public-key.pem:ro
+      - ./config/authguard/e2e-jwt-keys/resign-jwt-key.pub.pem:/etc/e2e/resign-jwt-public-key.pem:ro
 
   python-sqlalchemy:
     <<: *workload
@@ -217,9 +217,9 @@ services:
 
   envoy:
     image: ${AUTHGUARD_E2E_ENVOY_IMAGE}
-    command: [-c, /etc/envoy/envoy.yaml, --log-level, info]
+    command: [-c, /etc/envoy/e2e-envoy.yaml, --log-level, info]
     volumes:
-      - ./config/docker-envoy.yaml:/etc/envoy/envoy.yaml:ro
+      - ./config/envoy/e2e-envoy.yaml:/etc/envoy/e2e-envoy.yaml:ro
     depends_on:
       authn: { condition: service_started }
       authz: { condition: service_started }

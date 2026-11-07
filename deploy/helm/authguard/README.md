@@ -111,7 +111,7 @@ global:
   authguard:
     themeRevision: v1
     themeConfigMap: '{{ .Release.Name }}-authguard-theme-{{ .Values.global.authguard.themeRevision }}'
-authguard-middleware:
+authguard:
   enabled: false
   theme:
     files: files/authguard-theme/*

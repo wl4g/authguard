@@ -8,7 +8,7 @@ use authguard_authz::{
 use serde::Deserialize;
 
 const BUSINESS_SCENARIOS: &str = include_str!(
-    "../../../use-cases/customer-growth-job-service/e2e/config/authguard-e2e-scenarios.json"
+    "../../../use-cases/customer-growth-job-service/e2e/config/authguard/e2e-scenarios.json"
 );
 
 #[derive(Debug, Deserialize)]

@@ -43,7 +43,7 @@ solana
 {{- end -}}
 
 {{- define "customer-growth-e2e.accessContextSecretName" -}}
-{{- $authguard := index .Values "authguard-middleware" -}}
+{{- $authguard := .Values.authguard -}}
 {{- default "access-context" $authguard.accessContext.secretName | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
