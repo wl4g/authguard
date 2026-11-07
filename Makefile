@@ -102,7 +102,7 @@ help:
 	@echo "Authguard -- Makefile"
 	@echo ""
 	@echo "  Build:"
-	@echo "    make build         Build backend, AuthGuard Web, and Java modules."
+	@echo "    make build         Build backend, AuthGuard Web, Golang, Python, Java, TS modules."
 	@echo "    make build-web     Build the AuthGuard React Dashboard and Hosted Login UI."
 	@echo "    make build-image   Build AuthGuard runtime + AuthGuard Web release images."
 	@echo "    make docker-up     Start the local Docker Compose AuthGuard topology."
