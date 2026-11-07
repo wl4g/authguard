@@ -1,3 +1,5 @@
+//! Crate-internal SCIM projection tests.
+
 use std::collections::BTreeMap;
 
 use crate::principal::IPrincipalDiscovery;

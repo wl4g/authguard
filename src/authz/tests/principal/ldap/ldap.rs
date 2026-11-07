@@ -1,9 +1,21 @@
+//! Crate-internal LDAP discovery tests.
+
 use std::collections::BTreeMap;
 
 use tokio::sync::Mutex;
 
 use super::*;
 use crate::config::LdapBindAuthProperties;
+
+impl LdapPrincipalDiscovery {
+    fn with_client(
+        config: &LdapPrincipalDiscoveryProperties,
+        client: Arc<dyn ILdapSearchClient>,
+    ) -> Result<Self, PrincipalDiscoveryError> {
+        Self::validate_config(config)?;
+        Ok(Self { config: config.clone(), client })
+    }
+}
 
 #[derive(Default)]
 struct FakeLdapSearchClient {

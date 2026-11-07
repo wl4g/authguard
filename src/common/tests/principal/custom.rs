@@ -1,3 +1,5 @@
+//! Crate-internal custom Principal discovery tests.
+
 use std::sync::Arc;
 use std::time::Duration;
 

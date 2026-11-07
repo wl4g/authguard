@@ -1,4 +1,4 @@
-//! `AuthGuard` API client.
+//! `AuthGuard` administrative console client.
 
 use std::io::{self, BufRead as _, IsTerminal as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -9,7 +9,7 @@ use reqwest::{Method, Response};
 use serde_json::Value;
 
 #[derive(Debug, Args)]
-pub struct ApiOptions {
+pub struct ConsoleOptions {
     /// `AuthZ` API endpoint.
     #[arg(long, default_value = "http://127.0.0.1:9090")]
     endpoint: String,
@@ -19,11 +19,11 @@ pub struct ApiOptions {
     token: String,
 
     #[command(subcommand)]
-    operation: Option<ApiOperation>,
+    operation: Option<ConsoleOperation>,
 }
 
 #[derive(Debug, Subcommand)]
-enum ApiOperation {
+enum ConsoleOperation {
     /// List a resource collection.
     List {
         #[arg(value_enum)]
@@ -139,7 +139,7 @@ enum PrincipalState {
     Disabled,
 }
 
-struct ApiClient {
+struct ConsoleClient {
     endpoint: String,
     token: String,
     http: reqwest::Client,
@@ -149,15 +149,15 @@ struct ApiClient {
 #[command(no_binary_name = true)]
 struct InteractiveCommand {
     #[command(subcommand)]
-    operation: ApiOperation,
+    operation: ConsoleOperation,
 }
 
-impl ApiOptions {
+impl ConsoleOptions {
     pub async fn run(self) -> anyhow::Result<()> {
         if self.token.trim().is_empty() {
             bail!("--token is required");
         }
-        let client = ApiClient::new(&self.endpoint, self.token)?;
+        let client = ConsoleClient::new(&self.endpoint, self.token)?;
         match self.operation {
             Some(operation) => client.execute(operation).await,
             None if io::stdin().is_terminal() => client.repl().await,
@@ -166,7 +166,7 @@ impl ApiOptions {
     }
 }
 
-impl ApiClient {
+impl ConsoleClient {
     fn new(endpoint: &str, token: String) -> anyhow::Result<Self> {
         let endpoint = endpoint.trim_end_matches('/').to_string();
         reqwest::Url::parse(&endpoint).context("parse AuthZ API endpoint")?;
@@ -174,7 +174,7 @@ impl ApiClient {
     }
 
     async fn repl(&self) -> anyhow::Result<()> {
-        println!("AuthGuard API client. Type 'help' or 'quit'.");
+        println!("AuthGuard administrative console. Type 'help' or 'quit'.");
         let stdin = io::stdin();
         let mut lines = stdin.lock().lines();
         loop {
@@ -206,9 +206,9 @@ impl ApiClient {
         Ok(())
     }
 
-    async fn execute(&self, operation: ApiOperation) -> anyhow::Result<()> {
+    async fn execute(&self, operation: ConsoleOperation) -> anyhow::Result<()> {
         let response = match operation {
-            ApiOperation::List { resource, query, after_id, limit } => {
+            ConsoleOperation::List { resource, query, after_id, limit } => {
                 let path = match resource {
                     ListResource::Principals => "/api/v1/principals",
                     ListResource::Actions => "/api/v1/actions",
@@ -225,22 +225,22 @@ impl ApiClient {
                 }
                 request.send().await?
             }
-            ApiOperation::Get { resource, id } => {
+            ConsoleOperation::Get { resource, id } => {
                 self.request(Method::GET, &item_path(resource, &id)).send().await?
             }
-            ApiOperation::Create { resource, file } => {
+            ConsoleOperation::Create { resource, file } => {
                 self.mutate(Method::POST, collection_path(resource), Some(&file)).await?
             }
-            ApiOperation::Update { resource, id, file } => {
+            ConsoleOperation::Update { resource, id, file } => {
                 self.mutate(Method::PUT, &mutable_item_path(resource, &id), Some(&file)).await?
             }
-            ApiOperation::Delete { resource: DeleteResource::Principal, id } => {
+            ConsoleOperation::Delete { resource: DeleteResource::Principal, id } => {
                 self.request(Method::DELETE, &format!("/api/v1/principals/{id}")).send().await?
             }
-            ApiOperation::Delete { resource, id } => {
+            ConsoleOperation::Delete { resource, id } => {
                 self.mutate(Method::DELETE, &delete_item_path(resource, &id), None).await?
             }
-            ApiOperation::PrincipalStatus { principal_id, status } => {
+            ConsoleOperation::PrincipalStatus { principal_id, status } => {
                 let status = match status {
                     PrincipalState::Active => "ACTIVE",
                     PrincipalState::Disabled => "DISABLED",
@@ -250,26 +250,26 @@ impl ApiClient {
                     .send()
                     .await?
             }
-            ApiOperation::Discover { file } => {
+            ConsoleOperation::Discover { file } => {
                 self.json_request(Method::POST, "/api/v1/principal-discovery/search", &file).await?
             }
-            ApiOperation::Materialize { file } => {
+            ConsoleOperation::Materialize { file } => {
                 self.json_request(Method::POST, "/api/v1/principal-discovery/materialize", &file)
                     .await?
             }
-            ApiOperation::Policy { operation: PolicyOperation::Get } => {
+            ConsoleOperation::Policy { operation: PolicyOperation::Get } => {
                 self.request(Method::GET, "/api/v1/policy").send().await?
             }
-            ApiOperation::Policy { operation: PolicyOperation::Replace { file } } => {
+            ConsoleOperation::Policy { operation: PolicyOperation::Replace { file } } => {
                 self.mutate(Method::PUT, "/api/v1/policy", Some(&file)).await?
             }
-            ApiOperation::Policy { operation: PolicyOperation::Reset } => {
+            ConsoleOperation::Policy { operation: PolicyOperation::Reset } => {
                 self.mutate(Method::DELETE, "/api/v1/policy", None).await?
             }
-            ApiOperation::Authorize { file } => {
+            ConsoleOperation::Authorize { file } => {
                 self.json_request(Method::POST, "/api/v1/authorize", &file).await?
             }
-            ApiOperation::Status => self.request(Method::GET, "/api/v1/status").send().await?,
+            ConsoleOperation::Status => self.request(Method::GET, "/api/v1/status").send().await?,
         };
         print_response(response).await
     }
@@ -392,6 +392,6 @@ mod tests {
     fn parses_batch_api_command() {
         let command = InteractiveCommand::try_parse_from(["list", "principals", "--limit", "5"])
             .expect("valid API command");
-        assert!(matches!(command.operation, ApiOperation::List { limit: 5, .. }));
+        assert!(matches!(command.operation, ConsoleOperation::List { limit: 5, .. }));
     }
 }
