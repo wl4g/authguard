@@ -90,14 +90,14 @@ class E2EImageCatalog:
                     "nginxinc_nginx-unprivileged:1.27-alpine"
                 ),
                 chain_builder=(
-                    "registry.cn-shenzhen.aliyuncs.com/wl4g/rust:1.93-slim"
+                    "registry.cn-shenzhen.aliyuncs.com/wl4g/rust:1.99.1-slim"
                 ),
                 go_builder=(
                     "registry.cn-shenzhen.aliyuncs.com/wl4g/golang:1.26-alpine"
                 ),
                 rust_builder=(
                     "registry.cn-shenzhen.aliyuncs.com/wl4g/"
-                    "authguard-rust-builder:1.94-bookworm"
+                    "authguard-rust-builder:1.99.1-bookworm"
                 ),
                 runtime=(
                     "registry.cn-shenzhen.aliyuncs.com/wl4g/"
@@ -136,9 +136,9 @@ class E2EImageCatalog:
                 solana=local_chains[1],
                 web_builder="docker.io/library/node:22-alpine",
                 web_runtime="docker.io/nginxinc/nginx-unprivileged:1.27-alpine",
-                chain_builder="docker.io/library/rust:1.93-slim",
+                chain_builder="docker.io/library/rust:1.99.1-slim",
                 go_builder="docker.io/library/golang:1.26-alpine",
-                rust_builder="docker.io/library/rust:1.94-bookworm",
+                rust_builder="docker.io/library/rust:1.99.1-bookworm",
                 runtime="gcr.io/distroless/cc-debian12:nonroot",
                 python_runtime="docker.io/library/python:3.12-slim",
                 maven_builder=(
