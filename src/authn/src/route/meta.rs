@@ -94,6 +94,8 @@ struct SessionMetadata {
 
 pub(crate) struct MetaRoutes;
 
+// Axum handlers must return futures even when their work is synchronous.
+#[allow(clippy::unused_async, clippy::unused_async_trait_impl)]
 impl MetaRoutes {
     pub(crate) fn router(pipeline: std::sync::Arc<AuthenticationPipeline>) -> Router {
         Router::new()
@@ -104,8 +106,6 @@ impl MetaRoutes {
             .with_state(pipeline)
     }
 
-    // Axum handlers return futures even when their current work is synchronous.
-    #[allow(clippy::unused_async)]
     async fn metadata(headers: HeaderMap) -> Result<Json<AuthenticationMetadata>, ApiError> {
         let application_config = AppConfig::get();
         let config = application_config.get_authn();
@@ -121,14 +121,12 @@ impl MetaRoutes {
         Ok(Json(Self::build_metadata(config, application)))
     }
 
-    #[allow(clippy::unused_async)]
     async fn jwks(
         State(pipeline): State<std::sync::Arc<AuthenticationPipeline>>,
     ) -> Result<Json<serde_json::Value>, StatusCode> {
         pipeline.jwks().map(Json).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)
     }
 
-    #[allow(clippy::unused_async)]
     async fn session(
         State(pipeline): State<std::sync::Arc<AuthenticationPipeline>>,
         headers: HeaderMap,
@@ -139,7 +137,6 @@ impl MetaRoutes {
         Ok(response)
     }
 
-    #[allow(clippy::unused_async)]
     async fn logout() -> Response {
         let mut response = StatusCode::NO_CONTENT.into_response();
         response.headers_mut().append(

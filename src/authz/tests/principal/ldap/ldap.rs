@@ -200,7 +200,10 @@ async fn kind_selection_prevents_unnecessary_directory_searches() {
 
     let mut workloads = PrincipalSearchQuery::new("job-runner");
     workloads.kinds.insert(PrincipalKind::Workload);
-    assert!(provider.discover(workloads).await.expect("unsupported").principals.is_empty());
+    assert_eq!(
+        provider.discover(workloads).await.expect("unsupported").principals,
+        Vec::<PrincipalProjection>::new()
+    );
     assert!(fake.requests.lock().await.is_empty());
 }
 

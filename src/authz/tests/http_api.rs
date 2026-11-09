@@ -358,7 +358,7 @@ async fn unknown_group_principal_is_ignored() {
     let resolved = principals.resolve_request(&identity).await.expect("known primary principal");
 
     assert_eq!(resolved.principal_id, USER_ID);
-    assert!(resolved.group_principal_ids.is_empty());
+    assert_eq!(resolved.group_principal_ids, Vec::<String>::new());
 }
 
 #[tokio::test]
