@@ -10,9 +10,9 @@ RUN cargo --version
 COPY . .
 RUN cargo build --release --manifest-path use-cases/customer-growth-job-service/e2e/deploy/biz-rust-sqlx-service/Cargo.toml --bin authguard-customer-growth-job-rust-service
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:trixie-slim AS runtime
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libssl3 \
+    && apt-get install -y --no-install-recommends ca-certificates libssl3t64 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system nonroot \
     && useradd --system --gid nonroot --no-create-home nonroot
