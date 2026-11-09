@@ -1,7 +1,7 @@
 # AuthGuard
 
 [![Build & Test](https://github.com/wl4g/authguard/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/wl4g/authguard/actions/workflows/ci.yml)
-[![Rust](https://img.shields.io/badge/rust-1.88%2B-000000?logo=rust)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.99.1-000000?logo=rust)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
 [![OAuth 2.0](https://img.shields.io/badge/auth-OAuth%202.0-EB5424)](https://www.rfc-editor.org/rfc/rfc6749)
 [![OpenID Connect](https://img.shields.io/badge/auth-OpenID%20Connect-F78C40?logo=openid)](https://openid.net/specs/openid-connect-core-1_0.html)
@@ -143,7 +143,7 @@ trust and data-flow model.
 
 ### Requirements
 
-- Rust 1.88+; the optional `web3` feature currently requires Rust 1.91+
+- Rust 1.99.1 for the pinned local, CI, and container toolchain; the workspace MSRV remains 1.91 for the optional `web3` feature
 - Node.js 22+, Go 1.24+, JDK 21, and Python 3.12 for the complete test matrix
 - Helm 3.17+ and a Docker-compatible builder for deployment artifacts
 

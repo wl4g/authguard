@@ -1,4 +1,4 @@
-ARG RUST_BUILDER_IMAGE=registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-rust-builder:1.94-bookworm
+ARG RUST_BUILDER_IMAGE=registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-rust-builder:1.99.1-bookworm
 ARG RUNTIME_IMAGE=registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-runtime:nonroot
 
 FROM ${RUST_BUILDER_IMAGE} AS builder

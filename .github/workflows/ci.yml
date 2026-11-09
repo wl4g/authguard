@@ -78,7 +78,7 @@ jobs:
           platforms: linux/amd64
           build-args: |
             AUTHGUARD_CARGO_FEATURES=web3
-            RUST_BUILDER_IMAGE=docker.io/library/rust:1.94-bookworm
+            RUST_BUILDER_IMAGE=docker.io/library/rust:1.99.1-bookworm
             RUNTIME_IMAGE=gcr.io/distroless/cc-debian12:nonroot
           labels: |
             org.opencontainers.image.revision=${{ github.event.pull_request.head.sha }}

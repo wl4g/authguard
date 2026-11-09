@@ -810,7 +810,7 @@ impl Default for MemoryCacheProperties {
         Self {
             initial_capacity: 32,
             max_capacity: 65_535,
-            ttl: Duration::from_secs(60 * 60),
+            ttl: Duration::from_hours(1),
             eviction_policy: "LRU".to_string(),
         }
     }
@@ -863,7 +863,7 @@ impl Default for PostgresProperties {
             max_connections: 20,
             min_connections: 0,
             connect_timeout: Duration::from_secs(5),
-            idle_timeout: Duration::from_secs(600),
+            idle_timeout: Duration::from_mins(10),
             validate_on_acquire: true,
         }
     }
@@ -894,7 +894,7 @@ impl Default for AuthnProperties {
         Self {
             providers: BTreeMap::new(),
             applications: BTreeMap::new(),
-            challenge_ttl: Duration::from_secs(300),
+            challenge_ttl: Duration::from_mins(5),
             standalone: StandaloneAuthnProperties::default(),
             wallet: WalletAuthnProperties::default(),
             account_linking: AccountLinkingProperties::default(),
@@ -963,7 +963,7 @@ impl Default for TokenProperties {
         Self {
             issuer: "authguard-authn".to_string(),
             audience: "authguard".to_string(),
-            ttl: Duration::from_secs(300),
+            ttl: Duration::from_mins(5),
             private_key: String::new(),
             private_key_b64: String::new(),
             private_key_file: String::new(),
@@ -997,7 +997,7 @@ impl Default for AccountLinkingProperties {
 
 impl Default for ResignProperties {
     fn default() -> Self {
-        Self { enabled: false, max_ttl: Duration::from_secs(60), private_key_b64: String::new() }
+        Self { enabled: false, max_ttl: Duration::from_mins(1), private_key_b64: String::new() }
     }
 }
 
@@ -1553,7 +1553,7 @@ fn validate_cache(cache: &CacheProperties) -> anyhow::Result<()> {
 }
 
 fn validate_authn(authn: &AuthnProperties, cache: &CacheProperties) -> anyhow::Result<()> {
-    if authn.challenge_ttl.is_zero() || authn.challenge_ttl > Duration::from_secs(15 * 60) {
+    if authn.challenge_ttl.is_zero() || authn.challenge_ttl > Duration::from_mins(15) {
         bail!("authn.challengeTtl must be between 1 second and 15 minutes");
     }
     let mut application_hosts = BTreeSet::new();

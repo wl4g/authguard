@@ -81,12 +81,12 @@ export AUTHGUARD_E2E_IMAGE_SOURCE
 ifeq ($(AUTHGUARD_IMAGE_SOURCE),aliyun)
 WEB_NODE_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/node:22-alpine
 WEB_RUNTIME_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/nginxinc_nginx-unprivileged:1.27-alpine
-RUST_BUILDER_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-rust-builder:1.94-bookworm
+RUST_BUILDER_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-rust-builder:1.99.1-bookworm
 RUNTIME_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-runtime:nonroot
 else
 WEB_NODE_IMAGE ?= docker.io/library/node:22-alpine
 WEB_RUNTIME_IMAGE ?= docker.io/nginxinc/nginx-unprivileged:1.27-alpine
-RUST_BUILDER_IMAGE ?= docker.io/library/rust:1.94-bookworm
+RUST_BUILDER_IMAGE ?= docker.io/library/rust:1.99.1-bookworm
 RUNTIME_IMAGE ?= gcr.io/distroless/cc-debian12:nonroot
 endif
 
