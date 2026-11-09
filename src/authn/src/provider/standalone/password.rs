@@ -43,8 +43,7 @@ fn hash_sync(password: &str) -> anyhow::Result<String> {
 
 fn verify_sync(password: &str, encoded_hash: &str) -> bool {
     PasswordHash::new(encoded_hash)
-        .ok()
-        .is_some_and(|hash| argon2id().verify_password(password.as_bytes(), &hash).is_ok())
+        .is_ok_and(|hash| argon2id().verify_password(password.as_bytes(), &hash).is_ok())
 }
 
 #[cfg(test)]

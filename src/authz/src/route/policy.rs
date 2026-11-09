@@ -1,6 +1,6 @@
 //! Policy, action, role, and role-binding management routes.
 
-#![allow(clippy::unused_async)] // Axum handlers must return futures.
+#![allow(clippy::unused_async, clippy::unused_async_trait_impl)] // Axum handlers must return futures.
 
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};

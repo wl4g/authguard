@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, HashMap};
 
 use authguard_common::model::{ExternalIdentity, PrincipalKind};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine as _;
 use chrono::{TimeZone as _, Utc};
 
 use super::*;

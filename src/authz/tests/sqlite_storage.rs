@@ -5,6 +5,7 @@ use std::time::{Duration, SystemTime};
 
 use authguard_authz::config::SqliteProperties;
 use authguard_authz::storage::{AuthzSqliteRepository, PolicyRepository};
+use authguard_authz::IamActionInfo;
 use rusqlite::Connection;
 
 use support::storage_contract::assert_repository_contract;
@@ -41,8 +42,14 @@ async fn concurrent_sqlite_connections_serialize_initialization() {
     );
     let first = first.expect("initialize first SQLite repository concurrently");
     let second = second.expect("initialize second SQLite repository concurrently");
-    assert!(first.load().await.expect("load first initialized catalog").actions.is_empty());
-    assert!(second.load().await.expect("load second initialized catalog").actions.is_empty());
+    assert_eq!(
+        first.load().await.expect("load first initialized catalog").actions,
+        Vec::<IamActionInfo>::new()
+    );
+    assert_eq!(
+        second.load().await.expect("load second initialized catalog").actions,
+        Vec::<IamActionInfo>::new()
+    );
 
     drop((first, second));
     for suffix in ["", "-shm", "-wal"] {
