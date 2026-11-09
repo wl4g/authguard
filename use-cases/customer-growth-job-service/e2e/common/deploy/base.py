@@ -38,7 +38,6 @@ class E2EImageCatalog:
     chain_builder: str
     go_builder: str
     rust_builder: str
-    runtime: str
     python_runtime: str
     maven_builder: str
     java_runtime: str
@@ -97,11 +96,7 @@ class E2EImageCatalog:
                 ),
                 rust_builder=(
                     "registry.cn-shenzhen.aliyuncs.com/wl4g/"
-                    "authguard-rust-builder:1.99.1-bookworm"
-                ),
-                runtime=(
-                    "registry.cn-shenzhen.aliyuncs.com/wl4g/"
-                    "authguard-runtime:nonroot"
+                    "rust:1.99.1-slim"
                 ),
                 python_runtime=(
                     "registry.cn-shenzhen.aliyuncs.com/wl4g/python:3.12-slim"
@@ -138,8 +133,7 @@ class E2EImageCatalog:
                 web_runtime="docker.io/nginxinc/nginx-unprivileged:1.27-alpine",
                 chain_builder="docker.io/library/rust:1.99.1-slim",
                 go_builder="docker.io/library/golang:1.26-alpine",
-                rust_builder="docker.io/library/rust:1.99.1-bookworm",
-                runtime="gcr.io/distroless/cc-debian12:nonroot",
+                rust_builder="docker.io/library/rust:1.99.1-slim",
                 python_runtime="docker.io/library/python:3.12-slim",
                 maven_builder=(
                     "docker.io/library/maven:3.9.9-eclipse-temurin-17"
@@ -701,8 +695,6 @@ class BaseE2EDeployer(ABC):
                     "--build-arg",
                     f"RUST_BUILDER_IMAGE={E2E_IMAGES.rust_builder}",
                     "--build-arg",
-                    f"RUNTIME_IMAGE={E2E_IMAGES.runtime}",
-                    "--build-arg",
                     "AUTHGUARD_CARGO_FEATURES=web3",
                     "-t",
                     AUTHGUARD_IMAGE,
@@ -764,11 +756,9 @@ class BaseE2EDeployer(ABC):
         workload_build_args = {
             "go-sqlx": (
                 f"GO_IMAGE={E2E_IMAGES.go_builder}",
-                f"RUNTIME_IMAGE={E2E_IMAGES.runtime}",
             ),
             "rust-sqlx": (
                 f"RUST_BUILDER_IMAGE={E2E_IMAGES.rust_builder}",
-                f"RUNTIME_IMAGE={E2E_IMAGES.runtime}",
             ),
             "python-sqlalchemy": (
                 f"PYTHON_IMAGE={E2E_IMAGES.python_runtime}",
