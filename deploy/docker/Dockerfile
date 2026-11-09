@@ -16,9 +16,9 @@ RUN if [ -n "${AUTHGUARD_CARGO_FEATURES}" ]; then \
       cargo build --locked --release -p authguard-cmd --bin authguard; \
     fi
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:trixie-slim AS runtime
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libssl3 \
+    && apt-get install -y --no-install-recommends ca-certificates libssl3t64 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system nonroot \
     && useradd --system --gid nonroot --no-create-home nonroot
