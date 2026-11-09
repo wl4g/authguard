@@ -138,15 +138,15 @@ AUTHGUARD_REQUIRED_PATHS = (
     "src/authz/src/principal/ldap/mod.rs",
     "src/authz/src/principal/ldap/ldap.rs",
     "src/authz/src/principal/ldap/model.rs",
-    "src/authz/src/principal/ldap/tests.rs",
+    "src/authz/tests/principal/ldap/ldap.rs",
     "src/authz/src/principal/keycloak/mod.rs",
     "src/authz/src/principal/keycloak/keycloak.rs",
     "src/authz/src/principal/keycloak/model.rs",
-    "src/authz/src/principal/keycloak/tests.rs",
+    "src/authz/tests/principal/keycloak/keycloak.rs",
     "src/authz/src/principal/scim/mod.rs",
     "src/authz/src/principal/scim/model.rs",
     "src/authz/src/principal/scim/scim.rs",
-    "src/authz/src/principal/scim/tests.rs",
+    "src/authz/tests/principal/scim/mod.rs",
     "use-cases/customer-growth-job-service/e2e/helm/Chart.lock",
     "use-cases/customer-growth-job-service/e2e/helm/charts/authguard-0.1.0.tgz",
     "use-cases/customer-growth-job-service/e2e/helm/templates/authguard-theme.yaml",
@@ -795,18 +795,31 @@ def _verify(_context: RunContext) -> VerificationResult:
                 f"{project}: Spring application name must follow OTEL_SERVICE_NAME"
             )
 
-    for protocol in ("keycloak", "ldap"):
+    for protocol, test_module in (
+        ("keycloak", "keycloak.rs"),
+        ("ldap", "ldap.rs"),
+        ("scim", "mod.rs"),
+    ):
+        package = PROJECT_ROOT / "src/authz/src/principal" / protocol
         actual = {
             path.name
-            for path in (PROJECT_ROOT / "src" / "authz" / "src" / "principal" / protocol).iterdir()
+            for path in package.iterdir()
             if path.is_file()
         }
-        expected = {f"{protocol}.rs", "model.rs", "tests.rs", "mod.rs"}
+        expected = {f"{protocol}.rs", "model.rs", "mod.rs"}
         if actual != expected:
             errors.append(
                 f"{protocol} Principal package differs: actual={sorted(actual)}, "
                 f"expected={sorted(expected)}"
             )
+        source = package / test_module
+        test_declaration = (
+            '#[cfg(test)]\n'
+            f'#[path = "../../../tests/principal/{protocol}/{test_module}"]\n'
+            'mod tests;'
+        )
+        if source.is_file() and test_declaration not in source.read_text(encoding="utf-8"):
+            errors.append(f"{protocol} Principal tests are not wired into their source module")
 
     for project_name, required_paths in REQUIRED_PATHS.items():
         project_dir = DEPLOY_DIR / project_name
