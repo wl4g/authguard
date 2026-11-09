@@ -81,13 +81,11 @@ export AUTHGUARD_E2E_IMAGE_SOURCE
 ifeq ($(AUTHGUARD_IMAGE_SOURCE),aliyun)
 WEB_NODE_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/node:22-alpine
 WEB_RUNTIME_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/nginxinc_nginx-unprivileged:1.27-alpine
-RUST_BUILDER_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-rust-builder:1.99.1-bookworm
-RUNTIME_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-runtime:nonroot
+RUST_BUILDER_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/rust:1.99.1-slim
 else
 WEB_NODE_IMAGE ?= docker.io/library/node:22-alpine
 WEB_RUNTIME_IMAGE ?= docker.io/nginxinc/nginx-unprivileged:1.27-alpine
-RUST_BUILDER_IMAGE ?= docker.io/library/rust:1.99.1-bookworm
-RUNTIME_IMAGE ?= gcr.io/distroless/cc-debian12:nonroot
+RUST_BUILDER_IMAGE ?= docker.io/library/rust:1.99.1-slim
 endif
 
 ifeq ($(TEST_PROXY_PRESENT),)
@@ -104,7 +102,7 @@ help:
 	@echo "  Build:"
 	@echo "    make build         Build backend, AuthGuard Web, Golang, Python, Java, TS modules."
 	@echo "    make build-web     Build the AuthGuard React Dashboard and Hosted Login UI."
-	@echo "    make build-image   Build AuthGuard runtime + AuthGuard Web release images."
+	@echo "    make build-image   Build the AuthGuard server release image."
 	@echo "    make docker-up     Start the local Docker Compose AuthGuard topology."
 	@echo "    make docker-down   Stop the local Docker Compose topology."
 	@echo "    make docker-logs   Follow local Docker Compose logs."
@@ -137,7 +135,6 @@ image-source:
 	@echo "AUTHGUARD_E2E_IMAGE_SOURCE=$(AUTHGUARD_E2E_IMAGE_SOURCE)"
 	@echo "WEB_NODE_IMAGE=$(WEB_NODE_IMAGE)"
 	@echo "RUST_BUILDER_IMAGE=$(RUST_BUILDER_IMAGE)"
-	@echo "RUNTIME_IMAGE=$(RUNTIME_IMAGE)"
 
 build: build-web
 	$(CARGO) build --workspace
@@ -148,7 +145,7 @@ build: build-web
 build-web:
 	cd $(WEB_DIR) && $(NPM) ci && $(NPM) run build
 
-build-image: build-runtime-image build-web-image
+build-image: build-runtime-image
 
 build-runtime-image:
 	@size_kb=$$(du -sk target 2>/dev/null | cut -f1); \
@@ -158,7 +155,6 @@ build-runtime-image:
 	  fi
 	$(CONTAINER_CLI) build $(CONTAINER_BUILD_FLAGS) -f deploy/docker/Dockerfile \
 		--build-arg RUST_BUILDER_IMAGE="$(RUST_BUILDER_IMAGE)" \
-		--build-arg RUNTIME_IMAGE="$(RUNTIME_IMAGE)" \
 		--build-arg AUTHGUARD_CARGO_FEATURES="$(AUTHGUARD_CARGO_FEATURES)" \
 		-t $(GHCR_IMAGE):$(VERSION) -t $(GHCR_IMAGE):latest .
 
@@ -256,7 +252,7 @@ package-chart: test-helm
 	helm package deploy/helm/authguard --destination $(RELEASE_DIR) \
 		--version $(VERSION) --app-version $(VERSION)
 
-release: build-image package-chart release-push release-verify
+release: build-runtime-image build-web-image package-chart release-push release-verify
 
 release-push:
 	$(CONTAINER_CLI) push $(GHCR_IMAGE):$(VERSION)
