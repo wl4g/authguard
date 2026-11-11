@@ -1,0 +1,16 @@
+services:
+  anvil:
+    image: ${AUTHGUARD_E2E_ANVIL_IMAGE:?use util/images.py}
+    command:
+    - --host=0.0.0.0
+    - --port=8545
+    - --accounts=10
+    - --balance=10000
+    - --chain-id=31337
+    environment:
+      HOME: /tmp
+    ports:
+    - 127.0.0.1::8545
+    tmpfs:
+    - /tmp
+    platform: ${AUTHGUARD_E2E_PLATFORM:-linux/amd64}

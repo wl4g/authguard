@@ -99,7 +99,7 @@ Java、Go、Python、Rust 统一保留 `access/filter/model/util` 边界，并�
 
 ## 6. customer-growth-job-service E2E
 
-1. 保留五实现 CRUD/SQL 共享场景；fixture 使用 canonical v3 context。
+1. 保留五实现 CRUD/SQL 共享场景；scenario_data 使用 canonical v3 context。
 2. Go/sqlx、Rust/sqlx、Python/SQLAlchemy、Spring JDBC、Spring JPA 五个项目都提供
    可实际启动的 HTTP workload，完整使用 middleware/interceptor、resolver chain 和
    repository SQL scope，不允许测试绕过入口直接写请求上下文。
@@ -112,7 +112,7 @@ Java、Go、Python、Rust 统一保留 `access/filter/model/util` 边界，并�
    allow/deny、`*`/`**`、action mismatch 以及 CRUD SQL scope。
 6. E2E 不依赖外部 IdP、数据库或 SaaS；所需组件全部由本地 Helm/Kubernetes 启动。
    五个服务共享 `e2e_customer_growth` PostgreSQL database，但使用五个独立 `e2e_` schema
-   和登录角色，支持开发机和 CI，报告继续归档到 `e2e/reports/`。
+   和登录角色，支持开发机和 CI，报告继续归档到 `use-cases/customer-growth-job-service/reports/`。
 
 ## 7. 验收门槛
 

@@ -1,0 +1,10 @@
+apiVersion: v2
+name: redis
+description: Vendored upstream redis for E2E
+type: application
+version: 0.1.0
+dependencies:
+- name: redis-cluster
+  alias: redis_cluster
+  version: 8.8.2
+  repository: https://charts.bitnami.com/bitnami

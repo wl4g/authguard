@@ -1,0 +1,43 @@
+support:
+  enabled: true
+global:
+  authguard:
+    themeRevision: v1
+    themeConfigMap: '{{ .Release.Name }}-authguard-theme-{{ .Values.global.authguard.themeRevision
+      }}'
+authguard:
+  enabled: false
+  theme:
+    files: files/authguard-theme/*
+  grpcTarget: ''
+  grpcTLS: false
+  apiToken: e2e-authguard-api-token
+  accessContext:
+    secretName: ''
+    key: hmac-key
+    signingKey: e2e-authguard-access-context-hmac-key
+  authguard:
+    authn:
+      applications:
+        customer-growth:
+          hosts:
+          - localhost
+          - customer-growth.local
+          displayName: Customer Growth
+          logo: /auth/assets/themes/custom/customer-growth.svg
+          theme:
+            id: customer-growth
+            stylesheet: /auth/assets/themes/custom/customer-growth.css
+          returnUris:
+          - https://localhost/**
+          - https://customer-growth.local/**
+        customer-growth-default:
+          hosts:
+          - customer-growth-default.local
+          displayName: Customer Growth
+          returnUris:
+          - https://customer-growth-default.local/**
+authguard-middleware:
+  enabled: false
+  theme:
+    files: files/authguard-theme/*

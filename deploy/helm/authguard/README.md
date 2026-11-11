@@ -171,7 +171,7 @@ helm upgrade --install business ./business
 its actual name. The Customer Growth reference uses `support.enabled=false`.
 
 The complete executable reference is
-[`use-cases/customer-growth-job-service/e2e/helm`](../../../use-cases/customer-growth-job-service/e2e/helm):
+[`use-cases/customer-growth-job-service/deploy/authguard/helm`](../../../use-cases/customer-growth-job-service/deploy/authguard/helm):
 its default business release disables AuthGuard, while a second release enables
 the vendored tgz and packages `files/authguard-theme/`. The real Chromium E2E
 verifies both that ConfigMap mount and the no-theme fallback.

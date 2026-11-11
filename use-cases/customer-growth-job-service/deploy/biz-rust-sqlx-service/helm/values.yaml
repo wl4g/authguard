@@ -1,0 +1,17 @@
+support:
+  enabled: true
+workloads:
+  rust-sqlx:
+    host: e2e-authguard-rust-sqlx.customer-growth.local
+    schema: e2e_authguard_customer_growth_rust_sqlx
+    databaseUsername: e2e_authguard_customer_growth_rust_sqlx
+    databasePassword: e2e-authguard-customer-growth-rust-sqlx-password
+    image: ''
+    pullPolicy: Never
+    resources:
+      requests:
+        cpu: 25m
+        memory: 48Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi

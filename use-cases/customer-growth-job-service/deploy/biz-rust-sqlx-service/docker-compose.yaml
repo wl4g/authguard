@@ -1,0 +1,29 @@
+services:
+  rust-sqlx:
+    environment:
+      PORT: '8080'
+      AUTHGUARD_GRPC_TARGET: authz:8081
+      AUTHGUARD_GRPC_TLS: 'false'
+      AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY: e2e-authguard-access-context-hmac-key
+      OTEL_TRACES_SAMPLER: always_on
+      OTEL_TRACING_ENABLED: 'true'
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
+      AUTHGUARD_OTEL_GRPC_ENDPOINT: http://jaeger:4317
+      OTEL_SERVICE_NAME: rust-sqlx
+      DATABASE_URL: postgresql://e2e_authguard_customer_growth_rust_sqlx:e2e-authguard-customer-growth-rust-sqlx-password@postgresql:5432/e2e_authguard_customer_growth?sslmode=disable&options=-csearch_path%3De2e_authguard_customer_growth_rust_sqlx
+      RESIGN_TOKEN_PUBLIC_KEY_FILE: /etc/e2e/resign-jwt-public-key.pem
+    ports:
+    - 127.0.0.1::8080
+    tmpfs:
+    - /tmp
+    image: ${AUTHGUARD_E2E_RUST_SQLX_IMAGE:?use util/images.py}
+    volumes:
+    - ../authguard/source/jwt-keys/resign-jwt-key.pub.pem:/etc/e2e/resign-jwt-public-key.pem:ro
+    platform: ${AUTHGUARD_E2E_PLATFORM:-linux/amd64}
+    build:
+      context: ../../../..
+      dockerfile: use-cases/customer-growth-job-service/deploy/biz-rust-sqlx-service/Dockerfile
+      args:
+        DEBIAN_IMAGE: ${DEBIAN_IMAGE:?use util/images.py}
+        RUST_BUILDER_IMAGE: ${RUST_BUILDER_IMAGE:?use util/images.py}

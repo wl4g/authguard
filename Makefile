@@ -20,13 +20,13 @@ VITE_REOWN_PROJECT_ID ?=
 HELM_OCI_REGISTRY ?= oci://ghcr.io/wl4g/charts
 RELEASE_DIR ?= dist
 USE_CASE_DIR := use-cases/customer-growth-job-service
-E2E_DEPLOY_DIR := $(USE_CASE_DIR)/e2e/deploy
-E2E_DIR := $(USE_CASE_DIR)/e2e
-E2E_VENV_DIR ?= $(E2E_DIR)/.venv
+E2E_DEPLOY_DIR := $(USE_CASE_DIR)/deploy
+E2E_DIR := $(USE_CASE_DIR)
+E2E_VENV_DIR ?= $(E2E_DIR)/util/.venv
 E2E_PYTHON := $(E2E_VENV_DIR)/bin/python
 PYTHON_TEST_VENV_DIR ?= target/python-test-venv
 PYTHON_TEST := $(PYTHON_TEST_VENV_DIR)/bin/python
-E2E_K8S_SCENARIOS ?= 01,02,03,00,20,10,21,22,23,24,25,26,30,31,40
+E2E_K8S_SCENARIOS ?= 01,02,03,00,20,10,21,22,23,24,25,26,30,31,40,41,42
 E2E_K8S_ARGS ?=
 E2E_DOCKER_SCENARIOS ?= $(E2E_K8S_SCENARIOS)
 E2E_DOCKER_ARGS ?=
@@ -34,6 +34,15 @@ E2E_DEPLOYER ?= kubernetes
 WEB_DIR := web
 DOCKER_COMPOSE_FILE := deploy/docker/docker-compose.yaml
 DOCKER_ENV_FILE := deploy/docker/.env
+
+# Accept the same region flags as the portable E2E image matrix.
+ifeq ($(origin IN_CN_GFW),undefined)
+ifneq ($(origin IN_GFW),undefined)
+IN_CN_GFW := $(if $(filter true 1 IN_GFW,$(IN_GFW)),true,false)
+else ifneq ($(origin NON_GFW),undefined)
+IN_CN_GFW := $(if $(filter true 1,$(NON_GFW)),false,true)
+endif
+endif
 
 IMAGE_SOURCE_GOALS := image-source build-image build-runtime-image \
 	build-web-image e2e e2e-k8s e2e-docker release
@@ -139,8 +148,8 @@ image-source:
 build: build-web
 	$(CARGO) build --workspace
 	$(MAVEN) $(MAVEN_FLAGS) -f src/adapters/java/pom.xml -DskipTests install
-	$(MAVEN) $(MAVEN_FLAGS) -f $(E2E_DEPLOY_DIR)/biz-springboot-jdbc-service/pom.xml -DskipTests package
-	$(MAVEN) $(MAVEN_FLAGS) -f $(E2E_DEPLOY_DIR)/biz-springboot-jpa-service/pom.xml -DskipTests package
+	$(MAVEN) $(MAVEN_FLAGS) -f $(E2E_DEPLOY_DIR)/biz-springboot-jdbc-service/source/pom.xml -DskipTests package
+	$(MAVEN) $(MAVEN_FLAGS) -f $(E2E_DEPLOY_DIR)/biz-springboot-jpa-service/source/pom.xml -DskipTests package
 
 build-web:
 	cd $(WEB_DIR) && $(NPM) ci && $(NPM) run build
@@ -202,21 +211,21 @@ test-web:
 
 test-go:
 	cd src/adapters/golang && $(GO_NETWORK_ENV) $(GO) test ./...
-	cd $(E2E_DEPLOY_DIR)/biz-golang-sqlx-service && $(GO_NETWORK_ENV) $(GO) test ./...
+	cd $(E2E_DEPLOY_DIR)/biz-golang-sqlx-service/source && $(GO_NETWORK_ENV) $(GO) test ./...
 
 test-python: test-python-deps
 	PYTHONPATH="$(CURDIR)/src/adapters/python" $(PYTHON_TEST) -m unittest discover -s "$(CURDIR)/src/adapters/python/tests" -v
-	PYTHONPATH="$(CURDIR)/src/adapters/python:$(CURDIR)/$(E2E_DEPLOY_DIR)/biz-python-sqlalchemy-service" $(PYTHON_TEST) -m unittest discover -s "$(CURDIR)/$(E2E_DEPLOY_DIR)/biz-python-sqlalchemy-service/tests" -v
+	PYTHONPATH="$(CURDIR)/src/adapters/python:$(CURDIR)/$(E2E_DEPLOY_DIR)/biz-python-sqlalchemy-service/source" $(PYTHON_TEST) -m unittest discover -s "$(CURDIR)/$(E2E_DEPLOY_DIR)/biz-python-sqlalchemy-service/source/tests" -v
 
 test-python-deps:
 	@test -x $(PYTHON_TEST) || $(PYTHON) -m venv $(PYTHON_TEST_VENV_DIR)
 	$(PYTHON_TEST) -m pip install --disable-pip-version-check -r src/adapters/python/requirements.txt
-	$(PYTHON_TEST) -m pip install --disable-pip-version-check -r $(E2E_DEPLOY_DIR)/biz-python-sqlalchemy-service/requirements.txt
+	$(PYTHON_TEST) -m pip install --disable-pip-version-check -r $(E2E_DEPLOY_DIR)/biz-python-sqlalchemy-service/source/requirements.txt
 
 test-java:
 	$(MAVEN) $(MAVEN_FLAGS) -f src/adapters/java/pom.xml install
-	$(MAVEN) $(MAVEN_FLAGS) -f $(E2E_DEPLOY_DIR)/biz-springboot-jdbc-service/pom.xml test
-	$(MAVEN) $(MAVEN_FLAGS) -f $(E2E_DEPLOY_DIR)/biz-springboot-jpa-service/pom.xml test
+	$(MAVEN) $(MAVEN_FLAGS) -f $(E2E_DEPLOY_DIR)/biz-springboot-jdbc-service/source/pom.xml test
+	$(MAVEN) $(MAVEN_FLAGS) -f $(E2E_DEPLOY_DIR)/biz-springboot-jpa-service/source/pom.xml test
 
 test-helm:
 	test -f deploy/helm/authguard/charts/gateway-helm-v1.9.0.tgz
@@ -229,7 +238,7 @@ test-helm:
 e2e-python:
 	test -x $(E2E_PYTHON) || $(PYTHON) -m venv $(E2E_VENV_DIR)
 	$(E2E_PYTHON) -m pip install --disable-pip-version-check -r $(E2E_DIR)/requirements.txt
-	$(E2E_PYTHON) -m pip install --disable-pip-version-check -r $(E2E_DEPLOY_DIR)/biz-python-sqlalchemy-service/requirements.txt
+	$(E2E_PYTHON) -m pip install --disable-pip-version-check -r $(E2E_DEPLOY_DIR)/biz-python-sqlalchemy-service/source/requirements.txt
 
 e2e-prepare: e2e-python
 	cd $(WEB_DIR) && $(NPM) ci

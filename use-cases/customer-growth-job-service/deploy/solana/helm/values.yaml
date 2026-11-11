@@ -1,0 +1,13 @@
+support:
+  enabled: true
+solana:
+  enabled: true
+  image: ''
+  pullPolicy: Never
+  resources:
+    requests:
+      cpu: 50m
+      memory: 512Mi
+    limits:
+      cpu: 250m
+      memory: 1536Mi

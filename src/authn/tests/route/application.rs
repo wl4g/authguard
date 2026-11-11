@@ -7,9 +7,9 @@ use axum::http::{header, HeaderMap, HeaderValue};
 
 use super::ApplicationResolver;
 
-struct TestFixture;
+struct ApplicationTestData;
 
-impl TestFixture {
+impl ApplicationTestData {
     fn config() -> AuthnProperties {
         AuthnProperties {
             applications: BTreeMap::from([(
@@ -38,8 +38,8 @@ impl TestFixture {
 
 #[test]
 fn resolves_brand_and_normalizes_an_allowed_return_path() {
-    let config = TestFixture::config();
-    let headers = TestFixture::headers("app.example.com");
+    let config = ApplicationTestData::config();
+    let headers = ApplicationTestData::headers("app.example.com");
     let resolver = ApplicationResolver::new(&config, &headers);
     let application = resolver.resolve().expect("application").expect("known");
     assert_eq!(application.id, "example-app");
@@ -57,8 +57,8 @@ fn resolves_brand_and_normalizes_an_allowed_return_path() {
 
 #[test]
 fn rejects_cross_origin_and_protocol_relative_returns() {
-    let config = TestFixture::config();
-    let headers = TestFixture::headers("app.example.com");
+    let config = ApplicationTestData::config();
+    let headers = ApplicationTestData::headers("app.example.com");
     let resolver = ApplicationResolver::new(&config, &headers);
     assert!(resolver.validate_return_to("https://attacker.example/").is_err());
     assert!(resolver.validate_return_to("//attacker.example/").is_err());
@@ -66,8 +66,8 @@ fn rejects_cross_origin_and_protocol_relative_returns() {
 
 #[test]
 fn rejects_return_target_for_an_unknown_application_host() {
-    let config = TestFixture::config();
-    let headers = TestFixture::headers("unknown.example.com");
+    let config = ApplicationTestData::config();
+    let headers = ApplicationTestData::headers("unknown.example.com");
     let resolver = ApplicationResolver::new(&config, &headers);
 
     assert!(resolver.validate_return_to("/workflows/123").is_err());

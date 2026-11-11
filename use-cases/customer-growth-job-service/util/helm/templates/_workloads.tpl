@@ -1,0 +1,173 @@
+{{- define "customer-growth-e2e.workloads" -}}
+{{- if .Values.support.enabled }}
+{{- $root := . -}}
+{{- $authguard := .Values.authguard -}}
+{{- $postgresqlName := include "customer-growth-e2e.postgresqlName" . -}}
+{{- $jaegerName := include "customer-growth-e2e.jaegerName" . -}}
+{{- range $component, $workload := .Values.workloads }}
+{{- $name := include "customer-growth-e2e.workloadName" (dict "root" $root "component" $component) -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "customer-growth-e2e.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ $root.Release.Name }}
+    app.kubernetes.io/component: {{ $component }}
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "customer-growth-e2e.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $root.Release.Name }}
+      app.kubernetes.io/component: {{ $component }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ $root.Release.Name }}
+        app.kubernetes.io/component: {{ $component }}
+        authguard.io/scope-client: "true"
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      initContainers:
+        - name: wait-postgresql
+          image: {{ $root.Values.postgresql.image | quote }}
+          imagePullPolicy: {{ $root.Values.postgresql.pullPolicy }}
+          command: ["bash", "-ec", "until pg_isready -h {{ $postgresqlName }} -U $DATABASE_USERNAME -d {{ $root.Values.postgresql.database }}; do sleep 1; done"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          env:
+            - { name: OTEL_TRACES_SAMPLER, value: always_on }
+            - { name: DATABASE_USERNAME, valueFrom: { secretKeyRef: { name: {{ $postgresqlName }}-credentials, key: {{ $component }}-username } } }
+      containers:
+        - name: {{ $component }}
+          image: {{ $workload.image | quote }}
+          imagePullPolicy: {{ $workload.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          env:
+            - { name: OTEL_TRACES_SAMPLER, value: always_on }
+            - { name: PORT, value: "8080" }
+            - { name: DATABASE_URL, valueFrom: { secretKeyRef: { name: {{ $postgresqlName }}-credentials, key: {{ $component }}-url } } }
+            - { name: DATABASE_USERNAME, valueFrom: { secretKeyRef: { name: {{ $postgresqlName }}-credentials, key: {{ $component }}-username } } }
+            - { name: DATABASE_PASSWORD, valueFrom: { secretKeyRef: { name: {{ $postgresqlName }}-credentials, key: {{ $component }}-password } } }
+            - { name: DATABASE_SCHEMA, valueFrom: { secretKeyRef: { name: {{ $postgresqlName }}-credentials, key: {{ $component }}-schema } } }
+            - { name: AUTHGUARD_GRPC_TARGET, value: {{ required "authguard.grpcTarget is required" $authguard.grpcTarget | quote }} }
+            - { name: AUTHGUARD_GRPC_TLS, value: {{ $authguard.grpcTLS | quote }} }
+            - { name: OTEL_SERVICE_NAME, value: {{ $component | quote }} }
+            - { name: OTEL_TRACING_ENABLED, value: "true" }
+            - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ printf "http://%s:4318" $jaegerName | quote }} }
+            - { name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, value: {{ printf "http://%s:4318/v1/traces" $jaegerName | quote }} }
+            - { name: AUTHGUARD_OTEL_GRPC_ENDPOINT, value: {{ printf "http://%s:4317" $jaegerName | quote }} }
+            - name: AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "customer-growth-e2e.accessContextSecretName" $root }}
+                  key: {{ $authguard.accessContext.key }}
+            {{- if eq $component "rust-sqlx" }}
+            # The rust workload mounts the deterministic resign-JWT public key
+            # and enforces the Authguard-origin proof boundary; the other
+            # workloads only consume the trusted access context.
+            - name: RESIGN_TOKEN_PUBLIC_KEY_FILE
+              value: /etc/e2e/resign-jwt-public-key.pem
+            {{- end }}
+          ports:
+            - { name: http, containerPort: 8080 }
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 2
+          resources:
+            {{- toYaml $workload.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            {{- if eq $component "rust-sqlx" }}
+            - name: resign-public-key
+              mountPath: /etc/e2e/resign-jwt-public-key.pem
+              subPath: resign-jwt-public-key.pem
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if eq $component "rust-sqlx" }}
+        - name: resign-public-key
+          configMap:
+            name: {{ include "customer-growth-e2e.keycloakName" $root }}-resign-public-key
+        {{- end }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "customer-growth-e2e.labels" $root | nindent 4 }}
+    authguard.io/protected: "true"
+spec:
+  parentRefs:
+    - name: {{ required "gateway.name is required" $root.Values.gateway.name }}
+      sectionName: http
+  hostnames:
+    - {{ $workload.host | quote }}
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /customer-growth/jobs }
+      backendRefs:
+        - name: {{ $name }}
+          port: 8080
+---
+{{ end }}
+{{- if hasKey .Values.workloads .Values.customerGrowth.web.component }}
+{{- $customerGrowth := .Values.customerGrowth -}}
+{{- $webComponent := required "customerGrowth.web.component is required" $customerGrowth.web.component -}}
+{{- $webName := include "customer-growth-e2e.workloadName" (dict "root" $root "component" $webComponent) -}}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: customer-growth-web
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ required "gateway.name is required" .Values.gateway.name }}
+      sectionName: http
+  hostnames:
+    {{- toYaml $customerGrowth.hosts | nindent 4 }}
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: {{ required "customerGrowth.web.path is required" $customerGrowth.web.path | quote }}
+          method: GET
+      backendRefs:
+        - name: {{ $webName }}
+          port: 8080
+{{ end }}
+{{ end }}
+
+{{- end -}}

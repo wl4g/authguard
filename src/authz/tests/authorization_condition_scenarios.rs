@@ -8,16 +8,16 @@ use authguard_authz::{
 use serde::Deserialize;
 
 const BUSINESS_SCENARIOS: &str = include_str!(
-    "../../../use-cases/customer-growth-job-service/e2e/config/authguard/e2e-scenarios.json"
+    "../../../use-cases/customer-growth-job-service/deploy/authguard/source/scenarios.json"
 );
 
 #[derive(Debug, Deserialize)]
-struct Fixture {
-    authz: AuthorizationFixture,
+struct ScenarioData {
+    authz: AuthorizationScenarioSet,
 }
 
 #[derive(Debug, Deserialize)]
-struct AuthorizationFixture {
+struct AuthorizationScenarioSet {
     scenarios: Vec<Scenario>,
 }
 
@@ -35,8 +35,9 @@ struct Scenario {
 
 #[test]
 fn shared_business_condition_scenarios_match_gateway_decisions() {
-    let fixture: Fixture = serde_json::from_str(BUSINESS_SCENARIOS).expect("business fixture");
-    let condition_scenarios = fixture
+    let scenario_data: ScenarioData =
+        serde_json::from_str(BUSINESS_SCENARIOS).expect("business scenario_data");
+    let condition_scenarios = scenario_data
         .authz
         .scenarios
         .into_iter()

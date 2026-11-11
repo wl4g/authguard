@@ -1,0 +1,95 @@
+include:
+- deploy/postgresql/docker-compose.yaml
+- deploy/redis/docker-compose.yaml
+- deploy/keycloak/docker-compose.yaml
+- deploy/ldap/docker-compose.yaml
+- deploy/jaeger/docker-compose.yaml
+- deploy/mock-external-idp-service/docker-compose.yaml
+- deploy/anvil/docker-compose.yaml
+- deploy/solana/docker-compose.yaml
+- deploy/authguard/docker-compose.yaml
+- deploy/biz-golang-sqlx-service/docker-compose.yaml
+- deploy/biz-rust-sqlx-service/docker-compose.yaml
+- deploy/biz-python-sqlalchemy-service/docker-compose.yaml
+- deploy/biz-springboot-jdbc-service/docker-compose.yaml
+- deploy/biz-springboot-jpa-service/docker-compose.yaml
+- deploy/envoy/docker-compose.yaml
+services:
+  rust-sqlx:
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      authz:
+        condition: service_started
+      jaeger:
+        condition: service_started
+  spring-jpa:
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      authz:
+        condition: service_started
+      jaeger:
+        condition: service_started
+  python-sqlalchemy:
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      authz:
+        condition: service_started
+      jaeger:
+        condition: service_started
+  envoy:
+    depends_on:
+      authn:
+        condition: service_started
+      authz:
+        condition: service_started
+      web:
+        condition: service_started
+      go-sqlx:
+        condition: service_started
+      rust-sqlx:
+        condition: service_started
+      python-sqlalchemy:
+        condition: service_started
+      spring-jdbc:
+        condition: service_started
+      spring-jpa:
+        condition: service_started
+  spring-jdbc:
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      authz:
+        condition: service_started
+      jaeger:
+        condition: service_started
+  authz:
+    depends_on: &id001
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+      ldap:
+        condition: service_started
+      jaeger:
+        condition: service_started
+      mock-idp:
+        condition: service_started
+      anvil:
+        condition: service_started
+      solana:
+        condition: service_started
+  authn:
+    depends_on: *id001
+  go-sqlx:
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      authz:
+        condition: service_started
+      jaeger:
+        condition: service_started

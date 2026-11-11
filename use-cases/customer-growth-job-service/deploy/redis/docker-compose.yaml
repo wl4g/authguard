@@ -1,0 +1,24 @@
+services:
+  redis:
+    image: ${AUTHGUARD_E2E_REDIS_IMAGE:?use util/images.py}
+    entrypoint:
+    - /bin/bash
+    - -ec
+    command:
+    - /opt/bitnami/redis/bin/redis-server --save '' --appendonly no --requirepass
+      e2e-authguard-redis-password --masterauth e2e-authguard-redis-password --cluster-enabled
+      yes --cluster-config-file /tmp/nodes.conf --cluster-node-timeout 5000 & pid=$$!;
+      until /opt/bitnami/redis/bin/redis-cli -a e2e-authguard-redis-password ping
+      >/dev/null 2>&1; do sleep 0.2; done; /opt/bitnami/redis/bin/redis-cli -a e2e-authguard-redis-password
+      cluster addslotsrange 0 16383; wait $$pid
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - /opt/bitnami/redis/bin/redis-cli --no-auth-warning -a e2e-authguard-redis-password
+        cluster info | grep -q cluster_state:ok
+      interval: 3s
+      timeout: 3s
+      retries: 60
+    ports:
+    - 127.0.0.1::6379
+    platform: ${AUTHGUARD_E2E_PLATFORM:-linux/amd64}

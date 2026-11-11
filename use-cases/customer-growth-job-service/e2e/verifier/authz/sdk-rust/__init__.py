@@ -1,1 +1,0 @@
-"""Rust SDK verifier scenarios."""

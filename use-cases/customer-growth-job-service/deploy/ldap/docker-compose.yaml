@@ -1,0 +1,10 @@
+services:
+  ldap:
+    image: ${AUTHGUARD_E2E_LDAP_IMAGE:?use util/images.py}
+    volumes:
+    - ${AUTHGUARD_E2E_RUNTIME_DIR}/ldap-config.cfg:/app/config/config.cfg:ro
+    ports:
+    - 127.0.0.1::389
+    tmpfs:
+    - /tmp
+    platform: ${AUTHGUARD_E2E_PLATFORM:-linux/amd64}

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: customer-growth-lib
+description: Shared E2E resource labels and business workload template
+type: library
+version: 0.1.0
