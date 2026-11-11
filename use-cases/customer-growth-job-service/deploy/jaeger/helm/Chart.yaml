@@ -1,0 +1,10 @@
+apiVersion: v2
+name: jaeger
+description: Customer Growth E2E jaeger component
+type: application
+version: 0.1.0
+appVersion: e2e
+dependencies:
+- name: customer-growth-lib
+  version: 0.1.0
+  repository: file://../../../util/helm

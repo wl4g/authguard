@@ -1,0 +1,296 @@
+authn:
+  applications:
+    customer-growth:
+      hosts: [${AUTHN_BROWSER_HOST}, ${CUSTOMER_GROWTH_HOST}]
+      displayName: Customer Growth
+      logo: /auth/assets/themes/custom/customer-growth.svg
+      theme:
+        id: customer-growth
+        stylesheet: /auth/assets/themes/custom/customer-growth.css
+      returnUris:
+        - 'https://${AUTHN_BROWSER_HOST}/**'
+        - 'https://${CUSTOMER_GROWTH_HOST}/**'
+    customer-growth-default:
+      hosts: [${CUSTOMER_GROWTH_FALLBACK_HOST}]
+      displayName: Customer Growth
+      returnUris: ['https://${CUSTOMER_GROWTH_FALLBACK_HOST}/**']
+  providers:
+    github:
+      type: oauth2
+      issuer: https://github.com
+      clientId: e2e-authguard-github-client
+      clientSecret: "${AUTHGUARD__AUTHN__PROVIDERS__GITHUB__CLIENT_SECRET}"
+      callbackUrl: http://${AUTHN_BROWSER_HOST}:8082/auth/oauth2/github/callback
+      authorization:
+        endpoint: '$MOCK_IDP_URL/github/login/oauth/authorize'
+        scopes: [read:user, user:email]
+      token:
+        endpoint: '$MOCK_IDP_URL/github/login/oauth/access_token'
+        method: POST
+        headers:
+          accept: application/json
+      identity:
+        endpoint: '$MOCK_IDP_URL/github/user'
+        subject: $.id
+        username: $.login
+        email: $.email
+    google:
+      type: oauth2
+      issuer: https://accounts.google.com
+      clientId: e2e-authguard-google-client
+      clientSecret: "${AUTHGUARD__AUTHN__PROVIDERS__GOOGLE__CLIENT_SECRET}"
+      callbackUrl: http://${AUTHN_BROWSER_HOST}:8082/auth/oauth2/google/callback
+      authorization:
+        endpoint: '$MOCK_IDP_URL/google/o/oauth2/v2/auth'
+        scopes: [profile, email]
+      token:
+        endpoint: '$MOCK_IDP_URL/google/token'
+        method: POST
+      identity:
+        endpoint: '$MOCK_IDP_URL/google/oauth2/v3/userinfo'
+        subject: $.sub
+        username: $.name
+        email: $.email
+    e2e-authguard-keycloak:
+      type: oidc
+      issuer: '$KEYCLOAK_URL/realms/example-corp'
+      clientId: e2e-authguard-principal-discovery
+      clientSecret: "${AUTHGUARD__AUTHN__PROVIDERS__E2E_AUTHGUARD_KEYCLOAK__CLIENT_SECRET}"
+      callbackUrl: http://${AUTHN_BROWSER_HOST}:8082/auth/oauth2/e2e-authguard-keycloak/callback
+      scopes: [openid, profile, email]
+      userinfo: true
+      tokenIntrospection:
+        endpoint: '$KEYCLOAK_URL/realms/example-corp/protocol/openid-connect/token/introspect'
+        acceptedAudiences: [customer-growth-job-service]
+      identity:
+        subject: $.sub
+        username: $.preferred_username
+        email: $.email
+        trustedClaims:
+          tenant_id: $.tenant_id
+          authguard_group_ids: $.authguard_group_ids
+    wechat:
+      type: oauth2-like
+      issuer: https://open.weixin.qq.com
+      clientId: e2e-authguard-wechat-app
+      clientSecret: "${AUTHGUARD__AUTHN__PROVIDERS__WECHAT__CLIENT_SECRET}"
+      callbackUrl: http://${AUTHN_BROWSER_HOST}:8082/auth/oauth2/wechat/callback
+      authorization:
+        endpoint: '$MOCK_IDP_URL/wechat/connect/qrconnect'
+        scopes: [snsapi_login]
+      token:
+        endpoint: '$MOCK_IDP_URL/wechat/sns/oauth2/access_token'
+        method: GET
+        clientCredentials: query
+        query:
+          appid: ${clientId}
+          secret: ${clientSecret}
+          code: ${authorizationCode}
+          grant_type: authorization_code
+      identity:
+        subject: $.unionid
+        fallbackSubject: $.openid
+    qq:
+      type: oauth2-like
+      issuer: https://graph.qq.com
+      clientId: e2e-authguard-qq-app
+      clientSecret: "${AUTHGUARD__AUTHN__PROVIDERS__QQ__CLIENT_SECRET}"
+      callbackUrl: http://${AUTHN_BROWSER_HOST}:8082/auth/oauth2/qq/callback
+      authorization:
+        endpoint: '$MOCK_IDP_URL/qq/oauth2.0/authorize'
+        scopes: [get_user_info, get_vip_info]
+      token:
+        endpoint: '$MOCK_IDP_URL/qq/oauth2.0/token'
+        method: GET
+        clientCredentials: query
+        query:
+          grant_type: authorization_code
+          client_id: ${clientId}
+          client_secret: ${clientSecret}
+          code: ${authorizationCode}
+          redirect_uri: ${redirectUri}
+          fmt: json
+      identity:
+        endpoint: '$MOCK_IDP_URL/qq/oauth2.0/me?fmt=json'
+        subject: $.openid
+  standalone:
+    enabled: true
+    issuer: urn:authguard:e2e:standalone
+    credentialEncryptionKey: "${AUTHGUARD__AUTHN__STANDALONE__CREDENTIAL_ENCRYPTION_KEY}"
+    password:
+      minLength: 12
+    totp:
+      enabled: true
+      issuer: AuthGuard E2E
+      digits: 6
+      stepSeconds: 30
+      skew: 1
+    webauthn:
+      enabled: true
+      rpId: '${AUTHN_BROWSER_HOST}'
+      rpOrigin: 'http://${AUTHN_BROWSER_HOST}:8082'
+      rpName: AuthGuard Customer Growth E2E
+  wallet:
+    enabled: true
+    domain: '${AUTHN_HOST}:8082'
+    uri: 'http://${AUTHN_HOST}:8082'
+    statement: Sign in to Customer Growth
+    rpcTimeout: 2s
+    chains:
+      eip155:
+        '31336': {}
+        '31337':
+          rpc: '$ANVIL_URL'
+        '31338':
+          rpc: '$MOCK_IDP_URL/fault/ethereum/31338/timeout'
+      solana: [$SOLANA_REFERENCE]
+      bip122:
+        000000000019d6689c085ae165831e93:
+          network: bitcoin-mainnet
+  accountLinking:
+    strategy: first-login
+    authoritativeProviders: []
+    allowLink:
+      github: [standalone, wallet]
+      standalone: [wallet]
+  challengeTtl: 2m
+  token:
+    issuer: '$AUTHN_ISSUER'
+    audience: customer-growth-job-service
+    ttl: 5m
+    privateKeyB64: "${AUTHGUARD__AUTHN__TOKEN__PRIVATE_KEY_B64}"
+server:
+  service_name: authguard-authz
+  host: 0.0.0.0
+  port: 8080
+  scope_port: 8081
+  shutdown_timeout: 15s
+  request:
+    max_message_bytes: 1048576
+    timeout: 5s
+  response:
+    max_message_bytes: 1048576
+  performance:
+    worker_threads: 2
+    max_in_flight_requests: 4096
+mgmt:
+  enabled: true
+  host: 0.0.0.0
+  port: ${MGMT_PORT}
+  context_path: "/"
+  health:
+    liveness_path: "/healthz"
+    readiness_path: "/readyz"
+  metrics:
+    enabled: true
+    path: "${METRICS_PATH}"
+  otel:
+    enabled: true
+    endpoint: '$JAEGER_URL'
+    protocol: grpc
+    timeout: 5s
+    sample_rate: 1.0
+logging:
+  mode: JSON
+  level: "info,tower_http=info"
+authz:
+  api:
+    enabled: true
+    host: 0.0.0.0
+    port: 9090
+    token: "${AUTHGUARD__AUTHZ__API__TOKEN}"
+  identity:
+    token_header: authorization
+    principal_id_claim: principal_id
+    principal_kind_claim: principal_kind
+    groups_claim: authguard_group_ids
+  scope_delivery:
+    direct_urn_limit: 1
+    max_direct_header_bytes: 8192
+    direct_context_hmac_key: "${AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY}"
+    context_ttl: 30s
+    scope_token_ttl: 30s
+  principal_discovery:
+    keycloak:
+      - enabled: true
+        discovery_id: e2e-authguard-keycloak
+        base_url: '$KEYCLOAK_URL'
+        realm: example-corp
+        issuer: '$KEYCLOAK_URL/realms/example-corp'
+        auth:
+          client_id: e2e-authguard-principal-discovery
+          client_secret: "${AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__KEYCLOAK__INDEX_0__AUTH__CLIENT_SECRET}"
+        connect_timeout: 3s
+        request_timeout: 10s
+        max_page_size: 100
+        allow_insecure_http: true
+    ldap:
+      - enabled: true
+        discovery_id: e2e-authguard-direct-ldap
+        url: '$LDAP_URL'
+        issuer: "urn:authguard:e2e:ldap:example-corp"
+        base_dn: "dc=example,dc=org"
+        auth:
+          bind_dn: "cn=svc-authguard,ou=Users,dc=example,dc=org"
+          bind_password: "${AUTHGUARD__AUTHZ__PRINCIPAL_DISCOVERY__LDAP__INDEX_0__AUTH__BIND_PASSWORD}"
+        user:
+          search_base: ""
+          object_filter: "(objectClass=posixAccount)"
+          id_attribute: uidNumber
+          name_attribute: cn
+          display_name_attribute: displayName
+          email_attribute: mail
+          search_attributes: [cn, displayName, mail, uidNumber]
+        group:
+          search_base: ""
+          object_filter: "(objectClass=posixGroup)"
+          id_attribute: gidNumber
+          name_attribute: ou
+          display_name_attribute: ou
+          search_attributes: [ou, gidNumber]
+        connect_timeout: 3s
+        request_timeout: 10s
+        max_page_size: 100
+        allow_insecure: true
+    scim:
+      enabled: true
+      discovery_id: e2e-authguard-keycloak
+      issuer: '$KEYCLOAK_URL/realms/example-corp'
+  resign:
+    enabled: true
+    max_ttl: 60s
+    private_key_b64: "${AUTHGUARD__AUTHZ__RESIGN__PRIVATE_KEY_B64}"
+storage:
+  provider: Postgres
+  bootstrap_policy: null
+  sqlite:
+    url: "sqlite:///tmp/authguard.db"
+    max_connections: 1
+    connect_timeout: 5s
+  postgres:
+    url: '$IAM_POSTGRES_URL'
+    username: e2e_authguard_service
+    password: "${AUTHGUARD__STORAGE__POSTGRES__PASSWORD}"
+    max_connections: 20
+    min_connections: 0
+    connect_timeout: 5s
+    idle_timeout: 10m
+    validate_on_acquire: true
+cache:
+  provider: Redis
+  memory:
+    initial_capacity: 32
+    max_capacity: 65535
+    ttl: 1h
+    eviction_policy: LRU
+  redis:
+    nodes: ['$REDIS_NODE']
+    username: "default"
+    password: ""
+    key_prefix: authguard
+    connection_timeout: 3s
+    response_timeout: 6s
+    retries: 8
+    max_retry_wait: 65s
+    min_retry_wait: 1280ms
+    read_from_replica: false

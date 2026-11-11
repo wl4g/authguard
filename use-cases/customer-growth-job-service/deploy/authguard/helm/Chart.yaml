@@ -1,0 +1,15 @@
+apiVersion: v2
+name: e2e-authguard-customer-growth-job-service
+description: Customer Growth AuthGuard integration, credentials and Hosted Login theme
+type: application
+version: 0.1.0
+appVersion: 0.1.0
+dependencies:
+- name: authguard
+  alias: authguard-middleware
+  version: 0.1.0
+  repository: file://../../../../../deploy/helm/authguard
+  condition: authguard-middleware.enabled
+- name: customer-growth-lib
+  version: 0.1.0
+  repository: file://../../../util/helm

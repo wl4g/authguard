@@ -62,11 +62,11 @@ services:
   # AuthN/UI paths and protects the business catch-all with jwt_authn -> ext_authz.
   envoy:
     image: registry.cn-shenzhen.aliyuncs.com/wl4g/envoyproxy_envoy:distroless-v1.36.4
-    command: [-c, /etc/envoy/envoy.yaml, --log-level, info]
+    command: [-c, /etc/envoy/source/envoy.yaml, --log-level, info]
     ports:
       - "8080:8080"
     volumes:
-      - ./config/envoy.yaml:/etc/envoy/envoy.yaml:ro
+      - ./config/envoy.yaml:/etc/envoy/source/envoy.yaml:ro
     depends_on:
       authn: { condition: service_started }
       authz: { condition: service_started }

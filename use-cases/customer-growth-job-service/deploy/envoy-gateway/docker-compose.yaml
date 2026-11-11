@@ -1,0 +1,10 @@
+services:
+  envoy-gateway:
+    profiles:
+    - controller
+    image: ${AUTHGUARD_E2E_ENVOY_GATEWAY_IMAGE:?required}
+    platform: ${AUTHGUARD_E2E_PLATFORM:-linux/amd64}
+    environment:
+      KUBECONFIG: /etc/kube/config
+    volumes:
+    - ${KUBECONFIG:?controller requires an active Kubernetes cluster}:/etc/kube/config:ro

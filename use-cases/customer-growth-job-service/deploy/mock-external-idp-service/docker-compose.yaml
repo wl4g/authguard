@@ -1,0 +1,18 @@
+services:
+  mock-idp:
+    image: ${AUTHGUARD_E2E_MOCK_IDP_IMAGE:?use util/images.py}
+    environment:
+      MOCK_IDP_GITHUB_CLIENT_SECRET: e2e-authguard-github-secret
+      MOCK_IDP_GOOGLE_CLIENT_SECRET: e2e-authguard-google-secret
+      MOCK_IDP_WECHAT_CLIENT_SECRET: e2e-authguard-wechat-secret
+      MOCK_IDP_QQ_CLIENT_SECRET: e2e-authguard-qq-secret
+    ports:
+    - 127.0.0.1::8080
+    tmpfs:
+    - /tmp
+    platform: ${AUTHGUARD_E2E_PLATFORM:-linux/amd64}
+    build:
+      context: ../../../..
+      dockerfile: use-cases/customer-growth-job-service/deploy/mock-external-idp-service/Dockerfile
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:?use util/images.py}

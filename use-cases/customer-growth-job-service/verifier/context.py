@@ -1,0 +1,404 @@
+"""Shared verification context, results and scenario runtime contract."""
+from __future__ import annotations
+from util.constant import E2EOtherDefinitions
+from dataclasses import dataclass, field
+from pathlib import Path
+import json
+import time
+import base64
+import hashlib
+import re
+import traceback
+from typing import Iterator, Callable, TypeVar
+from urllib import parse, request, error
+from util.process import E2EProcessHelper
+from verifier.otel.otel_contract import E2ETrace, JaegerQueryClient
+
+CommandResult = E2EProcessHelper.CommandResult
+
+
+@dataclass(frozen=True)
+class VerificationContext:
+    round_number: int
+    clean: bool
+    timeout_seconds: int
+    build_images: bool = True
+    deployer: str = "kubernetes"
+    state: dict = field(default_factory=dict, compare=False)
+
+    @staticmethod
+    def create_deployer(context: VerificationContext):
+        from verifier.infra.s00_infrastructure import E2ES00InfrastructureVerifier
+
+        return E2ES00InfrastructureVerifier.create_deployer(context)
+
+
+@dataclass(frozen=True)
+class EvidenceArtifact:
+    case_id: str
+    title: str
+    kind: str
+    path: Path
+
+
+@dataclass
+class VerificationResult:
+    scenario_id: str
+    title: str
+    passed: bool
+    duration_seconds: float
+    details: list[str] = field(default_factory=list)
+    commands: list[CommandResult] = field(default_factory=list)
+    evidence: list[EvidenceArtifact] = field(default_factory=list)
+    case_executions: tuple[str, ...] = ()
+
+
+T = TypeVar("T")
+
+
+class BaseVerifier:
+    """Shared verifier utilities with an optional disposable deployment backend."""
+
+    scenario_id = ""
+    title = ""
+    requires_deployer = True
+
+    def __init__(self, context: VerificationContext) -> None:
+        self.context = context
+        self._infrastructure = None
+        self.commands: list = []
+        self.details: list[str] = []
+        if self.requires_deployer:
+            self._activate_deployer()
+        self._step_number = 0
+        scenario_data = json.loads(
+            E2EOtherDefinitions.AUTHGUARD_SCENARIOS_PATH.read_text(encoding="utf-8")
+        )
+        if scenario_data.get("version") != 4:
+            raise ValueError("AuthGuard E2E scenario data version must be 4")
+        self.authn_scenarios = scenario_data["authn"]
+        self.principal_scenarios = scenario_data["principal_federation"]
+        self.authn_traces: dict[str, E2ETrace] = {}
+        self.authn_trace_principals: dict[str, str] = {}
+        self.api_trace_headers: dict[str, str] = {}
+        self.evidence: list[EvidenceArtifact] = []
+        self._active_case_id: str | None = None
+        self._active_exchanges: list[dict[str, object]] = []
+
+    @property
+    def infrastructure(self):
+        """Create the selected deployer only for scenarios that need runtime access."""
+        if self._infrastructure is None:
+            self._activate_deployer()
+        return self._infrastructure
+
+    def _activate_deployer(self) -> None:
+        self._infrastructure = VerificationContext.create_deployer(self.context)
+        self.commands = self._infrastructure.commands
+        self.details = self._infrastructure.details
+
+    def __getattr__(self, name: str):
+        return getattr(self.infrastructure, name)
+
+    def step(self, label: str, operation: Callable[[], T]) -> T:
+        self._step_number += 1
+        step = f"{self.scenario_id}.{self._step_number:02d}"
+        started = time.monotonic()
+        detail_offset = len(self.details)
+        self._active_case_id = step
+        self._active_exchanges = []
+        print(f"    [{step}] {label} ...", flush=True)
+        try:
+            result = operation()
+            duration = time.monotonic() - started
+            self._write_step_evidence(
+                step,
+                label,
+                duration,
+                self.details[detail_offset:],
+                self._active_exchanges,
+            )
+        except Exception:
+            print(f"    [{step}] FAIL ({time.monotonic() - started:.2f}s)", flush=True)
+            raise
+        finally:
+            self._active_case_id = None
+            self._active_exchanges = []
+        print(f"    [{step}] PASS ({duration:.2f}s)", flush=True)
+        return result
+
+    def execute(self, operation: Callable[[], None]) -> VerificationResult:
+        started = time.monotonic()
+        passed = False
+        try:
+            operation()
+            passed = True
+        except Exception:
+            self.details.append(traceback.format_exc())
+        return VerificationResult(
+            scenario_id=self.scenario_id,
+            title=self.title,
+            passed=passed,
+            duration_seconds=time.monotonic() - started,
+            details=self.details,
+            commands=self.commands,
+            evidence=self.evidence,
+        )
+
+    def evidence_path(self, case_id: str, title: str, suffix: str) -> Path:
+        slug = re.sub("[^a-z0-9]+", "_", title.lower()).strip("_")[:80]
+        directory = (
+            E2EOtherDefinitions.REPORTS_DIR
+            / f"round-{self.context.round_number:02d}"
+            / "evidence"
+            / self.scenario_id
+        )
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory / f"{case_id.lower().replace('.', '_')}_{slug}.{suffix}"
+
+    def record_evidence(self, case_id: str, title: str, kind: str, path: Path) -> None:
+        self.evidence.append(EvidenceArtifact(case_id, title, kind, path))
+
+    def _write_step_evidence(
+        self,
+        case_id: str,
+        title: str,
+        duration_seconds: float,
+        assertions: list[str],
+        exchanges: list[dict[str, object]],
+    ) -> None:
+        path = self.evidence_path(case_id, title, "json")
+        logical_case_ids = self._logical_case_ids(title)
+        recorded_assertions = assertions or [
+            "scenario operation completed without assertion failure: PASS"
+        ]
+        payload = {
+            "scenarioId": self.scenario_id,
+            "caseId": case_id,
+            "logicalCaseIds": logical_case_ids,
+            "title": title,
+            "status": "PASS",
+            "durationSeconds": round(duration_seconds, 6),
+            "assertions": recorded_assertions,
+            "httpExchanges": exchanges,
+        }
+        path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        self.record_evidence(case_id, title, "application/json", path)
+        for logical_case_id in logical_case_ids:
+            self.record_evidence(logical_case_id, title, "application/json", path)
+
+    @staticmethod
+    def _logical_case_ids(title: str) -> list[str]:
+        """Expand labels such as ``WL-05..10`` into reportable case IDs."""
+        identifiers: list[str] = []
+        for match in re.finditer("\\b([A-Z]+)-(\\d{2})(?:\\.\\.(\\d{2}))?", title):
+            prefix, start_text, end_text = match.groups()
+            start = int(start_text)
+            end = int(end_text or start_text)
+            if end < start or end - start > 99:
+                continue
+            identifiers.extend(
+                (f"{prefix}-{number:02d}" for number in range(start, end + 1))
+            )
+        return identifiers
+
+    def _verify_envoy_runtime_filter_chain(self) -> None:
+        with self._forward_envoy_admin() as port:
+            with request.urlopen(
+                f"http://127.0.0.1:{port}/config_dump", timeout=15
+            ) as response:
+                config_dump = json.loads(response.read())
+        if self.context.deployer == "kubernetes":
+            expected_ext_auth = f"envoy.filters.http.ext_authz/securitypolicy/{self.namespace}/{self.authguard_release}"
+        else:
+            expected_ext_auth = "envoy.filters.http.ext_authz"
+        for candidate in self._json_objects(config_dump):
+            filters = candidate.get("http_filters")
+            if not isinstance(filters, list):
+                continue
+            names = [item.get("name", "") for item in filters]
+            if (
+                "envoy.filters.http.jwt_authn" not in names
+                or expected_ext_auth not in names
+            ):
+                continue
+            jwt_index = names.index("envoy.filters.http.jwt_authn")
+            ext_auth_index = names.index(expected_ext_auth)
+            router_index = names.index("envoy.filters.http.router")
+            if not jwt_index < ext_auth_index < router_index:
+                raise RuntimeError(f"unsafe Envoy HTTP filter order: {names}")
+            ext_auth = filters[ext_auth_index].get("typed_config", {})
+            envoy_grpc = ext_auth.get("grpc_service", {}).get("envoy_grpc", {})
+            expected_authority = (
+                f"{self.authguard_release}.{self.namespace}:8080"
+                if self.context.deployer == "kubernetes"
+                else None
+            )
+            if expected_authority and envoy_grpc.get("authority") != expected_authority:
+                raise RuntimeError(
+                    f"Envoy ext_authz runtime target mismatch: expected={expected_authority!r}, actual={envoy_grpc.get('authority')!r}"
+                )
+            target = expected_authority or envoy_grpc.get("cluster_name")
+            self.details.append(
+                f"Envoy runtime filter order is jwt_authn -> ext_authz -> router; ext_authz target is {target}"
+            )
+            return
+        raise RuntimeError(
+            "Envoy runtime config contains no JWT + Authguard ext_authz chain"
+        )
+
+    @classmethod
+    def _json_objects(cls, value: object) -> Iterator[dict]:
+        if isinstance(value, dict):
+            yield value
+            for child in value.values():
+                yield from cls._json_objects(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from cls._json_objects(child)
+
+    def _export_verifier_trace(self, trace: E2ETrace) -> None:
+        with self._forward_service(self.jaeger_service, 4318) as collector_port:
+            export_request = request.Request(
+                f"http://127.0.0.1:{collector_port}/v1/traces",
+                data=trace.otlp_json(),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with request.urlopen(export_request, timeout=15) as response:
+                if response.status not in {200, 202}:
+                    raise RuntimeError(
+                        f"Jaeger OTLP export returned HTTP {response.status}"
+                    )
+
+    def _jaeger_query(self, port: int) -> JaegerQueryClient:
+        return JaegerQueryClient(
+            base_url=f"http://127.0.0.1:{port}",
+            timeout_seconds=min(self.context.timeout_seconds, 90),
+        )
+
+    @staticmethod
+    def _jwt_claims(token: str) -> dict:
+        parts = token.split(".")
+        if len(parts) != 3:
+            raise RuntimeError("identity issuer returned a malformed JWT")
+        encoded = parts[1] + "=" * (-len(parts[1]) % 4)
+        try:
+            claims = json.loads(base64.urlsafe_b64decode(encoded))
+        except (ValueError, json.JSONDecodeError) as failure:
+            raise RuntimeError(
+                "identity issuer returned an invalid JWT payload"
+            ) from failure
+        if not isinstance(claims, dict):
+            raise RuntimeError("identity JWT payload is not an object")
+        return claims
+
+    def _http(
+        self,
+        port: int,
+        host: str,
+        path: str,
+        *,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+        json_body: dict | None = None,
+    ) -> tuple[int, str]:
+        status, response_body, _ = self._http_response(
+            port, host, path, method=method, headers=headers, json_body=json_body
+        )
+        return (status, response_body)
+
+    def _http_response(
+        self,
+        port: int,
+        host: str,
+        path: str,
+        *,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+        json_body: dict | None = None,
+    ) -> tuple[int, str, object]:
+        body = json.dumps(json_body).encode() if json_body is not None else None
+        outgoing_headers = {"Host": host, **(headers or {})}
+        if json_body is not None:
+            outgoing_headers["Content-Type"] = "application/json"
+        outgoing = request.Request(
+            f"http://127.0.0.1:{port}{path}",
+            data=body,
+            method=method,
+            headers=outgoing_headers,
+        )
+        try:
+            with request.urlopen(outgoing, timeout=15) as response:
+                status, response_body, response_headers = (
+                    response.status,
+                    response.read().decode(),
+                    response.headers,
+                )
+        except error.HTTPError as failure:
+            status, response_body, response_headers = (
+                failure.code,
+                failure.read().decode(),
+                failure.headers,
+            )
+        if self._active_case_id is not None:
+            parsed = parse.urlsplit(path)
+            self._active_exchanges.append(
+                {
+                    "method": method,
+                    "host": host,
+                    "path": parsed.path,
+                    "queryKeys": sorted(parse.parse_qs(parsed.query)),
+                    "status": status,
+                    "requestBodyBytes": len(body or b""),
+                    "requestBodySha256": hashlib.sha256(body or b"").hexdigest(),
+                    "responseBodyBytes": len(response_body.encode()),
+                    "responseBodySha256": hashlib.sha256(
+                        response_body.encode()
+                    ).hexdigest(),
+                }
+            )
+        return (status, response_body, response_headers)
+
+    def _api_http(
+        self,
+        port: int,
+        path: str,
+        *,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+        json_body: dict | None = None,
+    ) -> tuple[int, str]:
+        return self._http(
+            port,
+            "authguard-api.local",
+            path,
+            method=method,
+            headers={
+                "Authorization": f"Bearer {E2EOtherDefinitions.AUTHGUARD_API_TOKEN}",
+                **self.api_trace_headers,
+                **(headers or {}),
+            },
+            json_body=json_body,
+        )
+
+    def _expect_status(self, scenario: str, actual: int, expected: int) -> None:
+        if actual != expected:
+            raise RuntimeError(f"{scenario}: expected HTTP {expected}, got {actual}")
+        self.details.append(f"{scenario}: HTTP {actual}")
+
+    def _expect_job_ids(self, scenario: str, body: str, expected: list[int]) -> None:
+        actual = sorted((job["id"] for job in json.loads(body)))
+        if actual != sorted(expected):
+            raise RuntimeError(f"{scenario}: expected job ids {expected}, got {actual}")
+        self.details.append(f"{scenario}: job ids {actual}")
+
+    def _postgresql_pod(self) -> str:
+        return self.postgresql_service
+
+    def _postgresql_query(self, pod: str, sql: str) -> str:
+        if pod != self.postgresql_service:
+            raise RuntimeError(f"unexpected PostgreSQL service: {pod}")
+        return self.infrastructure.postgresql_query(sql)

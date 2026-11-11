@@ -1,0 +1,20 @@
+support:
+  enabled: true
+postgresql:
+  image: ''
+  pullPolicy: IfNotPresent
+  database: e2e_authguard_customer_growth
+  adminUsername: e2e_authguard_customer_growth_admin
+  adminPassword: e2e-authguard-customer-growth-admin-password
+  superuserPassword: e2e-authguard-customer-growth-postgres-password
+  authguardUsername: e2e_authguard_service
+  authguardPassword: e2e-authguard-postgres-password
+  authguardSchema: authguard
+  initSQL: ''
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi

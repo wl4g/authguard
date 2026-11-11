@@ -1,0 +1,14 @@
+redis_cluster:
+  fullnameOverride: authguard-redis
+  image:
+    registry: ''
+    repository: ''
+    tag: ''
+    pullPolicy: IfNotPresent
+  existingSecret: principal-discovery-credentials
+  existingSecretPasswordKey: AUTHGUARD__CACHE__REDIS__PASSWORD
+  cluster:
+    nodes: 6
+    replicas: 1
+  persistence:
+    enabled: false

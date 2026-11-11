@@ -1,0 +1,15 @@
+support:
+  enabled: true
+ldap:
+  enabled: true
+  image: ''
+  pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+  bindPassword: e2e-authguard-ldap-bind-password
+  config: ''

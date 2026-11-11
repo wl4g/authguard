@@ -1,0 +1,76 @@
+{{- if and .Values.support.enabled .Values.anvil.enabled }}
+{{- $name := include "customer-growth-e2e.anvilName" . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+    app.kubernetes.io/component: anvil
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: anvil
+  ports:
+    - { name: json-rpc, port: 8545, targetPort: json-rpc }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+    app.kubernetes.io/component: anvil
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: anvil
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: anvil
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: anvil
+          image: {{ .Values.anvil.image | quote }}
+          imagePullPolicy: {{ .Values.anvil.pullPolicy }}
+          args:
+            - --host=0.0.0.0
+            - --port=8545
+            - --accounts=10
+            - --balance=10000
+            - --chain-id=31337
+          env:
+            - { name: HOME, value: /tmp }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          ports:
+            - { name: json-rpc, containerPort: 8545 }
+          startupProbe:
+            tcpSocket: { port: json-rpc }
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket: { port: json-rpc }
+            periodSeconds: 5
+            timeoutSeconds: 2
+          resources:
+            {{- toYaml .Values.anvil.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

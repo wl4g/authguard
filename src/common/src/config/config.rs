@@ -21,7 +21,7 @@ use crate::model::IamPolicyInfo;
 
 /// Complete product configuration shared by `AuthN` and `AuthZ`.
 ///
-/// Fields intentionally run from common infrastructure to product-specific
+/// Fields intentionally run from utils infrastructure to product-specific
 /// modules so the YAML hierarchy and Rust model have the same shape.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]

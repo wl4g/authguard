@@ -190,7 +190,7 @@ HTTPS_PROXY=http://127.0.0.1:8800 make e2e-docker
 ```
 
 The reproducible application and verifier suite lives in
-[`use-cases/customer-growth-job-service/e2e`](use-cases/customer-growth-job-service/e2e).
+[`use-cases/customer-growth-job-service`](use-cases/customer-growth-job-service).
 
 ## Deployment
 

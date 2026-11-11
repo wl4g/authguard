@@ -1,0 +1,4 @@
+image: ''
+authnService: authguard-authn
+authzService: authguard
+webService: authguard-web

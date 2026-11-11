@@ -1,0 +1,17 @@
+services:
+  keycloak:
+    image: ${AUTHGUARD_E2E_KEYCLOAK_IMAGE:?use util/images.py}
+    command:
+    - start-dev
+    - --import-realm
+    - --health-enabled=true
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: e2e-authguard-admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: e2e-authguard-admin-password
+      KC_HOSTNAME: http://keycloak:8080
+      KC_HOSTNAME_STRICT: 'false'
+    volumes:
+    - ${AUTHGUARD_E2E_RUNTIME_DIR}/keycloak/e2e-realm.json:/opt/keycloak/data/import/example-corp-realm.json:ro
+    ports:
+    - 127.0.0.1::8080
+    platform: ${AUTHGUARD_E2E_PLATFORM:-linux/amd64}

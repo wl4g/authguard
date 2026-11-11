@@ -1,0 +1,6 @@
+dependencies:
+- name: customer-growth-lib
+  repository: file://../../../util/helm
+  version: 0.1.0
+digest: sha256:040f31da4581559d63f82091494925346b19a9406f32cd390f134bf9a5788285
+generated: "2026-11-11T22:41:00.997559+08:00"

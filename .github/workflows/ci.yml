@@ -125,7 +125,7 @@ jobs:
           go-version: "1.24.x"
           cache-dependency-path: |
             src/adapters/golang/go.sum
-            use-cases/customer-growth-job-service/e2e/deploy/biz-golang-sqlx-service/go.sum
+            use-cases/customer-growth-job-service/deploy/biz-golang-sqlx-service/source/go.sum
 
       - name: Install Java
         uses: actions/setup-java@v4
@@ -273,7 +273,7 @@ jobs:
       - name: Install browser runtime
         run: |
           make e2e-python
-          use-cases/customer-growth-job-service/e2e/.venv/bin/python \
+          use-cases/customer-growth-job-service/util/.venv/bin/python \
             -m playwright install --with-deps chromium
 
       - name: Run complete E2E matrix against dirty images
@@ -283,7 +283,7 @@ jobs:
         id: summary
         if: always()
         run: |
-          summary=use-cases/customer-growth-job-service/e2e/reports/00_summary.md
+          summary=use-cases/customer-growth-job-service/reports/00_summary.md
           if [[ -s "${summary}" ]]; then
             echo "base64=$(base64 -w 0 "${summary}")" >> "$GITHUB_OUTPUT"
           fi
@@ -293,7 +293,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: customer-growth-e2e-kubernetes-${{ needs.build-and-test.outputs.dirty_tag }}
-          path: use-cases/customer-growth-job-service/e2e/reports/
+          path: use-cases/customer-growth-job-service/reports/
           if-no-files-found: warn
           retention-days: 14
 
@@ -366,7 +366,7 @@ jobs:
       - name: Install browser runtime
         run: |
           make e2e-python
-          use-cases/customer-growth-job-service/e2e/.venv/bin/python \
+          use-cases/customer-growth-job-service/util/.venv/bin/python \
             -m playwright install --with-deps chromium
 
       - name: Run complete Docker Compose E2E matrix against dirty images
@@ -376,7 +376,7 @@ jobs:
         id: summary
         if: always()
         run: |
-          summary=use-cases/customer-growth-job-service/e2e/reports/00_summary.md
+          summary=use-cases/customer-growth-job-service/reports/00_summary.md
           if [[ -s "${summary}" ]]; then
             echo "base64=$(base64 -w 0 "${summary}")" >> "$GITHUB_OUTPUT"
           fi
@@ -386,7 +386,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: customer-growth-e2e-docker-${{ needs.build-and-test.outputs.dirty_tag }}
-          path: use-cases/customer-growth-job-service/e2e/reports/
+          path: use-cases/customer-growth-job-service/reports/
           if-no-files-found: warn
           retention-days: 14
 

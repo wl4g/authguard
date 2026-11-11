@@ -1,4 +1,5 @@
 ARG RUST_BUILDER_IMAGE=registry.cn-shenzhen.aliyuncs.com/wl4g/rust:1.99.1-slim
+ARG DEBIAN_IMAGE=debian:trixie-slim
 
 FROM ${RUST_BUILDER_IMAGE} AS builder
 RUN apt-get update \
@@ -16,7 +17,7 @@ RUN if [ -n "${AUTHGUARD_CARGO_FEATURES}" ]; then \
       cargo build --locked --release -p authguard-cmd --bin authguard; \
     fi
 
-FROM debian:trixie-slim AS runtime
+FROM ${DEBIAN_IMAGE} AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libssl3t64 \
     && rm -rf /var/lib/apt/lists/* \
