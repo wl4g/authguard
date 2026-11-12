@@ -333,7 +333,7 @@ curl -fsS https://jobs.example.com/api/v1/customer-growth/jobs \
 ```
 
 Business services see only canonical identity and signed or opaque authorization
-scope. Official adapters are available under [`src/adapters`](src/adapters) for
+scope. Official adapters are available under [`src/sdk`](src/sdk) for
 Rust, Go, Java, and Python integrations.
 
 ## Documentation

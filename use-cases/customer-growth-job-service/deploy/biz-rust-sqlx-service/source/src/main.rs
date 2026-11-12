@@ -7,7 +7,7 @@ async fn main() -> anyhow::Result<()> {
             service_version: env!("CARGO_PKG_VERSION").to_string(),
             environment: "e2e".to_string(),
             env_filter: std::env::var("RUST_LOG")
-                .unwrap_or_else(|_| "info,authguard_adapter_rust=debug".to_string()),
+                .unwrap_or_else(|_| "info,authguard_sdk_rust=debug".to_string()),
             json: true,
             otlp_endpoint: std::env::var("AUTHGUARD_OTEL_GRPC_ENDPOINT").ok(),
             export_timeout: std::time::Duration::from_secs(5),

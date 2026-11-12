@@ -1,6 +1,6 @@
 package authorization
 
-import "authguard/adapters/golang/model"
+import "authguard/sdk/golang/pkg/sdk/model"
 
 const (
 	ActionCreate = "customer-growth.job.create"

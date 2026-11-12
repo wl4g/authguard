@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use authguard_adapter_rust::model::SqlScope;
+use authguard_sdk_rust::sdk::model::SqlScope;
 use sqlx::{any::AnyRow, Any, AnyPool, Row};
 
 use crate::entity::{CustomerGrowthJobEntity, CustomerGrowthJobQueryCriteria};

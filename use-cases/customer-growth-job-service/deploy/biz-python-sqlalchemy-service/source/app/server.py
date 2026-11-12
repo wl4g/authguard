@@ -19,13 +19,13 @@ from app.dto.customer_growth_job_dto import (
 from app.repository.customer_growth_job_repository import CustomerGrowthJobRepository
 from app.service.customer_growth_job_service import CustomerGrowthJobService
 from app.telemetry import instrument
-from authguard_adapter.access import (
+from sdk.access import (
     AccessContextUnavailable,
     HeaderAccessContextResolver,
     GrpcAccessContextResolver,
 )
-from authguard_adapter.filter import AccessMiddleware
-from authguard_adapter.util import configure_logger
+from sdk.filter import AccessMiddleware
+from sdk.util import configure_logger
 
 
 CUSTOMER_GROWTH_SHELL = """<!doctype html>

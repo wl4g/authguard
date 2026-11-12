@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"authguard/adapters/golang/model"
+	"authguard/sdk/golang/pkg/sdk/model"
 	"authguard/use-cases/customer-growth-job-service/deploy/biz-golang-sqlx-service/source/pkg/entity"
 
 	"github.com/jmoiron/sqlx"

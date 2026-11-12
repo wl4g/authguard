@@ -317,7 +317,9 @@ class E2ES01StructureVerifier(BaseVerifier):
             for path in E2EOtherDefinitions.DEPLOY_DIR.iterdir()
             if path.is_dir() and path.name != "__pycache__"
         }
-        expected_projects = set(E2EOtherDefinitions.PROJECTS) | SUPPORT_PROJECTS
+        expected_projects = (
+            set(E2EOtherDefinitions.WORKLOAD_DIRECTORIES.values()) | SUPPORT_PROJECTS
+        )
         if actual_projects != expected_projects:
             errors.append(
                 f"deploy projects differ: actual={sorted(actual_projects)}, expected={sorted(expected_projects)}"
@@ -327,7 +329,7 @@ class E2ES01StructureVerifier(BaseVerifier):
             for relative in ("tests", "test", "src/test"):
                 if (source / relative).exists():
                     errors.append(
-                        f"{directory}: verification code belongs in verifier/sdk, not source/{relative}"
+                        f"{directory}: verification code belongs in Python scenario verifiers, not source/{relative}"
                     )
         if (E2EOtherDefinitions.DEPLOY_DIR / "authguard/source").exists():
             errors.append(
@@ -412,9 +414,11 @@ class E2ES01StructureVerifier(BaseVerifier):
             "context.py",
             "authn/authn_protocol.py",
             "otel/otel_contract.py",
-            "sdk/sdk_scenario.py",
             "web/browser_authenticator.py",
         }
+        for path in (root / "verifier").rglob("*"):
+            if path.is_file() and path.suffix in {".go", ".rs", ".java", ".sh"}:
+                errors.append(f"{path}: verifier code must be Python E2E scenarios")
         for path in (root / "verifier").rglob("*.py"):
             relative = path.relative_to(root / "verifier").as_posix()
             if (
@@ -1108,7 +1112,7 @@ class E2ES01StructureVerifier(BaseVerifier):
         details = [
             "One use-case root",
             f"Five business projects plus UI, IdP, and local-chain support: {', '.join(sorted(expected_projects))}",
-            "Mock sources keep application layers; all acceptance drivers live under verifier/sdk",
+            "Mock sources keep application layers; Python E2E scenarios verify deployed APIs and data",
             "AuthGuard common/AuthN/AuthZ source boundaries match the converged module contract",
             f"The {E2E_NAMESPACE} namespace isolates formal component resource names; SQL uses {E2E_SQL_PREFIX}; host forwards use 288xx",
             "Kubernetes and Docker phases share 00 deployment -> 10 AuthN -> 20 pre-authorization -> 26 Envoy/AuthZ/Biz -> 30/31 UI -> 40/41/42 OTEL signals; persistent data is checked within each producing scenario",

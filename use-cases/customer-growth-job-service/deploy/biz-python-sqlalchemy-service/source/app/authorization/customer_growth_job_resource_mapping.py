@@ -1,4 +1,4 @@
-from authguard_adapter.model import PathMap, ResourceSqlMapping, SegmentMap
+from sdk.model import PathMap, ResourceSqlMapping, SegmentMap
 
 ACTION_CREATE = "customer-growth.job.create"
 ACTION_READ = "customer-growth.job.read"

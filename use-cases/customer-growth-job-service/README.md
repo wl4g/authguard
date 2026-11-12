@@ -17,7 +17,7 @@ Every `sNN_description.py` exposes `E2ESNNDescriptionVerifier` with
 Scenario 00 owns the complete deployment; other scenarios reuse it unless they
 explicitly require redeployment or initialization. Scenario 10 still orchestrates
 its protocol sub-scenarios 11–15 with the same prerequisite ordering and assertions.
-The 17 runner groups retain the previous checks. OTEL signals are metrics (40), tracing (41), and logs (42); persistent data is verified inside the AuthN, AuthZ, gateway, or browser scenario that produces it. There is no separate storage/cache scenario. The five-service authorization matrix is unchanged.
+The 11 runner groups cover deployment and the real request path. OTEL signals are metrics (40), tracing (41), and logs (42); persistent data is verified inside the AuthN, AuthZ, gateway, or browser scenario that produces it. There is no separate storage/cache scenario. All five business services are checked through HTTP and PostgreSQL; SDK unit tests are outside the E2E runner.
 The architecture boundaries in `docs/architecture/overview_ZH.md` and the two IAM
 whitepapers remain covered by authentication, Principal federation/provisioning,
 SDK scopes, gateway CRUD, browser login and runtime evidence. Planned capabilities
@@ -25,13 +25,9 @@ listed as gaps in `docs/plans/iam-implementation-gaps_ZH.md` are not claimed as 
 
 
 
-The use case has two complementary execution modes. Portable mode requires no
-identity provider, Kubernetes cluster, or external database: `authguard-authz`
-evaluates the condition matrix, and each project tests the SDK-to-SQL boundary
-against SQLite or H2. Deployment mode starts the complete request path on Kubernetes:
-Keycloak as an E2E-only external IdP, Envoy Gateway, `authguard-authn`, one
-`authguard-authz` replica, Redis Cluster, one shared
-PostgreSQL instance, an LDAP directory, Jaeger, and all five HTTP microservices.
+The suite deploys the complete request path through Kubernetes or Docker Compose:
+Keycloak as an E2E-only external IdP, Envoy Gateway or Envoy, AuthN/AuthZ, Redis,
+PostgreSQL, LDAP, Jaeger, local Anvil/Solana nodes, and all five HTTP services.
 It also deploys the repository's production `authguard-web` image on the AuthN
 listener. Playwright drives real headless Chromium journeys for GitHub, Google,
 WeChat, QQ, password, WebAuthn, CAIP wallet, Principal, and Policy controls.
@@ -55,12 +51,9 @@ customer-growth-job-service/
   verifier/                            vertical scenario ownership
     context.py                         VerificationContext and shared runtime/result contract
     scenarios.json                     shared verification inputs and expected outcomes
-    infra/s00..s03_*.py
+    infra/s00..s02_*.py
     authn/s10..s15_*.py
     authz/s20_*.py, s26_*.py
-    sdk/s21..s25_*.py                  language scenario verifiers
-    sdk/s21_sqlx_test.go, s22_sqlx.rs   native Go/Rust verification drivers
-    sdk/jdbc/, sdk/jpa/                Java verification sources
     web/s30..s31_*.py
     otel/s40_metrics.py, s41_tracing.py, s42_logs.py
   util/
@@ -84,34 +77,23 @@ in `source/`, beside its Dockerfile, Compose definition and Helm Chart.
 Configuration-only middleware keeps its custom input under `source/`; AuthGuard
 deployment overrides and test signing keys live under `deploy/authguard/config/`.
 
-All acceptance checks live under `verifier/`. Service sources contain no `tests/`
-or Java `src/test/` directory. Native SDK drivers belong to scenarios 21–25;
-Java loads its external verification sources through `-De2e.verifier=true`.
-All five drivers read `verifier/scenarios.json` and the shared PostgreSQL SQL
-input. Language-local copies are forbidden.
+All E2E verification code under `verifier/` is Python. Services contain no
+acceptance-test source directories or external UT profiles. AuthZ 26 verifies
+all five deployed services: JWT/authorization gates, scoped row visibility,
+query-filter intersections, complete JSON request/response fields, CRUD,
+PostgreSQL persistence, unchanged seed rows after denied calls, and distributed
+traces. The existing AuthN, Principal, browser, metrics, tracing and log checks
+remain in their owning scenarios.
 
-Root `make test-go`, `test-python`, and `test-java` run the product adapters only.
-Use-case verification runs through `runner.py`, directly or through `make e2e`,
-`e2e-k8s`, and `e2e-docker`.
+SDK unit tests belong to [`src/sdk`](../../src/sdk) and run through the normal
+product test targets. They are not invoked or counted by the E2E runner.
+Use `runner.py`, `make e2e`, `e2e-k8s`, or `e2e-docker` for deployment verification.
 
 The canonical resource shape is:
 
 ```text
 urn:iam:prod:customer-growth:<region>:<tenant_id>:workspace/<workspace_id>/project/<project_id>/job/<job_id>
 ```
-
-Every implementation executes the same 53 independent scenarios against a
-fresh database. They cover all CRUD operations, read versus write action
-isolation, exact URNs, `*`, trailing `**`, segment wildcards, allow unions,
-explicit deny precedence, tenant/region/service boundaries, and business
-criteria intersections. Conditional cases cover source-IP allow/deny CIDRs,
-secure transport, HTTP method, MFA, subject claims, combined conditions, and
-missing trusted context; unavailable attributes fail closed.
-
-These business scenarios complement, rather than duplicate, the adapter test
-matrix. Each Java, Go, Python, and Rust SDK independently executes the same 46
-contract scenarios: 22 request-access/filter/resolver cases and 24 URN parsing,
-allow/deny SQL compilation, codec, and action-aware scope cases.
 
 ## Run
 
@@ -127,15 +109,15 @@ Run repeated clean rebuilds or one verifier directly:
 # Run this block from use-cases/customer-growth-job-service/.
 python3 -m venv util/.venv
 util/.venv/bin/python -m pip install -r requirements.txt
-util/.venv/bin/python -m playwright install chromium
+util/.venv/bin/python -m playwright install --only-shell chromium
 util/.venv/bin/python runner.py --rounds 3
-util/.venv/bin/python runner.py --scenario 23
+util/.venv/bin/python runner.py --scenario 01,02
 util/.venv/bin/python runner.py --list
-util/.venv/bin/python runner.py --scenario 00,01,02,03,20,10,21,22,23,24,25,26,30,31,40,41,42 --cleanup-after-run
+util/.venv/bin/python runner.py --scenario 01,02,00,20,10,26,30,31,40,41,42 --cleanup-after-run
 ```
 
-By default, every round removes project-local generated artifacts and performs
-a fresh project build before testing. `--skip-clean` is available for local
+By default, every round cleans the selected deployment, builds its service images,
+and verifies the deployed request path. `--skip-clean` is available for local
 diagnosis. Reports are written to `reports/`; previous reports are archived
 before the next invocation.
 Deployment resources are retained by default for troubleshooting. Add

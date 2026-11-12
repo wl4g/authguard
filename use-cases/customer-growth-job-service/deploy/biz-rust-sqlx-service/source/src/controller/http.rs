@@ -1,4 +1,4 @@
-use authguard_adapter_rust::{HttpHeaderAccessFilter, RequestAccess};
+use authguard_sdk_rust::sdk::{HttpHeaderAccessFilter, RequestAccess};
 use authguard_common::apm::propagate_http_trace_context;
 use axum::{
     extract::{Path, Query, Request, State},

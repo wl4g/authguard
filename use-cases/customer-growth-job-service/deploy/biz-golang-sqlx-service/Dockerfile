@@ -3,7 +3,7 @@ ARG GO_IMAGE
 
 FROM ${GO_IMAGE} AS builder
 WORKDIR /workspace
-COPY src/adapters/golang ./src/adapters/golang
+COPY src/sdk/golang ./src/sdk/golang
 COPY use-cases/customer-growth-job-service/deploy/biz-golang-sqlx-service/source ./use-cases/customer-growth-job-service/deploy/biz-golang-sqlx-service/source
 WORKDIR /workspace/use-cases/customer-growth-job-service/deploy/biz-golang-sqlx-service/source
 ARG GOPROXY=https://proxy.golang.org,direct

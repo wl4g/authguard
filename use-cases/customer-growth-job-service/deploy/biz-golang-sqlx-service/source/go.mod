@@ -3,7 +3,7 @@ module authguard/use-cases/customer-growth-job-service/deploy/biz-golang-sqlx-se
 go 1.23.0
 
 require (
-	authguard/adapters/golang v0.0.0-00010101000000-000000000000
+	authguard/sdk/golang v0.0.0-00010101000000-000000000000
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/jmoiron/sqlx v1.4.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.62.0
@@ -46,4 +46,4 @@ require (
 	modernc.org/memory v1.8.0 // indirect
 )
 
-replace authguard/adapters/golang => ../../../../../src/adapters/golang
+replace authguard/sdk/golang => ../../../../../src/sdk/golang

@@ -5,7 +5,7 @@ members = [
   "src/common",
   "src/authn",
   "src/authz",
-  "src/adapters/rust",
+  "src/sdk/rust",
 ]
 
 [workspace.package]

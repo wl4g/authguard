@@ -7,13 +7,9 @@ edition = "2021"
 license = "Apache-2.0"
 rust-version = "1.91"
 
-[[test]]
-name = "customer_growth_job_e2e"
-path = "../../../verifier/sdk/s22_sqlx.rs"
-
 [dependencies]
 anyhow = "1.0"
-authguard-adapter-rust = { path = "../../../../../src/adapters/rust" }
+authguard-sdk-rust = { path = "../../../../../src/sdk/rust" }
 authguard-common = { path = "../../../../../src/common" }
 axum = "0.8"
 base64 = "0.22"

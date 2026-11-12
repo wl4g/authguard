@@ -1,6 +1,6 @@
 package com.authguard.usecases.repository;
 
-import com.authguard.adapter.model.AuthguardTypes.SqlScope;
+import com.wl4g.authguard.sdk.model.AuthguardTypes.SqlScope;
 import com.authguard.usecases.entity.CustomerGrowthJobEntity;
 import java.util.ArrayList;
 import java.util.List;
