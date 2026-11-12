@@ -3,11 +3,11 @@
 # PostgreSQL and Redis dependencies.
 
 set -Eeuo pipefail
-source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/setup-secret-common.sh"
 
 usage() {
   cat <<'EOF'
-Usage: k8s-secrets-setup.sh [OPTIONS]
+Usage: setup-secret-k8s.sh [OPTIONS]
 
 Create or update the Kubernetes Secret that supplies every AuthGuard runtime
 credential and the bundled PostgreSQL/Redis passwords.

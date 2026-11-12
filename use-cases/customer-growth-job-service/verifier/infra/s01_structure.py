@@ -16,7 +16,6 @@ REQUIRED_PATHS = {
         "pkg/repository",
         "pkg/service",
         "pkg/telemetry/telemetry.go",
-        "tests/customer_growth_job_e2e_test.go",
     ),
     "biz-rust-sqlx-service": (
         "src/authorization",
@@ -27,7 +26,6 @@ REQUIRED_PATHS = {
         "src/repository",
         "src/server.rs",
         "src/service",
-        "tests/customer_growth_job_e2e.rs",
     ),
     "biz-python-sqlalchemy-service": (
         "app/authorization",
@@ -37,7 +35,6 @@ REQUIRED_PATHS = {
         "app/repository",
         "app/service",
         "app/telemetry.py",
-        "tests/test_customer_growth_job_e2e.py",
     ),
     "biz-springboot-jdbc-service": (
         "src/main/java/com/authguard/usecases/authorization",
@@ -47,7 +44,6 @@ REQUIRED_PATHS = {
         "src/main/java/com/authguard/usecases/entity",
         "src/main/java/com/authguard/usecases/repository",
         "src/main/java/com/authguard/usecases/service",
-        "src/test/java/com/authguard/usecases/controller/CustomerGrowthJobControllerE2ETest.java",
     ),
     "biz-springboot-jpa-service": (
         "src/main/java/com/authguard/usecases/authorization",
@@ -57,7 +53,6 @@ REQUIRED_PATHS = {
         "src/main/java/com/authguard/usecases/entity",
         "src/main/java/com/authguard/usecases/repository",
         "src/main/java/com/authguard/usecases/service",
-        "src/test/java/com/authguard/usecases/controller/CustomerGrowthJobControllerE2ETest.java",
     ),
 }
 SUPPORT_PROJECTS = {
@@ -327,6 +322,17 @@ class E2ES01StructureVerifier(BaseVerifier):
             errors.append(
                 f"deploy projects differ: actual={sorted(actual_projects)}, expected={sorted(expected_projects)}"
             )
+        for directory in E2EOtherDefinitions.WORKLOAD_DIRECTORIES.values():
+            source = E2EOtherDefinitions.DEPLOY_DIR / directory / "source"
+            for relative in ("tests", "test", "src/test"):
+                if (source / relative).exists():
+                    errors.append(
+                        f"{directory}: verification code belongs in verifier/sdk, not source/{relative}"
+                    )
+        if (E2EOtherDefinitions.DEPLOY_DIR / "authguard/source").exists():
+            errors.append(
+                "AuthGuard deployment configuration belongs in deploy/authguard/config"
+            )
         for path in (root / "verifier").rglob("s[0-9][0-9]_*.py"):
             if len(path.relative_to(root / "verifier").parts) != 2:
                 errors.append(
@@ -419,7 +425,7 @@ class E2ES01StructureVerifier(BaseVerifier):
                 errors.append(f"unexpected shared verifier module: {relative}")
         for data_path in (
             E2EOtherDefinitions.AUTHGUARD_INIT_SQL_PATH,
-            E2EOtherDefinitions.AUTHGUARD_SCENARIOS_PATH,
+            E2EOtherDefinitions.SCENARIOS_PATH,
         ):
             if not data_path.is_file():
                 errors.append(f"missing shared scenario data {data_path.name}")
@@ -1033,7 +1039,7 @@ class E2ES01StructureVerifier(BaseVerifier):
             errors.append(
                 "Docker Envoy tracing must use the envoygateway service identity"
             )
-        for component in E2EImagesDefinitions.WORKLOAD_IMAGES:
+        for component in E2EImagesDefinitions.WORKLOADS:
             if f"OTEL_SERVICE_NAME: {component}" not in docker_e2e_source:
                 errors.append(
                     f"Docker {component} must use its component name as the OTel service"
@@ -1102,7 +1108,7 @@ class E2ES01StructureVerifier(BaseVerifier):
         details = [
             "One use-case root",
             f"Five business projects plus UI, IdP, and local-chain support: {', '.join(sorted(expected_projects))}",
-            "Each project keeps authorization, controller, DTO, entity, repository, service, and E2E test boundaries",
+            "Mock sources keep application layers; all acceptance drivers live under verifier/sdk",
             "AuthGuard common/AuthN/AuthZ source boundaries match the converged module contract",
             f"The {E2E_NAMESPACE} namespace isolates formal component resource names; SQL uses {E2E_SQL_PREFIX}; host forwards use 288xx",
             "Kubernetes and Docker phases share 00 deployment -> 10 AuthN -> 20 pre-authorization -> 26 Envoy/AuthZ/Biz -> 30/31 UI -> 40/41/42 OTEL signals; persistent data is checked within each producing scenario",

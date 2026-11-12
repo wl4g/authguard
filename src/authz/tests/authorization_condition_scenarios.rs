@@ -7,9 +7,8 @@ use authguard_authz::{
 };
 use serde::Deserialize;
 
-const BUSINESS_SCENARIOS: &str = include_str!(
-    "../../../use-cases/customer-growth-job-service/deploy/authguard/source/scenarios.json"
-);
+const BUSINESS_SCENARIOS: &str =
+    include_str!("../../../use-cases/customer-growth-job-service/verifier/scenarios.json");
 
 #[derive(Debug, Deserialize)]
 struct ScenarioData {

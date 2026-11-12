@@ -4,3 +4,4 @@ fido2==1.2.0
 pyotp==2.9.0
 playwright==1.62.0
 -r util/requirements.txt
+-r deploy/biz-python-sqlalchemy-service/source/requirements.txt

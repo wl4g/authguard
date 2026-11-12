@@ -214,9 +214,9 @@ file and cloud-provider variants are documented in the
 ```bash
 export AUTHGUARD_NAMESPACE=authguard
 export AUTHGUARD_SECRET_FILE=authguard-secrets.env
-cp deploy/helm/authguard/bootstrap/authguard-secrets.env.example "$AUTHGUARD_SECRET_FILE"
+cp deploy/helm/authguard/bootstrap/authguard-secret.env.example "$AUTHGUARD_SECRET_FILE"
 # Replace every placeholder with a production secret value.
-deploy/helm/authguard/bootstrap/k8s-secrets-setup.sh \
+deploy/helm/authguard/bootstrap/setup-secret-k8s.sh \
   --namespace "$AUTHGUARD_NAMESPACE" --secret-file "$PWD/$AUTHGUARD_SECRET_FILE"
 ```
 

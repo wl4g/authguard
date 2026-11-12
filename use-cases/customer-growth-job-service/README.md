@@ -45,19 +45,22 @@ resign-JWT Authguard-origin boundary inside a business microservice.
 customer-growth-job-service/
   deploy/                              horizontal service/component ownership
     <component>/
-      source/                          complete mock service source and tests, when built locally
+      source/                          deployable mock service implementation only
       Dockerfile                       buildable component only; upstream middleware uses pinned images
       docker-compose.yaml              component-owned Compose service
       helm/                            component-owned Chart, values and templates
-    authguard/source/                  auditable AuthGuard YAML, scenarios and signing keys
+    authguard/config/                  AuthGuard deployment overrides and E2E signing keys
     authguard/Dockerfile                link to the production server Dockerfile
     postgresql/source/init.sql         shared SQL seed data
   verifier/                            vertical scenario ownership
     context.py                         VerificationContext and shared runtime/result contract
+    scenarios.json                     shared verification inputs and expected outcomes
     infra/s00..s03_*.py
     authn/s10..s15_*.py
     authz/s20_*.py, s26_*.py
-    sdk/s21..s25_*.py
+    sdk/s21..s25_*.py                  language scenario verifiers
+    sdk/s21_sqlx_test.go, s22_sqlx.rs   native Go/Rust verification drivers
+    sdk/jdbc/, sdk/jpa/                Java verification sources
     web/s30..s31_*.py
     otel/s40_metrics.py, s41_tracing.py, s42_logs.py
   util/
@@ -76,8 +79,20 @@ customer-growth-job-service/
   requirements.txt
 ```
 
-Each locally built mock business service keeps its full implementation and tests in `source/`, beside its own Dockerfile, Compose definition and Helm Chart. Configuration-only middleware also keeps custom input under `source/`; pinned upstream images do not need empty source trees or wrapper Dockerfiles. All five consume the same SQL and JSON files; language-local
-copies of business test data are intentionally forbidden.
+Each locally built mock business service keeps only its deployable implementation
+in `source/`, beside its Dockerfile, Compose definition and Helm Chart.
+Configuration-only middleware keeps its custom input under `source/`; AuthGuard
+deployment overrides and test signing keys live under `deploy/authguard/config/`.
+
+All acceptance checks live under `verifier/`. Service sources contain no `tests/`
+or Java `src/test/` directory. Native SDK drivers belong to scenarios 21–25;
+Java loads its external verification sources through `-De2e.verifier=true`.
+All five drivers read `verifier/scenarios.json` and the shared PostgreSQL SQL
+input. Language-local copies are forbidden.
+
+Root `make test-go`, `test-python`, and `test-java` run the product adapters only.
+Use-case verification runs through `runner.py`, directly or through `make e2e`,
+`e2e-k8s`, and `e2e-docker`.
 
 The canonical resource shape is:
 
@@ -94,8 +109,8 @@ secure transport, HTTP method, MFA, subject claims, combined conditions, and
 missing trusted context; unavailable attributes fail closed.
 
 These business scenarios complement, rather than duplicate, the adapter test
-matrix. Each Java, Go, Python, and Rust SDK independently executes the same 42
-contract scenarios: 18 request-access/filter/resolver cases and 24 URN parsing,
+matrix. Each Java, Go, Python, and Rust SDK independently executes the same 46
+contract scenarios: 22 request-access/filter/resolver cases and 24 URN parsing,
 allow/deny SQL compilation, codec, and action-aware scope cases.
 
 ## Run
@@ -151,16 +166,45 @@ explicitly; set `AUTHGUARD_E2E_KUBERNETES_CLUSTER` when an explicit kind or
 K3d target is not encoded in the current context. Host-containerd loading is
 only selected when the active Kubernetes node resolves to the local host.
 
-Kubernetes builds/pulls target the node's `linux/arm64` or `linux/amd64` platform;
-cached images of a different architecture are not accepted as matching tags.
-An Aliyun mirror may contain only one architecture even if its upstream is
-multi-platform. Check its manifests before running the full suite on ARM64.
-The pinned Agave 3.1.14 Dockerfile currently requires an amd64 release asset:
-the complete wallet suite needs compatible ARM64 artifacts or an amd64 VM.
-For a VM with verified x86_64 emulation (Rosetta or QEMU/binfmt), explicitly set
-`AUTHGUARD_E2E_PLATFORM=linux/amd64` to build/pull and run the complete amd64
-topology on an arm64 node. The runner does not silently change platforms or
-skip wallet scenarios.
+The image policy is centralized in `util/images.py`. macOS, Linux and Windows
+use Linux container engines and select **`linux/amd64` for every normal service**,
+including on ARM64 nodes with instruction translation enabled. Solana on macOS is
+the sole native ARM64 exception. The loader never changes the default platform
+back to the Kubernetes node architecture.
+
+| Host | Network | Solana reference | Solana platform | Other images |
+| --- | --- | --- | --- | --- |
+| macOS | IN_GFW / NON_GFW | `registry.cn-shenzhen.aliyuncs.com/wl4g/anza_solana:3.1.14-arm64` | `linux/arm64` | `linux/amd64` |
+| Linux / Windows | IN_GFW | `registry.cn-shenzhen.aliyuncs.com/wl4g/anza_solana:3.1.14` | `linux/amd64` | `linux/amd64` |
+| Linux / Windows | NON_GFW | `docker.io/anzaxyz/agave:v3.1.14` | `linux/amd64` | `linux/amd64` |
+
+The macOS Solana mirror is the explicit exception in both regions, matching the
+AgentVault audited image policy. To use the already-loaded short tag instead,
+set `AUTHGUARD_E2E_SOLANA_IMAGE=solana:3.1.14-arm64`. This is a local alias; the
+runner requires it to be preloaded and does not try to download a nonexistent
+Docker Hub `library/solana` image. `AUTHGUARD_E2E_SOLANA_PLATFORM` is exported by
+the matrix and consumed by Compose, pull/cache checks and containerd imports.
+
+IN_GFW resolves dependencies/build bases through Aliyun; NON_GFW resolves their
+official Docker Hub, GHCR or Quay repositories. Anvil uses the pinned official
+`ghcr.io/foundry-rs/foundry:v1.7.1` image overseas, with an explicit `anvil`
+entrypoint. Test application images are local build outputs tagged under the
+selected Aliyun/GHCR namespace. Explicit CI image overrides remain supported.
+The normal E2E build does not rebuild Anvil or Solana from source.
+Aliyun Python uses `python:3.12-slim-amd64`; the existing ARM64-only
+`python:3.12-slim` tag is preserved for other consumers.
+
+`deploy/solana/Dockerfile` is an exact copy of the audited AgentVault Dockerfile.
+For an explicit source build, its context must be a clean official Agave checkout
+including `.git`, at the pinned version/revision. `RUST_BUILDER_IMAGE` and
+`RUNTIME_IMAGE` are supplied by the matrix as the common Rust 1.99.1 Slim and
+Debian Trixie Slim bases; the Dockerfile retains source and dependency lockfiles
+in the output image. A macOS build through `util/images.py` selects ARM64 for
+this component without changing the other E2E images. Follow the audited
+Dockerfile example with `E2E_IMAGE_NETWORK=NON_GFW` for an ARM64 source build:
+the current Aliyun Rust/Debian base tags contain AMD64 only. The normal E2E
+uses the already-published native ARM64 Solana image and does not require
+this expensive source build.
 
 Each round removes and recreates an `e2e-` namespace and installs component-scoped Helm releases.
 The normal Customer Growth support/workload release uses the business Chart's
@@ -235,7 +279,7 @@ assertions, but never bearer tokens, client secrets, or LDAP bind credentials.
 
 ### Deterministic realm signing key
 
-The realm imports a fixed RSA key pair (see `deploy/authguard/source/jwt-keys/`) through the
+The realm imports a fixed RSA key pair (see `deploy/authguard/config/jwt-keys/`) through the
 realm `keys[]` signing data instead of letting Keycloak generate one at first start.
 The paired public JWKS is rendered as a ConfigMap by the support chart, and the
 Authguard SecurityPolicy consumes it through `localJWKS.existingConfigMap`, so
@@ -330,8 +374,8 @@ shared verification state/results and evidence clients, not deployment recipes.
 The process helper owns the common subprocess/runtime contract.
 
 Both `IN_GFW=true|false` and `NON_GFW=true|false` are accepted by the runner/image
-matrix and Make entry points; `AUTHGUARD_E2E_IMAGE_SOURCE=aliyun|global` remains the
-explicit override. Each deployment resolves its image catalog from the current
+matrix and Make entry points; `E2E_IMAGE_NETWORK=IN_GFW|NON_GFW` is also accepted;
+`AUTHGUARD_E2E_IMAGE_SOURCE=aliyun|global` remains the explicit override. Each deployment resolves its image catalog from the current
 environment, rather than freezing a catalog during module import.
 
 Metrics read the management port and path from `etc/authguard.yaml`, retain the

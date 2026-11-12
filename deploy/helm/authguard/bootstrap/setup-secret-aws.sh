@@ -3,7 +3,7 @@
 # role, and the Helm values required by AuthGuard's AWS CSI integration.
 
 set -Eeuo pipefail
-source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/setup-secret-common.sh"
 
 AWS_PROFILE_NAME="${AWS_PROFILE:-default}"
 AWS_REGION_NAME="${AWS_REGION:-ap-southeast-1}"
@@ -17,7 +17,7 @@ ENABLE_POD_IDENTITY=true
 
 usage() {
   cat <<'EOF'
-Usage: aws-secrets-setup.sh [OPTIONS]
+Usage: setup-secret-aws.sh [OPTIONS]
 
 Create or update one AWS Secrets Manager secret whose value is the AuthGuard
 KEY=VALUE env-file. The script creates a least-privilege role and associates it

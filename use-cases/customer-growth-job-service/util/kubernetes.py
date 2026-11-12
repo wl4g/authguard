@@ -1,5 +1,6 @@
 """Disposable Kubernetes deployment lifecycle for the complete E2E suite."""
 from __future__ import annotations
+from util.images import E2EImagesDefinitions
 from util.process import E2EProcessHelper
 from contextlib import contextmanager
 import json
@@ -11,8 +12,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Iterator
-from typing import TYPE_CHECKING
+from typing import Iterator, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from verifier.context import VerificationContext
@@ -21,7 +21,6 @@ if TYPE_CHECKING:
 class E2EKubernetesDeployer(E2EProcessHelper.Deployment):
     """Own one disposable namespace and component-scoped Helm releases."""
 
-    PLATFORM_ENV = "E2E_PLATFORM"
     local_images = ()
 
     class _LocalImageLoader:
@@ -52,16 +51,10 @@ class E2EKubernetesDeployer(E2EProcessHelper.Deployment):
             self.cluster = cluster
             self.ctr_command = ctr_command
             self.node_platform = platform
-            self.platform = os.getenv(deployer.PLATFORM_ENV, platform)
-            allowed = {platform}
-            if platform == "linux/arm64":
-                allowed.add("linux/amd64")
-            if self.platform not in allowed:
-                raise RuntimeError(
-                    f"unsupported E2E platform {self.platform!r} for node {platform}"
-                )
-            if platform:
-                deployer.environment["DOCKER_DEFAULT_PLATFORM"] = self.platform
+            self.platform = deployer.environment.get(
+                "DOCKER_DEFAULT_PLATFORM", E2EImagesDefinitions.DEFAULT_PLATFORM
+            )
+            deployer.environment["DOCKER_DEFAULT_PLATFORM"] = self.platform
 
         @classmethod
         def detect(
@@ -254,25 +247,29 @@ class E2EKubernetesDeployer(E2EProcessHelper.Deployment):
 
         def cached_images(self) -> set[str]:
             if self.kind == "docker":
-                return set(
-                    self.deployer._run(
-                        (
-                            "docker",
-                            "image",
-                            "ls",
-                            "--format",
-                            "{{.Repository}}:{{.Tag}}",
-                        )
-                    ).output.splitlines()
+                return E2EImagesDefinitions.cache_references(
+                    set(
+                        self.deployer._run(
+                            (
+                                "docker",
+                                "image",
+                                "ls",
+                                "--format",
+                                "{{.Repository}}:{{.Tag}}",
+                            )
+                        ).output.splitlines()
+                    )
                 )
             if self.kind not in {"k3s", "containerd"}:
                 return set()
             if not self.ctr_command:
                 raise RuntimeError(f"{self.kind} image loader has no ctr command")
-            return set(
-                self.deployer._run(
-                    (*self.ctr_command, "-n", "k8s.io", "images", "list", "-q")
-                ).output.splitlines()
+            return E2EImagesDefinitions.cache_references(
+                set(
+                    self.deployer._run(
+                        (*self.ctr_command, "-n", "k8s.io", "images", "list", "-q")
+                    ).output.splitlines()
+                )
             )
 
         def import_image(self, image: str) -> None:
@@ -306,7 +303,7 @@ class E2EKubernetesDeployer(E2EProcessHelper.Deployment):
                 "images",
                 "import",
                 "--platform",
-                self.platform,
+                self.deployer.image_platform(image),
                 "-",
             )
             self.deployer._run(
@@ -320,6 +317,7 @@ class E2EKubernetesDeployer(E2EProcessHelper.Deployment):
             )
 
         def validate_image(self, image: str) -> None:
+            expected = self.deployer.image_platform(image)
             actual = self.deployer._run(
                 (
                     "docker",
@@ -330,9 +328,9 @@ class E2EKubernetesDeployer(E2EProcessHelper.Deployment):
                     image,
                 )
             ).output.strip()
-            if actual != self.platform:
+            if actual != expected:
                 raise RuntimeError(
-                    f"image {image} is {actual}, but the selected E2E platform is {self.platform}; pull/build that platform, or explicitly select linux/amd64 on an emulation-enabled VM"
+                    f"image {image} is {actual}, but the selected E2E platform is {expected}; pull or build the declared platform for this image"
                 )
 
         def remove_image(self, image: str) -> None:
@@ -410,7 +408,10 @@ class E2EKubernetesDeployer(E2EProcessHelper.Deployment):
             ),
             allowed_codes={0, 1, 125},
         )
-        if inspected.return_code != 0 or inspected.output.strip() != loader.platform:
+        if (
+            inspected.return_code != 0
+            or inspected.output.strip() != self.image_platform(image)
+        ):
             self._pull_image(image)
 
     def _import_image(self, image: str) -> None:
@@ -426,12 +427,15 @@ class E2EKubernetesDeployer(E2EProcessHelper.Deployment):
             ),
             allowed_codes={0, 1, 125},
         )
-        if inspected.return_code != 0 or inspected.output.strip() != loader.platform:
+        if (
+            inspected.return_code != 0
+            or inspected.output.strip() != self.image_platform(image)
+        ):
             cluster_images = loader.cached_images()
             if (
                 inspected.return_code != 0
                 and loader.kind != "docker"
-                and (image in cluster_images)
+                and (E2EImagesDefinitions.canonical_reference(image) in cluster_images)
             ):
                 self.details.append(f"reuse {loader.description} image: {image}")
                 return

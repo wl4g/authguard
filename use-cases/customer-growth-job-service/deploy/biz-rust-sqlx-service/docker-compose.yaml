@@ -19,7 +19,7 @@ services:
     - /tmp
     image: ${AUTHGUARD_E2E_RUST_SQLX_IMAGE:?use util/images.py}
     volumes:
-    - ../authguard/source/jwt-keys/resign-jwt-key.pub.pem:/etc/e2e/resign-jwt-public-key.pem:ro
+    - ../authguard/config/jwt-keys/resign-jwt-key.pub.pem:/etc/e2e/resign-jwt-public-key.pem:ro
     platform: ${AUTHGUARD_E2E_PLATFORM:-linux/amd64}
     build:
       context: ../../../..

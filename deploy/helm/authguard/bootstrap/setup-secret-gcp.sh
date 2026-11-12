@@ -3,7 +3,7 @@
 # Helm values required by AuthGuard's GCP Secrets Store CSI integration.
 
 set -Eeuo pipefail
-source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/setup-secret-common.sh"
 
 GCP_PROJECT_ID="${GCP_PROJECT_ID:-}"
 GCP_ACCOUNT="${GCP_ACCOUNT:-}"
@@ -17,7 +17,7 @@ ENABLE_WORKLOAD_IDENTITY=true
 
 usage() {
   cat <<'EOF'
-Usage: gcp-secrets-setup.sh --project PROJECT_ID --account ACCOUNT [OPTIONS]
+Usage: setup-secret-gcp.sh --project PROJECT_ID --account ACCOUNT [OPTIONS]
 
 Create or update one GCP Secret Manager secret whose value is the AuthGuard
 KEY=VALUE env-file. The script creates a least-privilege Google service account

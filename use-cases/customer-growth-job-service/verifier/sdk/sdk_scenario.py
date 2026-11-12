@@ -128,7 +128,7 @@ class ProjectVerifier:
     @staticmethod
     def _authorization_scenario_ids() -> tuple[str, ...]:
         scenario_data = json.loads(
-            E2EOtherDefinitions.AUTHGUARD_SCENARIOS_PATH.read_text(encoding="utf-8")
+            E2EOtherDefinitions.SCENARIOS_PATH.read_text(encoding="utf-8")
         )
         return tuple(
             (scenario["id"] for scenario in scenario_data["authz"]["scenarios"])

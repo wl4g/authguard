@@ -285,11 +285,11 @@ func authguardConfigPath(t *testing.T, name string) string {
 	if !ok {
 		t.Fatal("cannot resolve Go test source path")
 	}
-	component, file := "authguard", "scenarios.json"
+	relative := filepath.Join("verifier", "scenarios.json")
 	if name == "e2e-init.sql" {
-		component, file = "postgresql", "init.sql"
+		relative = filepath.Join("deploy", "postgresql", "source", "init.sql")
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", "..", "..", component, "source", file))
+	return filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", "..", relative))
 }
 
 func valueOrEmpty(value *string) string {

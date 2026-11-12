@@ -93,25 +93,41 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
                     "--build-arg",
                     f"HTTP_PROXY={container_proxy}",
                     "--build-arg",
+                    f"https_proxy={container_proxy}",
+                    "--build-arg",
+                    f"http_proxy={container_proxy}",
+                    "--build-arg",
                     f"MAVEN_PROXY_HOST={proxy_host}",
                     "--build-arg",
                     f"MAVEN_PROXY_PORT={parsed_proxy.port}",
+                )
+            if self.images.source == "aliyun":
+                build_args += (
+                    "--build-arg",
+                    "DEBIAN_MIRROR=http://mirrors.aliyun.com",
+                    "--build-arg",
+                    "GOPROXY=https://goproxy.cn,direct",
+                    "--build-arg",
+                    "MAVEN_MIRROR_URL=https://maven.aliyun.com/repository/central",
+                    "--build-arg",
+                    "PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple",
+                    "--build-arg",
+                    "NO_PROXY=mirrors.aliyun.com,mirrors.cloud.aliyuncs.com,goproxy.cn",
+                    "--build-arg",
+                    "no_proxy=mirrors.aliyun.com,mirrors.cloud.aliyuncs.com,goproxy.cn",
                 )
             use_prebuilt_images = os.getenv(
                 "AUTHGUARD_E2E_USE_PREBUILT_IMAGES", "false"
             ).lower() in {"1", "true", "yes"}
             if use_prebuilt_images:
-                if (
-                    self.image_references["authguard"]
-                    == E2EImagesDefinitions.DEFAULT_AUTHGUARD_IMAGE
-                    or self.image_references["web"]
-                    == E2EImagesDefinitions.DEFAULT_AUTHGUARD_WEB_IMAGE
+                if not os.getenv("AUTHGUARD_E2E_AUTHGUARD_IMAGE") or not os.getenv(
+                    "AUTHGUARD_E2E_WEB_IMAGE"
                 ):
                     raise ValueError(
                         "prebuilt E2E mode requires AUTHGUARD_E2E_AUTHGUARD_IMAGE and AUTHGUARD_E2E_WEB_IMAGE"
                     )
-                self._pull_image(self.image_references["authguard"])
-                self._pull_image(self.image_references["web"])
+                self._ensure_local_image(self.image_references["authguard"])
+                self._ensure_local_image(self.image_references["web"])
             else:
                 self._run(
                     (
@@ -162,29 +178,6 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
                     ),
                     cwd=E2EOtherDefinitions.PROJECT_ROOT,
                 )
-            if self.images.local_chain_images:
-                chain_builds = (
-                    (self.images.anvil, self.deploy_dir / "anvil" / "Dockerfile"),
-                    (self.images.solana, self.deploy_dir / "solana" / "Dockerfile"),
-                )
-                for image, dockerfile in chain_builds:
-                    self._run(
-                        (
-                            "docker",
-                            "build",
-                            "--network=host",
-                            "--pull=false",
-                            *build_args,
-                            "-f",
-                            str(dockerfile),
-                            "--build-arg",
-                            f"RUST_IMAGE={self.environment['RUST_IMAGE']}",
-                            "-t",
-                            image,
-                            str(dockerfile.parent),
-                        ),
-                        cwd=E2EOtherDefinitions.PROJECT_ROOT,
-                    )
             for component, image in self.workload_images.items():
                 service_dir = (
                     self.deploy_dir
@@ -243,7 +236,6 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
     class KubernetesDeployment(Deployment, E2EKubernetesDeployer):
         IMAGE_LOADER_ENV = "AUTHGUARD_E2E_KUBERNETES_IMAGE_LOADER"
         CLUSTER_ENV = "AUTHGUARD_E2E_KUBERNETES_CLUSTER"
-        PLATFORM_ENV = "AUTHGUARD_E2E_PLATFORM"
 
         def __init__(self, context: VerificationContext) -> None:
             super().__init__(context)
@@ -355,7 +347,10 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
             loader = self._local_image_loader()
             cluster_images = loader.cached_images()
             for image in self.images.pullable_images:
-                if image in cluster_images and loader.kind != "docker":
+                if (
+                    E2EImagesDefinitions.canonical_reference(image) in cluster_images
+                    and loader.kind != "docker"
+                ):
                     self.details.append(f"reuse {loader.description} image: {image}")
                     continue
                 self._ensure_local_image(image)
@@ -366,7 +361,6 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
                 *self.workload_images.values(),
                 self.image_references["mock-idp"],
                 self.image_references["web"],
-                *self.images.local_chain_images,
             ):
                 self._import_image(image)
 
@@ -377,7 +371,6 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
                 *self.workload_images.values(),
                 self.image_references["mock-idp"],
                 self.image_references["web"],
-                *self.images.local_chain_images,
             ):
                 loader.remove_image(image)
 
@@ -1633,7 +1626,7 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
                 "-n",
                 self.namespace,
                 "-l",
-                "app.kubernetes.io/name=redis-cluster",
+                f"app.kubernetes.io/instance={E2EOtherDefinitions.COMPONENTS['redis']}",
                 "-o",
                 "jsonpath={.items[0].metadata.name}",
             )
@@ -1702,7 +1695,7 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
         if unexpected:
             raise RuntimeError(f"unexpected runtime images: {sorted(unexpected)}")
         self.details.append(
-            f"all dependency images use the {self.images.source} source and AuthGuard uses its configured immutable runtime and Web images"
+            f"dependency images use the {self.images.source} matrix with per-image platforms; configured AuthGuard and Web references are preserved"
         )
 
     def _verify_zero_container_restarts(self) -> None:

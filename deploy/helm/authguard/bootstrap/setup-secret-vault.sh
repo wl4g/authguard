@@ -3,7 +3,7 @@
 # role, and Helm values. Cluster-wide Vault auth configuration stays platform-owned.
 
 set -Eeuo pipefail
-source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/setup-secret-common.sh"
 
 VAULT_KV_MOUNT="${VAULT_KV_MOUNT:-kv}"
 VAULT_SECRET_PATH="${VAULT_SECRET_PATH:-authguard-secrets}"
@@ -15,7 +15,7 @@ ENABLE_KV_MOUNT=true
 
 usage() {
   cat <<'EOF'
-Usage: vault-secrets-setup.sh [OPTIONS]
+Usage: setup-secret-vault.sh [OPTIONS]
 
 Write the AuthGuard KEY=VALUE env-file to a Vault KV v2 secret, grant a
 least-privilege policy, create the Kubernetes auth role, and write a non-secret

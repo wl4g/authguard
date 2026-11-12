@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 
 readonly BOOTSTRAP_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-readonly SECRET_TEMPLATE="${BOOTSTRAP_DIR}/authguard-secrets.env.example"
+readonly SECRET_TEMPLATE="${BOOTSTRAP_DIR}/authguard-secret.env.example"
 
 AUTHGUARD_RELEASE="${AUTHGUARD_RELEASE:-authguard}"
 AUTHGUARD_NAMESPACE="${AUTHGUARD_NAMESPACE:-authguard}"

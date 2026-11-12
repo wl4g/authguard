@@ -41,7 +41,7 @@ public final class AuthorizationScenarioData {
 
   private static Path authguardConfigPath(String name) {
     String relative = name.equals("e2e-init.sql")
-        ? "deploy/postgresql/source/init.sql" : "deploy/authguard/source/scenarios.json";
+        ? "deploy/postgresql/source/init.sql" : "verifier/scenarios.json";
     Path current = Path.of("").toAbsolutePath().normalize();
     while (current != null) {
       Path local = current.resolve(relative);

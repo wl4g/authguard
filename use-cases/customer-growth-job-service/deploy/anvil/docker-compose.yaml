@@ -1,6 +1,7 @@
 services:
   anvil:
     image: ${AUTHGUARD_E2E_ANVIL_IMAGE:?use util/images.py}
+    entrypoint: [anvil]
     command:
     - --host=0.0.0.0
     - --port=8545

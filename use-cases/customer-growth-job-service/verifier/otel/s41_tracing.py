@@ -34,7 +34,7 @@ class E2ES41TracingVerifier(BaseVerifier):
         expected = {
             "authguard-authn",
             "authguard-authz",
-            *set(E2EImagesDefinitions.WORKLOAD_IMAGES),
+            *set(E2EImagesDefinitions.WORKLOADS),
         }
         with self._forward_service(self.jaeger_service, 16686) as port:
             jaeger = self._jaeger_query(port)
@@ -59,7 +59,7 @@ class E2ES41TracingVerifier(BaseVerifier):
             )
         if self.context.deployer == "kubernetes":
             deployments = self.infrastructure.resource("deployments")["items"]
-            for component in E2EImagesDefinitions.WORKLOAD_IMAGES:
+            for component in E2EImagesDefinitions.WORKLOADS:
                 name = self.workload_service(component)
                 deployment = next(
                     (d for d in deployments if d["metadata"]["name"] == name), None
@@ -76,10 +76,10 @@ class E2ES41TracingVerifier(BaseVerifier):
                         )
         else:
             ids = self.infrastructure._compose(
-                "ps", "-q", *E2EImagesDefinitions.WORKLOAD_IMAGES
+                "ps", "-q", *E2EImagesDefinitions.WORKLOADS
             ).output.split()
             containers = json.loads(self._run(("docker", "inspect", *ids)).output)
-            if len(containers) != len(E2EImagesDefinitions.WORKLOAD_IMAGES):
+            if len(containers) != len(E2EImagesDefinitions.WORKLOADS):
                 raise RuntimeError("missing traced Docker workloads")
             for container in containers:
                 if "OTEL_TRACES_SAMPLER=always_on" not in container["Config"]["Env"]:
