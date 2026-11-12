@@ -16,12 +16,12 @@ RUN set -eu; \
       -e "s|@MAVEN_PROXY_ACTIVE@|${proxy_active}|g" \
       -e "s|@MAVEN_MIRROR_URL@|${MAVEN_MIRROR_URL}|g" \
       /workspace/maven/settings.xml > /workspace/maven-settings-active.xml
-COPY src/adapters/java /workspace/adapter
+COPY src/sdk/java /workspace/sdk
 RUN --mount=type=cache,id=authguard-growth-maven,target=/root/.m2,sharing=locked \
-    mvn -q -s /workspace/maven-settings-active.xml -f /workspace/adapter/pom.xml -DskipTests install
+    mvn -q -s /workspace/maven-settings-active.xml -f /workspace/sdk/pom.xml -Dmaven.test.skip=true install
 COPY use-cases/customer-growth-job-service/deploy/biz-springboot-jpa-service/source /workspace/service
 RUN --mount=type=cache,id=authguard-growth-maven,target=/root/.m2,sharing=locked \
-    mvn -q -s /workspace/maven-settings-active.xml -f /workspace/service/pom.xml -DskipTests package
+    mvn -q -s /workspace/maven-settings-active.xml -f /workspace/service/pom.xml -Dmaven.test.skip=true package
 
 FROM ${JAVA_IMAGE}
 WORKDIR /app

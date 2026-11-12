@@ -124,7 +124,7 @@ jobs:
         with:
           go-version: "1.24.x"
           cache-dependency-path: |
-            src/adapters/golang/go.sum
+            src/sdk/golang/go.sum
             use-cases/customer-growth-job-service/deploy/biz-golang-sqlx-service/source/go.sum
 
       - name: Install Java
@@ -229,24 +229,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Install pinned Rust toolchain
-        run: cargo --version
-
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-
-      - name: Install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.24.x"
-
-      - name: Install Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "21"
 
       - name: Install Python
         uses: actions/setup-python@v5
@@ -329,24 +315,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Install pinned Rust toolchain
-        run: cargo --version
-
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-
-      - name: Install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.24.x"
-
-      - name: Install Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "21"
 
       - name: Install Python
         uses: actions/setup-python@v5

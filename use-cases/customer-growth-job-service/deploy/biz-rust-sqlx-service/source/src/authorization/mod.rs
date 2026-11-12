@@ -1,4 +1,4 @@
-use authguard_adapter_rust::model::{PathMap, ResourceSqlMapping, SegmentMap};
+use authguard_sdk_rust::sdk::model::{PathMap, ResourceSqlMapping, SegmentMap};
 
 pub mod resign_token;
 

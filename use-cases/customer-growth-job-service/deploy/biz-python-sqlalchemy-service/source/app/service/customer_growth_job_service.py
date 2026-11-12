@@ -9,8 +9,8 @@ from app.dto.customer_growth_job_dto import (
 )
 from app.entity.customer_growth_job_entity import CustomerGrowthJobEntity, CustomerGrowthJobQueryCriteria
 from app.repository.customer_growth_job_repository import CustomerGrowthJobRepository
-from authguard_adapter.model import SqlScope
-from authguard_adapter.util import current_scope_for_action
+from sdk.model import SqlScope
+from sdk.util import current_scope_for_action
 
 
 class CustomerGrowthJobService:

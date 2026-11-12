@@ -9,7 +9,7 @@ use crate::{
     entity::{CustomerGrowthJobEntity, CustomerGrowthJobQueryCriteria},
     repository::CustomerGrowthJobRepository,
 };
-use authguard_adapter_rust::{util, RequestAccess};
+use authguard_sdk_rust::sdk::{util, RequestAccess};
 
 #[derive(Debug, Clone)]
 pub struct CustomerGrowthJobService {
@@ -113,7 +113,7 @@ impl CustomerGrowthJobService {
 fn scope_for_action(
     access: &RequestAccess,
     action: &str,
-) -> anyhow::Result<authguard_adapter_rust::model::SqlScope> {
+) -> anyhow::Result<authguard_sdk_rust::sdk::model::SqlScope> {
     let mapping = customer_growth_job_mapping();
     Ok(util::scope_for_action(access, action, &mapping)?)
 }

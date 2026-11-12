@@ -1,8 +1,8 @@
 package com.authguard.usecases.authorization;
 
-import com.authguard.adapter.model.AuthguardTypes.PathMap;
-import com.authguard.adapter.model.AuthguardTypes.ResourceSqlMapping;
-import com.authguard.adapter.model.AuthguardTypes.SegmentMap;
+import com.wl4g.authguard.sdk.model.AuthguardTypes.PathMap;
+import com.wl4g.authguard.sdk.model.AuthguardTypes.ResourceSqlMapping;
+import com.wl4g.authguard.sdk.model.AuthguardTypes.SegmentMap;
 import java.util.List;
 
 public final class CustomerGrowthJobResourceMappings {

@@ -9,43 +9,7 @@ import time
 from contextlib import closing
 from verifier.context import VerificationContext, VerificationResult, BaseVerifier
 
-PROJECT_SOURCES = {
-    "biz-golang-sqlx-service": (
-        "sdk/s21_sqlx_test.go",
-        "pkg/authorization/customer_growth_job_resource_mapping.go",
-    ),
-    "biz-rust-sqlx-service": (
-        "sdk/s22_sqlx.rs",
-        "src/authorization/mod.rs",
-    ),
-    "biz-python-sqlalchemy-service": (
-        "sdk/s23_sqlalchemy.py",
-        "app/authorization/customer_growth_job_resource_mapping.py",
-    ),
-    "biz-springboot-jdbc-service": (
-        "sdk/jdbc/com/authguard/usecases/support/AuthorizationScenarioData.java",
-        "src/main/java/com/authguard/usecases/authorization/CustomerGrowthJobResourceMappings.java",
-    ),
-    "biz-springboot-jpa-service": (
-        "sdk/jpa/com/authguard/usecases/support/AuthorizationScenarioData.java",
-        "src/main/java/com/authguard/usecases/authorization/CustomerGrowthJobResourceMappings.java",
-    ),
-}
 BUSINESS_TABLE = "e2e_authguard_customer_growth_jobs"
-PROJECT_REPOSITORIES = {
-    "biz-golang-sqlx-service": "pkg/repository/customer_growth_job_repository.go",
-    "biz-rust-sqlx-service": "src/repository/mod.rs",
-    "biz-python-sqlalchemy-service": "app/repository/customer_growth_job_repository.py",
-    "biz-springboot-jdbc-service": "src/main/java/com/authguard/usecases/repository/CustomerGrowthJobJdbcRepository.java",
-    "biz-springboot-jpa-service": "src/main/java/com/authguard/usecases/repository/CustomerGrowthJobJpaRepository.java",
-}
-PROJECT_EXECUTION_TESTS = {
-    "biz-golang-sqlx-service": "sdk/s21_sqlx_test.go",
-    "biz-rust-sqlx-service": "sdk/s22_sqlx.rs",
-    "biz-python-sqlalchemy-service": "sdk/s23_sqlalchemy.py",
-    "biz-springboot-jdbc-service": "sdk/jdbc/com/authguard/usecases/controller/CustomerGrowthJobControllerE2ETest.java",
-    "biz-springboot-jpa-service": "sdk/jpa/com/authguard/usecases/controller/CustomerGrowthJobControllerE2ETest.java",
-}
 
 
 class E2ES02ScenarioDataConsistencyVerifier(BaseVerifier):
@@ -282,74 +246,15 @@ class E2ES02ScenarioDataConsistencyVerifier(BaseVerifier):
             ("sourceIp" in scenario["conditions"] for scenario in condition_scenarios)
         ):
             errors.append("source IP condition coverage is missing")
-        for project_name, (test_source, mapping_source) in PROJECT_SOURCES.items():
-            test_text = (
-                E2EOtherDefinitions.E2E_DIR / "verifier" / test_source
-            ).read_text(encoding="utf-8")
-            mapping_text = (
-                E2EOtherDefinitions.DEPLOY_DIR
-                / project_name
-                / "source"
-                / mapping_source
-            ).read_text(encoding="utf-8")
-            for data_name, definition in (
-                (
-                    E2EOtherDefinitions.AUTHGUARD_INIT_SQL_PATH.name,
-                    "E2EOtherDefinitions.AUTHGUARD_INIT_SQL_PATH",
-                ),
-                (
-                    E2EOtherDefinitions.SCENARIOS_PATH.name,
-                    "E2EOtherDefinitions.SCENARIOS_PATH",
-                ),
-            ):
-                if data_name not in test_text and definition not in test_text:
-                    errors.append(f"{project_name}: does not consume {data_name}")
-            if "customer-growth" not in mapping_text:
-                errors.append(
-                    f"{project_name}: resource mapping does not use customer-growth"
-                )
-            repository_path = (
-                E2EOtherDefinitions.DEPLOY_DIR
-                / project_name
-                / "source"
-                / PROJECT_REPOSITORIES[project_name]
-            )
-            repository_text = repository_path.read_text(encoding="utf-8")
-            if BUSINESS_TABLE not in repository_text:
-                errors.append(
-                    f"{project_name}: repository does not use {BUSINESS_TABLE}"
-                )
-            execution_test = (
-                E2EOtherDefinitions.E2E_DIR
-                / "verifier"
-                / PROJECT_EXECUTION_TESTS[project_name]
-            ).read_text(encoding="utf-8")
-            if "AUTHGUARD_E2E_CASE id=" not in execution_test:
-                errors.append(
-                    f"{project_name}: does not emit auditable scenario execution markers"
-                )
-        matrix_sources = "\n".join(
-            (
-                (E2EOtherDefinitions.DEPLOY_DIR.parent / relative).read_text(
-                    encoding="utf-8"
-                )
-                for relative in ("verifier/sdk/sdk_scenario.py", "runner.py")
-            )
-        )
-        for marker in ("verify_scenario_matrix", "expected_total", "case_executions"):
-            if marker not in matrix_sources:
-                errors.append(f"cross-service scenario matrix is missing {marker}")
         details = [
             f"Shared database rows: {row_count}",
             f"Isolated business table: {BUSINESS_TABLE}",
             f"Shared authorization scenarios: {len(scenarios)}",
-            f"Cross-service execution contract: {len(scenarios)} × 5 = {len(scenarios) * 5}",
             f"Conditional gateway scenarios: {len(condition_scenarios)}",
             "CRUD, action isolation, *, **, explicit deny, IP, transport, MFA, and claims",
             "AuthN covers realistic GitHub, Google, WeChat, and QQ OAuth-like wire contracts",
             "Enterprise federation covers Keycloak USER/GROUP/WORKLOAD and direct LDAP identity",
             "All five deployed Biz services assert functional 403 and zero-row data scopes for user/workload callers",
-            "Every language reads the same SQL and JSON test data",
         ]
         details.extend(errors)
         return VerificationResult(

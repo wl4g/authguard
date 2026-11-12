@@ -1,7 +1,7 @@
 package com.authguard.usecases.service;
 
-import com.authguard.adapter.model.AuthguardTypes.SqlScope;
-import com.authguard.adapter.util.AuthguardUtils;
+import com.wl4g.authguard.sdk.model.AuthguardTypes.SqlScope;
+import com.wl4g.authguard.sdk.util.AuthguardUtils;
 import com.authguard.usecases.authorization.CustomerGrowthJobResourceMappings;
 import com.authguard.usecases.dto.CustomerGrowthJobDto;
 import com.authguard.usecases.dto.CustomerGrowthJobSearchRequest;

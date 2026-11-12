@@ -67,7 +67,7 @@ src/common/src/cache          Memory/Redis IAuthorizationCache（仅 opaque scop
 src/common/src/utils      AuthN/AuthZ 共用的 HTTP 匹配、JWT 等工具
 src/common/src/apm        AuthN/AuthZ 共用的 OTel、Prometheus 与运行时诊断
 migrations                单一 IAM datastore 的顶层 DDL/DML（含 AuthN identity binding 与 AuthZ policy）
-src/adapters             Java、Go、Python、Rust workload SDK
+src/sdk             Java、Go、Python、Rust workload SDK
 ```
 
 `model/` 只保存协议无关的 IAM 实体模型；HTTP DTO 与业务流程归属 AuthZ handler，SQL

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.engine import Connection
 
-from authguard_adapter.model import SqlScope
+from sdk.model import SqlScope
 from app.entity.customer_growth_job_entity import CustomerGrowthJobEntity, CustomerGrowthJobQueryCriteria
 
 

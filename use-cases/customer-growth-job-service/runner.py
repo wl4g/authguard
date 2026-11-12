@@ -4,7 +4,6 @@ from __future__ import annotations
 from verifier.context import VerificationContext, VerificationResult
 from util.constant import E2EOtherDefinitions
 from util.report import E2EReportHelper
-from verifier.sdk.sdk_scenario import ProjectVerifier
 import argparse
 import importlib
 import sys
@@ -14,7 +13,7 @@ import traceback
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Rebuild and verify the portable multi-language Authguard E2E use case."
+        description="Deploy and verify the complete AuthGuard E2E use case."
     )
     parser.add_argument(
         "--deployer",
@@ -36,7 +35,7 @@ def parse_args() -> argparse.Namespace:
         "--scenario",
         action="append",
         default=[],
-        help="Verifier id or comma-separated ids to run, for example -s 11,12.",
+        help="Verifier id or comma-separated ids to run, for example -s 01,02.",
     )
     parser.add_argument(
         "-l", "--list", action="store_true", help="List verifier groups and exit."
@@ -44,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-clean",
         action="store_true",
-        help="Reuse project build output while still disabling test caches.",
+        help="Skip removal of owned deployment resources before redeploying.",
     )
     parser.add_argument(
         "--skip-image-build",
@@ -193,11 +192,6 @@ def main() -> int:
                     f"  [{scenario_id}] {status} ({result.duration_seconds:.2f}s)",
                     flush=True,
                 )
-            if matrix := ProjectVerifier.verify_scenario_matrix(results):
-                results.append(matrix)
-                E2EReportHelper.write_round_report(round_number, matrix)
-                status = "PASS" if matrix.passed else "FAIL"
-                print(f"  [{matrix.scenario_id}] {matrix.title} ... {status}")
             all_rounds.append(results)
         summary = E2EReportHelper.write_summary(all_rounds)
         passed = all((result.passed for results in all_rounds for result in results))

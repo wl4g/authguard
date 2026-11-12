@@ -50,7 +50,6 @@ class VerificationResult:
     details: list[str] = field(default_factory=list)
     commands: list[CommandResult] = field(default_factory=list)
     evidence: list[EvidenceArtifact] = field(default_factory=list)
-    case_executions: tuple[str, ...] = ()
 
 
 T = TypeVar("T")

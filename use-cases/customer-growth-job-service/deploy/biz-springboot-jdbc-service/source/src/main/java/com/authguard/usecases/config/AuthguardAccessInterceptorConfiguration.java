@@ -1,8 +1,8 @@
 package com.authguard.usecases.config;
 
-import com.authguard.adapter.access.AuthguardAccess;
-import com.authguard.adapter.filter.AuthguardAccessInterceptor;
-import com.authguard.adapter.util.AuthguardUtils;
+import com.wl4g.authguard.sdk.access.AuthguardAccess;
+import com.wl4g.authguard.sdk.filter.AuthguardAccessInterceptor;
+import com.wl4g.authguard.sdk.util.AuthguardUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
@@ -13,7 +13,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 public class AuthguardAccessInterceptorConfiguration implements WebMvcConfigurer {
   private static final Logger AUTHGUARD_LOGGER =
-      LoggerFactory.getLogger("com.authguard.adapter.e2e");
+      LoggerFactory.getLogger("com.wl4g.authguard.sdk.e2e");
 
   public AuthguardAccessInterceptorConfiguration() {
     AuthguardUtils.configureLogger(

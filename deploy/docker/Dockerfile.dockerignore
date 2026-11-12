@@ -5,9 +5,9 @@ docs
 target
 **/target
 web
-src/adapters/golang
-src/adapters/java
-src/adapters/python
+src/sdk/golang
+src/sdk/java
+src/sdk/python
 use-cases
 **/__pycache__
 **/.pytest_cache

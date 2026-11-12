@@ -220,6 +220,17 @@ class E2ES26GatewayAuthorizationVerifier(BaseVerifier):
         self._expect_job_ids(
             f"{label}: empty data scope hides every seeded row", body, []
         )
+        self._verify_list_filters(
+            gateway_port,
+            host,
+            component,
+            {
+                "principal-direct-reader": direct_token,
+                "principal-token-editor": editor_token,
+                "principal-no-data-reader": no_data_token,
+            },
+            row_access_oracle,
+        )
         self._verify_row_access_matrix(
             gateway_port,
             host,
@@ -269,8 +280,11 @@ class E2ES26GatewayAuthorizationVerifier(BaseVerifier):
             json_body=created,
         )
         self._expect_status(f"{label}: authorized create", status, 200)
-        if json.loads(body)["job_id"] != created["job_id"]:
-            raise RuntimeError(f"{label}: authorized create returned the wrong job")
+        if json.loads(body) != created:
+            raise RuntimeError(
+                f"{label}: create response does not preserve the snake_case JSON fields"
+            )
+        self._verify_persisted_job(component, created["id"], created)
         status, body = self._http(
             gateway_port,
             host,
@@ -284,8 +298,16 @@ class E2ES26GatewayAuthorizationVerifier(BaseVerifier):
             },
         )
         self._expect_status(f"{label}: authorized update", status, 200)
-        if json.loads(body)["status"] != "PAUSED":
-            raise RuntimeError(f"{label}: authorized update did not persist")
+        updated = {
+            **created,
+            "display_name": "Monthly retention review v2",
+            "status": "PAUSED",
+        }
+        if json.loads(body) != updated:
+            raise RuntimeError(
+                f"{label}: update response does not preserve all JSON fields"
+            )
+        self._verify_persisted_job(component, created["id"], updated)
         status, _ = self._http(
             gateway_port,
             host,
@@ -294,6 +316,7 @@ class E2ES26GatewayAuthorizationVerifier(BaseVerifier):
             headers={"Authorization": f"Bearer {editor_token}"},
         )
         self._expect_status(f"{label}: authorized delete", status, 204)
+        self._verify_persisted_job(component, created["id"], None)
         status, _ = self._http(
             gateway_port,
             host,
@@ -355,6 +378,70 @@ class E2ES26GatewayAuthorizationVerifier(BaseVerifier):
             headers={"Authorization": f"Bearer {editor_token}"},
         )
         self._expect_status(f"{label}: rejected delete preserves row", status, 200)
+
+    def _verify_list_filters(
+        self,
+        gateway_port: int,
+        host: str,
+        component: str,
+        tokens: dict[str, str],
+        oracle: dict[str, frozenset[int]],
+    ) -> None:
+        """Check business query parameters against independent seed-row expectations."""
+        criteria = (
+            {"workspace_id": "customer-insights"},
+            {"project_id": "retention-analytics"},
+            {"status": "READY"},
+            {"owner_user_id": "growth-analyst"},
+            {
+                "workspace_id": "customer-insights",
+                "project_id": "retention-analytics",
+                "status": "PAUSED",
+                "owner_user_id": "growth-analyst",
+            },
+        )
+        with sqlite3.connect(":memory:") as database:
+            database.executescript(
+                E2EOtherDefinitions.AUTHGUARD_INIT_SQL_PATH.read_text()
+            )
+            for principal, token in tokens.items():
+                for filters in criteria:
+                    where = " AND ".join(f"{field} = ?" for field in filters)
+                    matching = {
+                        row[0]
+                        for row in database.execute(
+                            f"SELECT id FROM e2e_authguard_customer_growth_jobs WHERE {where}",
+                            tuple(filters.values()),
+                        )
+                    }
+                    status, body = self._http(
+                        gateway_port,
+                        host,
+                        "/customer-growth/jobs?" + parse.urlencode(filters),
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+                    label = f"{component}: {principal} query {parse.urlencode(filters)}"
+                    self._expect_status(label, status, 200)
+                    self._expect_job_ids(
+                        label, body, sorted(matching & oracle[principal])
+                    )
+
+    def _verify_persisted_job(
+        self, component: str, job_id: int, expected: dict | None
+    ) -> None:
+        """Validate each successful write in its real PostgreSQL schema."""
+        if component not in E2EImagesDefinitions.WORKLOADS:
+            raise ValueError(f"unknown workload {component}")
+        schema = f"e2e_authguard_customer_growth_{component.replace('-', '_')}"
+        query = (
+            "SELECT COALESCE(json_agg(row_to_json(job)), '[]'::json)::text FROM "
+            f"(SELECT * FROM {schema}.e2e_authguard_customer_growth_jobs WHERE id={int(job_id)}) AS job"
+        )
+        actual = json.loads(self.infrastructure.postgresql_query(query))
+        if actual != ([] if expected is None else [expected]):
+            raise RuntimeError(
+                f"{component}: PostgreSQL row {job_id} does not match the successful HTTP write"
+            )
 
     def _verify_create_denied_by_authz(
         self, gateway_port: int, read_token: str, editor_token: str

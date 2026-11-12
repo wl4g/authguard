@@ -1,6 +1,6 @@
 use std::{env, sync::Arc};
 
-use authguard_adapter_rust::{
+use authguard_sdk_rust::sdk::{
     GrpcAccessContextResolver, HeaderAccessContextResolver, HttpHeaderAccessFilter,
     IAccessContextResolver, GRPC_TARGET_ENV,
 };

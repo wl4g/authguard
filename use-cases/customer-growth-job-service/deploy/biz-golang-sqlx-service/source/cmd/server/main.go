@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"authguard/adapters/golang/access"
-	authfilter "authguard/adapters/golang/filter"
-	"authguard/adapters/golang/util"
+	"authguard/sdk/golang/pkg/sdk/access"
+	authfilter "authguard/sdk/golang/pkg/sdk/filter"
+	"authguard/sdk/golang/pkg/sdk/util"
 	"authguard/use-cases/customer-growth-job-service/deploy/biz-golang-sqlx-service/source/pkg/controller"
 	"authguard/use-cases/customer-growth-job-service/deploy/biz-golang-sqlx-service/source/pkg/dto"
 	"authguard/use-cases/customer-growth-job-service/deploy/biz-golang-sqlx-service/source/pkg/repository"

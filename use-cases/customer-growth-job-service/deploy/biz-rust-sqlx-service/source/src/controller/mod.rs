@@ -5,7 +5,7 @@ use crate::{
     },
     service::CustomerGrowthJobService,
 };
-use authguard_adapter_rust::RequestAccess;
+use authguard_sdk_rust::sdk::RequestAccess;
 
 pub mod http;
 

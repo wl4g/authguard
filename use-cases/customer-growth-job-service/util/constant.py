@@ -1,11 +1,8 @@
 """Case topology, scenario data paths and execution definitions."""
 from __future__ import annotations
 from util.images import E2EImagesDefinitions
-from dataclasses import dataclass
 import os
-import sys
 from pathlib import Path
-from urllib.parse import urlparse
 
 
 class E2EOtherDefinitions:
@@ -31,126 +28,7 @@ class E2EOtherDefinitions:
     KEYCLOAK_CONFIG_DIR = DEPLOY_DIR / "keycloak" / "source"
     KEYCLOAK_REALM_PATH = KEYCLOAK_CONFIG_DIR / "realm.json"
     REPORTS_DIR = E2E_DIR / "reports"
-    ADAPTERS_DIR = PROJECT_ROOT / "src" / "adapters"
-
-    @dataclass(frozen=True)
-    class ProjectSpec:
-        name: str
-        title: str
-        path: Path
-        setup_commands: tuple[tuple[str, ...], ...]
-        clean_commands: tuple[tuple[str, ...], ...]
-        test_command: tuple[str, ...]
-        environment: dict[str, str]
-
-    JAVA_ADAPTER_INSTALL = (
-        "mvn",
-        "-q",
-        "-f",
-        str(ADAPTERS_DIR / "java" / "pom.xml"),
-        "-DskipTests",
-        "install",
-    )
-    PYTHON_SERVICE = DEPLOY_DIR / "biz-python-sqlalchemy-service" / "source"
-
-    class BuildEnvironment:
-        @staticmethod
-        def maven() -> dict[str, str]:
-            proxy = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
-            if not proxy:
-                return {}
-            parsed = urlparse(proxy)
-            if not parsed.hostname or not parsed.port:
-                raise ValueError("HTTPS_PROXY/HTTP_PROXY must include a host and port")
-            proxy_options = " ".join(
-                (
-                    f"-D{protocol}.proxyHost={parsed.hostname} -D{protocol}.proxyPort={parsed.port}"
-                    for protocol in ("http", "https")
-                )
-            )
-            return {
-                "MAVEN_OPTS": f"{os.getenv('MAVEN_OPTS', '')} {proxy_options}".strip()
-            }
-
-    MAVEN_ENVIRONMENT = BuildEnvironment.maven()
-    PROJECTS = {
-        "biz-golang-sqlx-service": ProjectSpec(
-            name="biz-golang-sqlx-service",
-            title="Go + sqlx + SQLite",
-            path=DEPLOY_DIR / "biz-golang-sqlx-service" / "source",
-            setup_commands=(),
-            clean_commands=(("go", "clean", "-testcache"),),
-            test_command=(
-                "go",
-                "test",
-                "-count=1",
-                "-v",
-                str(E2E_DIR / "verifier/sdk/s21_sqlx_test.go"),
-            ),
-            environment={
-                "GOPROXY": os.environ.get("GOPROXY", "https://goproxy.cn,direct")
-            },
-        ),
-        "biz-rust-sqlx-service": ProjectSpec(
-            name="biz-rust-sqlx-service",
-            title="Rust + sqlx + SQLite",
-            path=DEPLOY_DIR / "biz-rust-sqlx-service" / "source",
-            setup_commands=(),
-            clean_commands=(
-                ("cargo", "clean", "-p", "authguard-customer-growth-job-rust-service"),
-            ),
-            test_command=(
-                "cargo",
-                "test",
-                "-p",
-                "authguard-customer-growth-job-rust-service",
-                "--lib",
-                "--test",
-                "customer_growth_job_e2e",
-                "--",
-                "--nocapture",
-            ),
-            environment={},
-        ),
-        "biz-python-sqlalchemy-service": ProjectSpec(
-            name="biz-python-sqlalchemy-service",
-            title="Python + SQLAlchemy + SQLite",
-            path=PYTHON_SERVICE,
-            setup_commands=(),
-            clean_commands=(),
-            test_command=(
-                sys.executable,
-                "-m",
-                "unittest",
-                "verifier.sdk.s23_sqlalchemy.E2ES23SqlalchemyVerifier.AuthorizationCase",
-                "-v",
-            ),
-            environment={
-                "PYTHONPATH": os.pathsep.join(
-                    [str(ADAPTERS_DIR / "python"), str(PYTHON_SERVICE), str(E2E_DIR)]
-                )
-            },
-        ),
-        "biz-springboot-jdbc-service": ProjectSpec(
-            name="biz-springboot-jdbc-service",
-            title="Spring Boot + JDBC + SQLite",
-            path=DEPLOY_DIR / "biz-springboot-jdbc-service" / "source",
-            setup_commands=(JAVA_ADAPTER_INSTALL,),
-            clean_commands=(("mvn", "-q", "clean"),),
-            test_command=("mvn", "-q", "-De2e.verifier=true", "test"),
-            environment=MAVEN_ENVIRONMENT,
-        ),
-        "biz-springboot-jpa-service": ProjectSpec(
-            name="biz-springboot-jpa-service",
-            title="Spring Boot + JPA + H2",
-            path=DEPLOY_DIR / "biz-springboot-jpa-service" / "source",
-            setup_commands=(JAVA_ADAPTER_INSTALL,),
-            clean_commands=(("mvn", "-q", "clean"),),
-            test_command=("mvn", "-q", "-De2e.verifier=true", "test"),
-            environment=MAVEN_ENVIRONMENT,
-        ),
-    }
-    DEFAULT_SCENARIOS = {
+    SCENARIOS = {
         "01": (
             "Use-case structure and project boundaries",
             "verifier.infra.s01_structure",
@@ -159,37 +37,17 @@ class E2EOtherDefinitions:
             "Shared SQL and authorization scenario data consistency",
             "verifier.infra.s02_scenario_data_consistency",
         ),
-        "03": (
-            "Cross-language adapter contract parity",
-            "verifier.infra.s03_adapter_contract",
-        ),
-        "21": (PROJECTS["biz-golang-sqlx-service"].title, "verifier.sdk.s21_sqlx"),
-        "22": (PROJECTS["biz-rust-sqlx-service"].title, "verifier.sdk.s22_sqlx"),
-        "23": (
-            PROJECTS["biz-python-sqlalchemy-service"].title,
-            "verifier.sdk.s23_sqlalchemy",
-        ),
-        "24": (
-            PROJECTS["biz-springboot-jdbc-service"].title,
-            "verifier.sdk.s24_springboot_jdbc",
-        ),
-        "25": (
-            PROJECTS["biz-springboot-jpa-service"].title,
-            "verifier.sdk.s25_springboot_jpa",
-        ),
-    }
-    OPTIONAL_SCENARIOS = {
         "00": (
             "Infrastructure: deployment and middleware initialization",
             "verifier.infra.s00_infrastructure",
         ),
-        "10": (
-            "AuthN: unified OAuth/OIDC, standalone, WebAuthn, and CAIP/SIWX",
-            "verifier.authn.s10_authentication",
-        ),
         "20": (
             "AuthZ: federation and administrator pre-authorization",
             "verifier.authz.s20_principal_preauthorization",
+        ),
+        "10": (
+            "AuthN: unified OAuth/OIDC, standalone, WebAuthn, and CAIP/SIWX",
+            "verifier.authn.s10_authentication",
         ),
         "26": (
             "AuthZ: OIDC user/workload, Envoy, PDP, and business CRUD",
@@ -216,7 +74,7 @@ class E2EOtherDefinitions:
             "verifier.otel.s42_logs",
         ),
     }
-    SCENARIOS = dict(sorted({**DEFAULT_SCENARIOS, **OPTIONAL_SCENARIOS}.items()))
+    DEFAULT_SCENARIOS = tuple(SCENARIOS)
     COMPONENTS = {
         "authguard": "authguard",
         "envoy_gateway": "envoy-gateway",

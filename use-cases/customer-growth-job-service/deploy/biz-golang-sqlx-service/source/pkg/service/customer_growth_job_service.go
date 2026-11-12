@@ -3,8 +3,8 @@ package service
 import (
 	"context"
 
-	"authguard/adapters/golang/access"
-	"authguard/adapters/golang/model"
+	"authguard/sdk/golang/pkg/sdk/access"
+	"authguard/sdk/golang/pkg/sdk/model"
 	"authguard/use-cases/customer-growth-job-service/deploy/biz-golang-sqlx-service/source/pkg/authorization"
 	"authguard/use-cases/customer-growth-job-service/deploy/biz-golang-sqlx-service/source/pkg/dto"
 	"authguard/use-cases/customer-growth-job-service/deploy/biz-golang-sqlx-service/source/pkg/entity"

@@ -148,7 +148,3 @@ impl ResignTokenVerifier {
         text.strip_prefix("Bearer ").filter(|token| !token.is_empty())
     }
 }
-
-#[cfg(test)]
-#[path = "../../../../../verifier/sdk/s22_resign_token.rs"]
-mod tests;

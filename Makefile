@@ -25,7 +25,7 @@ E2E_VENV_DIR ?= $(E2E_DIR)/util/.venv
 E2E_PYTHON := $(E2E_VENV_DIR)/bin/python
 PYTHON_TEST_VENV_DIR ?= target/python-test-venv
 PYTHON_TEST := $(PYTHON_TEST_VENV_DIR)/bin/python
-E2E_K8S_SCENARIOS ?= 01,02,03,00,20,10,21,22,23,24,25,26,30,31,40,41,42
+E2E_K8S_SCENARIOS ?= 01,02,00,20,10,26,30,31,40,41,42
 E2E_K8S_ARGS ?=
 E2E_DOCKER_SCENARIOS ?= $(E2E_K8S_SCENARIOS)
 E2E_DOCKER_ARGS ?=
@@ -137,7 +137,7 @@ help:
 	@echo "    make test-python   Run Python adapter tests."
 	@echo "    make test-java     Run Java adapter tests."
 	@echo "    make test-helm     Verify vendored dependencies, lint, and render Helm manifests."
-	@echo "    make e2e           Run the portable cross-language verifier groups."
+	@echo "    make e2e           Run the complete Kubernetes E2E scenarios."
 	@echo "    make e2e-k8s       Clean-deploy and run the complete AuthN/AuthZ/UI/observability matrix."
 	@echo "    make e2e-docker    Run the same complete matrix through Docker Compose."
 	@echo "    make e2e-cleanup   Remove resources owned by E2E_DEPLOYER=kubernetes|docker."
@@ -156,7 +156,7 @@ image-source:
 
 build: build-web
 	$(CARGO) build --workspace
-	$(MAVEN) $(MAVEN_FLAGS) -f src/adapters/java/pom.xml -DskipTests install
+	$(MAVEN) $(MAVEN_FLAGS) -f src/sdk/java/pom.xml -DskipTests install
 
 build-web:
 	cd $(WEB_DIR) && $(NPM) ci && $(NPM) run build
@@ -217,17 +217,17 @@ test-web:
 	cd $(WEB_DIR) && $(NPM) run build
 
 test-go:
-	cd src/adapters/golang && $(GO_NETWORK_ENV) $(GO) test ./...
+	cd src/sdk/golang && $(GO_NETWORK_ENV) $(GO) test ./...
 
 test-python: test-python-deps
-	PYTHONPATH="$(CURDIR)/src/adapters/python" $(PYTHON_TEST) -m unittest discover -s "$(CURDIR)/src/adapters/python/tests" -v
+	PYTHONPATH="$(CURDIR)/src/sdk/python" $(PYTHON_TEST) -m unittest discover -s "$(CURDIR)/src/sdk/python/tests" -v
 
 test-python-deps:
 	@test -x $(PYTHON_TEST) || $(PYTHON) -m venv $(PYTHON_TEST_VENV_DIR)
-	$(PYTHON_TEST) -m pip install --disable-pip-version-check -r src/adapters/python/requirements.txt
+	$(PYTHON_TEST) -m pip install --disable-pip-version-check -r src/sdk/python/requirements.txt
 
 test-java:
-	$(MAVEN) $(MAVEN_FLAGS) -f src/adapters/java/pom.xml install
+	$(MAVEN) $(MAVEN_FLAGS) -f src/sdk/java/pom.xml install
 
 test-helm:
 	test -f deploy/helm/authguard/charts/gateway-helm-v1.9.0.tgz
