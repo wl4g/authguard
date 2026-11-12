@@ -1,8 +1,6 @@
 """Subprocess execution with deterministic environment and captured evidence."""
 from __future__ import annotations
-from abc import ABC, abstractmethod
-from contextlib import contextmanager
-from dataclasses import dataclass
+import platform
 import json
 import shutil
 import socket
@@ -12,6 +10,9 @@ import shlex
 import signal
 import subprocess
 import time
+from abc import ABC, abstractmethod
+from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Iterator
 from urllib import request
 from util.images import E2EImagesDefinitions
@@ -40,7 +41,7 @@ class E2EProcessHelper:
             self.context = context
             self.environment = E2EImagesDefinitions.environment()
             self.container_proxy_host = (
-                "127.0.0.1" if os.uname().sysname == "Linux" else "host.docker.internal"
+                "127.0.0.1" if platform.system() == "Linux" else "host.docker.internal"
             )
             self.commands = []
             self.details = []
@@ -53,16 +54,7 @@ class E2EProcessHelper:
                 name: self.image_references[name]
                 for name in E2EImagesDefinitions.WORKLOADS
             }
-            self.local_images = (
-                tuple(
-                    (
-                        image
-                        for image in self.image_references.values()
-                        if image in E2EImagesDefinitions.LOCAL_IMAGES.values()
-                    )
-                )
-                + self.images.local_chain_images
-            )
+            self.local_images = E2EImagesDefinitions.local_images(self.environment)
 
         @abstractmethod
         def verify_prerequisites(self) -> None:
@@ -117,19 +109,36 @@ class E2EProcessHelper:
             return result["result"]
 
         def _ensure_local_image(self, image: str) -> None:
-            """Populate the local image store without trusting one registry request."""
             inspected = self._run(
-                ("docker", "image", "inspect", image), allowed_codes={0, 1, 125}
+                (
+                    "docker",
+                    "image",
+                    "inspect",
+                    "--format",
+                    "{{.Os}}/{{.Architecture}}",
+                    image,
+                ),
+                allowed_codes={0, 1, 125},
             )
-            if inspected.return_code != 0:
+            if (
+                inspected.return_code != 0
+                or inspected.output.strip() != self.image_platform(image)
+            ):
                 self._pull_image(image)
 
         def _pull_image(self, image: str) -> None:
-            """Retry image pulls that fail on transient registry transport errors."""
+            if image in self.local_images:
+                raise RuntimeError(
+                    f"{image} is a local image: build or preload its required platform before deployment"
+                )
+            "Retry image pulls that fail on transient registry transport errors."
             failures: list[str] = []
             attempts = 3
             for attempt in range(1, attempts + 1):
-                result = self._run(("docker", "pull", image), allowed_codes={0, 1, 125})
+                result = self._run(
+                    ("docker", "pull", "--platform", self.image_platform(image), image),
+                    allowed_codes={0, 1, 125},
+                )
                 if result.return_code == 0:
                     if attempt > 1:
                         self.details.append(
@@ -162,7 +171,7 @@ class E2EProcessHelper:
                 cwd=cwd or self.project_root,
                 environment=self.environment,
                 timeout_seconds=self.context.timeout_seconds,
-                stream=False,
+                stream=command[:2] == ("docker", "build"),
             )
             self.commands.append(result)
             if result.return_code not in (allowed_codes or {0}):
@@ -189,6 +198,9 @@ class E2EProcessHelper:
                         continue
                     return listener.getsockname()[1]
             raise RuntimeError("no free port remains in the configured E2E host range")
+
+        def image_platform(self, image: str) -> str:
+            return E2EImagesDefinitions.reference_platform(image, self.environment)
 
     @staticmethod
     def run_command(

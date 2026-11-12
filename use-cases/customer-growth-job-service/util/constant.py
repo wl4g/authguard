@@ -24,9 +24,9 @@ class E2EOtherDefinitions:
     USE_CASE_DIR = E2E_DIR
     PROJECT_ROOT = USE_CASE_DIR.parents[1]
     DEPLOY_DIR = E2E_DIR / "deploy"
-    AUTHGUARD_CONFIG_DIR = DEPLOY_DIR / "authguard" / "source"
+    AUTHGUARD_CONFIG_DIR = DEPLOY_DIR / "authguard" / "config"
     AUTHGUARD_INIT_SQL_PATH = DEPLOY_DIR / "postgresql" / "source" / "init.sql"
-    AUTHGUARD_SCENARIOS_PATH = AUTHGUARD_CONFIG_DIR / "scenarios.json"
+    SCENARIOS_PATH = E2E_DIR / "verifier" / "scenarios.json"
     AUTHGUARD_JWT_KEYS_DIR = AUTHGUARD_CONFIG_DIR / "jwt-keys"
     KEYCLOAK_CONFIG_DIR = DEPLOY_DIR / "keycloak" / "source"
     KEYCLOAK_REALM_PATH = KEYCLOAK_CONFIG_DIR / "realm.json"
@@ -80,7 +80,13 @@ class E2EOtherDefinitions:
             path=DEPLOY_DIR / "biz-golang-sqlx-service" / "source",
             setup_commands=(),
             clean_commands=(("go", "clean", "-testcache"),),
-            test_command=("go", "test", "-count=1", "-v", "./..."),
+            test_command=(
+                "go",
+                "test",
+                "-count=1",
+                "-v",
+                str(E2E_DIR / "verifier/sdk/s21_sqlx_test.go"),
+            ),
             environment={
                 "GOPROXY": os.environ.get("GOPROXY", "https://goproxy.cn,direct")
             },
@@ -98,6 +104,7 @@ class E2EOtherDefinitions:
                 "test",
                 "-p",
                 "authguard-customer-growth-job-rust-service",
+                "--lib",
                 "--test",
                 "customer_growth_job_e2e",
                 "--",
@@ -115,14 +122,12 @@ class E2EOtherDefinitions:
                 sys.executable,
                 "-m",
                 "unittest",
-                "discover",
-                "-s",
-                "tests",
+                "verifier.sdk.s23_sqlalchemy.E2ES23SqlalchemyVerifier.AuthorizationCase",
                 "-v",
             ),
             environment={
                 "PYTHONPATH": os.pathsep.join(
-                    [str(ADAPTERS_DIR / "python"), str(PYTHON_SERVICE)]
+                    [str(ADAPTERS_DIR / "python"), str(PYTHON_SERVICE), str(E2E_DIR)]
                 )
             },
         ),
@@ -132,7 +137,7 @@ class E2EOtherDefinitions:
             path=DEPLOY_DIR / "biz-springboot-jdbc-service" / "source",
             setup_commands=(JAVA_ADAPTER_INSTALL,),
             clean_commands=(("mvn", "-q", "clean"),),
-            test_command=("mvn", "-q", "test"),
+            test_command=("mvn", "-q", "-De2e.verifier=true", "test"),
             environment=MAVEN_ENVIRONMENT,
         ),
         "biz-springboot-jpa-service": ProjectSpec(
@@ -141,7 +146,7 @@ class E2EOtherDefinitions:
             path=DEPLOY_DIR / "biz-springboot-jpa-service" / "source",
             setup_commands=(JAVA_ADAPTER_INSTALL,),
             clean_commands=(("mvn", "-q", "clean"),),
-            test_command=("mvn", "-q", "test"),
+            test_command=("mvn", "-q", "-De2e.verifier=true", "test"),
             environment=MAVEN_ENVIRONMENT,
         ),
     }

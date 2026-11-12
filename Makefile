@@ -20,7 +20,6 @@ VITE_REOWN_PROJECT_ID ?=
 HELM_OCI_REGISTRY ?= oci://ghcr.io/wl4g/charts
 RELEASE_DIR ?= dist
 USE_CASE_DIR := use-cases/customer-growth-job-service
-E2E_DEPLOY_DIR := $(USE_CASE_DIR)/deploy
 E2E_DIR := $(USE_CASE_DIR)
 E2E_VENV_DIR ?= $(E2E_DIR)/util/.venv
 E2E_PYTHON := $(E2E_VENV_DIR)/bin/python
@@ -37,10 +36,20 @@ DOCKER_ENV_FILE := deploy/docker/.env
 
 # Accept the same region flags as the portable E2E image matrix.
 ifeq ($(origin IN_CN_GFW),undefined)
-ifneq ($(origin IN_GFW),undefined)
+ifneq ($(filter IN_GFW IN_CN_GFW,$(E2E_IMAGE_NETWORK)),)
+IN_CN_GFW := true
+else ifeq ($(E2E_IMAGE_NETWORK),NON_GFW)
+IN_CN_GFW := false
+else ifneq ($(origin IN_GFW),undefined)
+ifeq ($(filter $(IN_GFW),true false 1 0 IN_GFW NON_GFW),)
+$(error IN_GFW must be true or false)
+endif
 IN_CN_GFW := $(if $(filter true 1 IN_GFW,$(IN_GFW)),true,false)
 else ifneq ($(origin NON_GFW),undefined)
-IN_CN_GFW := $(if $(filter true 1,$(NON_GFW)),false,true)
+ifeq ($(filter $(NON_GFW),true false 1 0 IN_GFW NON_GFW),)
+$(error NON_GFW must be true or false)
+endif
+IN_CN_GFW := $(if $(filter true 1 NON_GFW,$(NON_GFW)),false,true)
 endif
 endif
 
@@ -122,11 +131,11 @@ help:
 	@echo "    make lint-helm     Lint and render the Authguard Helm chart."
 	@echo ""
 	@echo "  Test:"
-	@echo "    make test          Run the full local matrix."
+	@echo "    make test          Run product lint, tests, and Helm checks."
 	@echo "    make test-rust     Run Rust workspace tests."
-	@echo "    make test-go       Run Go adapter and Go use-case tests."
-	@echo "    make test-python   Run Python adapter and Python use-case tests."
-	@echo "    make test-java     Run Java adapter and Spring Boot use-case tests."
+	@echo "    make test-go       Run Go adapter tests."
+	@echo "    make test-python   Run Python adapter tests."
+	@echo "    make test-java     Run Java adapter tests."
 	@echo "    make test-helm     Verify vendored dependencies, lint, and render Helm manifests."
 	@echo "    make e2e           Run the portable cross-language verifier groups."
 	@echo "    make e2e-k8s       Clean-deploy and run the complete AuthN/AuthZ/UI/observability matrix."
@@ -148,8 +157,6 @@ image-source:
 build: build-web
 	$(CARGO) build --workspace
 	$(MAVEN) $(MAVEN_FLAGS) -f src/adapters/java/pom.xml -DskipTests install
-	$(MAVEN) $(MAVEN_FLAGS) -f $(E2E_DEPLOY_DIR)/biz-springboot-jdbc-service/source/pom.xml -DskipTests package
-	$(MAVEN) $(MAVEN_FLAGS) -f $(E2E_DEPLOY_DIR)/biz-springboot-jpa-service/source/pom.xml -DskipTests package
 
 build-web:
 	cd $(WEB_DIR) && $(NPM) ci && $(NPM) run build
@@ -211,21 +218,16 @@ test-web:
 
 test-go:
 	cd src/adapters/golang && $(GO_NETWORK_ENV) $(GO) test ./...
-	cd $(E2E_DEPLOY_DIR)/biz-golang-sqlx-service/source && $(GO_NETWORK_ENV) $(GO) test ./...
 
 test-python: test-python-deps
 	PYTHONPATH="$(CURDIR)/src/adapters/python" $(PYTHON_TEST) -m unittest discover -s "$(CURDIR)/src/adapters/python/tests" -v
-	PYTHONPATH="$(CURDIR)/src/adapters/python:$(CURDIR)/$(E2E_DEPLOY_DIR)/biz-python-sqlalchemy-service/source" $(PYTHON_TEST) -m unittest discover -s "$(CURDIR)/$(E2E_DEPLOY_DIR)/biz-python-sqlalchemy-service/source/tests" -v
 
 test-python-deps:
 	@test -x $(PYTHON_TEST) || $(PYTHON) -m venv $(PYTHON_TEST_VENV_DIR)
 	$(PYTHON_TEST) -m pip install --disable-pip-version-check -r src/adapters/python/requirements.txt
-	$(PYTHON_TEST) -m pip install --disable-pip-version-check -r $(E2E_DEPLOY_DIR)/biz-python-sqlalchemy-service/source/requirements.txt
 
 test-java:
 	$(MAVEN) $(MAVEN_FLAGS) -f src/adapters/java/pom.xml install
-	$(MAVEN) $(MAVEN_FLAGS) -f $(E2E_DEPLOY_DIR)/biz-springboot-jdbc-service/source/pom.xml test
-	$(MAVEN) $(MAVEN_FLAGS) -f $(E2E_DEPLOY_DIR)/biz-springboot-jpa-service/source/pom.xml test
 
 test-helm:
 	test -f deploy/helm/authguard/charts/gateway-helm-v1.9.0.tgz
@@ -238,11 +240,10 @@ test-helm:
 e2e-python:
 	test -x $(E2E_PYTHON) || $(PYTHON) -m venv $(E2E_VENV_DIR)
 	$(E2E_PYTHON) -m pip install --disable-pip-version-check -r $(E2E_DIR)/requirements.txt
-	$(E2E_PYTHON) -m pip install --disable-pip-version-check -r $(E2E_DEPLOY_DIR)/biz-python-sqlalchemy-service/source/requirements.txt
 
 e2e-prepare: e2e-python
 	cd $(WEB_DIR) && $(NPM) ci
-	$(E2E_PYTHON) -m playwright install chromium
+	$(E2E_PYTHON) -m playwright install --only-shell chromium
 
 e2e: e2e-prepare
 	$(E2E_PYTHON) $(E2E_DIR)/runner.py

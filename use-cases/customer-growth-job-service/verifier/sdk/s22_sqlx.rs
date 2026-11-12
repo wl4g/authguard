@@ -17,8 +17,8 @@ use serde::Deserialize;
 use sqlx::{any::AnyPoolOptions, AnyPool};
 use std::sync::Arc;
 
-const CUSTOMER_GROWTH_JOBS_SQL: &str = include_str!("../../../postgresql/source/init.sql");
-const AUTHORIZATION_SCENARIOS_JSON: &str = include_str!("../../../authguard/source/scenarios.json");
+const CUSTOMER_GROWTH_JOBS_SQL: &str = include_str!("../../deploy/postgresql/source/init.sql");
+const AUTHORIZATION_SCENARIOS_JSON: &str = include_str!("../scenarios.json");
 const TEST_SIGNING_KEY: &[u8] = b"test-access-context-hmac-key-32-bytes-minimum";
 
 #[derive(Debug, Deserialize)]

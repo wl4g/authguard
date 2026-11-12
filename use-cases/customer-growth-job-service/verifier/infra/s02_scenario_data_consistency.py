@@ -11,23 +11,23 @@ from verifier.context import VerificationContext, VerificationResult, BaseVerifi
 
 PROJECT_SOURCES = {
     "biz-golang-sqlx-service": (
-        "tests/customer_growth_job_e2e_test.go",
+        "sdk/s21_sqlx_test.go",
         "pkg/authorization/customer_growth_job_resource_mapping.go",
     ),
     "biz-rust-sqlx-service": (
-        "tests/customer_growth_job_e2e.rs",
+        "sdk/s22_sqlx.rs",
         "src/authorization/mod.rs",
     ),
     "biz-python-sqlalchemy-service": (
-        "tests/test_customer_growth_job_e2e.py",
+        "sdk/s23_sqlalchemy.py",
         "app/authorization/customer_growth_job_resource_mapping.py",
     ),
     "biz-springboot-jdbc-service": (
-        "src/test/java/com/authguard/usecases/support/AuthorizationScenarioData.java",
+        "sdk/jdbc/com/authguard/usecases/support/AuthorizationScenarioData.java",
         "src/main/java/com/authguard/usecases/authorization/CustomerGrowthJobResourceMappings.java",
     ),
     "biz-springboot-jpa-service": (
-        "src/test/java/com/authguard/usecases/support/AuthorizationScenarioData.java",
+        "sdk/jpa/com/authguard/usecases/support/AuthorizationScenarioData.java",
         "src/main/java/com/authguard/usecases/authorization/CustomerGrowthJobResourceMappings.java",
     ),
 }
@@ -40,11 +40,11 @@ PROJECT_REPOSITORIES = {
     "biz-springboot-jpa-service": "src/main/java/com/authguard/usecases/repository/CustomerGrowthJobJpaRepository.java",
 }
 PROJECT_EXECUTION_TESTS = {
-    "biz-golang-sqlx-service": "tests/customer_growth_job_e2e_test.go",
-    "biz-rust-sqlx-service": "tests/customer_growth_job_e2e.rs",
-    "biz-python-sqlalchemy-service": "tests/test_customer_growth_job_e2e.py",
-    "biz-springboot-jdbc-service": "src/test/java/com/authguard/usecases/controller/CustomerGrowthJobControllerE2ETest.java",
-    "biz-springboot-jpa-service": "src/test/java/com/authguard/usecases/controller/CustomerGrowthJobControllerE2ETest.java",
+    "biz-golang-sqlx-service": "sdk/s21_sqlx_test.go",
+    "biz-rust-sqlx-service": "sdk/s22_sqlx.rs",
+    "biz-python-sqlalchemy-service": "sdk/s23_sqlalchemy.py",
+    "biz-springboot-jdbc-service": "sdk/jdbc/com/authguard/usecases/controller/CustomerGrowthJobControllerE2ETest.java",
+    "biz-springboot-jpa-service": "sdk/jpa/com/authguard/usecases/controller/CustomerGrowthJobControllerE2ETest.java",
 }
 
 
@@ -71,7 +71,7 @@ class E2ES02ScenarioDataConsistencyVerifier(BaseVerifier):
         errors: list[str] = []
         sql = E2EOtherDefinitions.AUTHGUARD_INIT_SQL_PATH.read_text(encoding="utf-8")
         scenario_data = json.loads(
-            E2EOtherDefinitions.AUTHGUARD_SCENARIOS_PATH.read_text(encoding="utf-8")
+            E2EOtherDefinitions.SCENARIOS_PATH.read_text(encoding="utf-8")
         )
         mock_idp = (
             E2EOtherDefinitions.DEPLOY_DIR
@@ -284,7 +284,7 @@ class E2ES02ScenarioDataConsistencyVerifier(BaseVerifier):
             errors.append("source IP condition coverage is missing")
         for project_name, (test_source, mapping_source) in PROJECT_SOURCES.items():
             test_text = (
-                E2EOtherDefinitions.DEPLOY_DIR / project_name / "source" / test_source
+                E2EOtherDefinitions.E2E_DIR / "verifier" / test_source
             ).read_text(encoding="utf-8")
             mapping_text = (
                 E2EOtherDefinitions.DEPLOY_DIR
@@ -292,11 +292,17 @@ class E2ES02ScenarioDataConsistencyVerifier(BaseVerifier):
                 / "source"
                 / mapping_source
             ).read_text(encoding="utf-8")
-            for data_name in (
-                E2EOtherDefinitions.AUTHGUARD_INIT_SQL_PATH.name,
-                E2EOtherDefinitions.AUTHGUARD_SCENARIOS_PATH.name,
+            for data_name, definition in (
+                (
+                    E2EOtherDefinitions.AUTHGUARD_INIT_SQL_PATH.name,
+                    "E2EOtherDefinitions.AUTHGUARD_INIT_SQL_PATH",
+                ),
+                (
+                    E2EOtherDefinitions.SCENARIOS_PATH.name,
+                    "E2EOtherDefinitions.SCENARIOS_PATH",
+                ),
             ):
-                if data_name not in test_text:
+                if data_name not in test_text and definition not in test_text:
                     errors.append(f"{project_name}: does not consume {data_name}")
             if "customer-growth" not in mapping_text:
                 errors.append(
@@ -314,9 +320,8 @@ class E2ES02ScenarioDataConsistencyVerifier(BaseVerifier):
                     f"{project_name}: repository does not use {BUSINESS_TABLE}"
                 )
             execution_test = (
-                E2EOtherDefinitions.DEPLOY_DIR
-                / project_name
-                / "source"
+                E2EOtherDefinitions.E2E_DIR
+                / "verifier"
                 / PROJECT_EXECUTION_TESTS[project_name]
             ).read_text(encoding="utf-8")
             if "AUTHGUARD_E2E_CASE id=" not in execution_test:

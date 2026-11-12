@@ -92,13 +92,13 @@ class E2ES42LogsVerifier(BaseVerifier):
         self.details.append(
             f"AuthN/AuthZ JSON contracts verified {authn_json_records}/{authz_json_records} records with explicit provider normalization, protocol-neutral account linking, ext_authz Check, and opaque scope-resolution lifecycle events"
         )
-        for component in E2EImagesDefinitions.WORKLOAD_IMAGES:
+        for component in E2EImagesDefinitions.WORKLOADS:
             logs = self.infrastructure.service_logs(
                 self.workload_service(component), tail=5000
             )
             E2ES42LogsVerifier.require_adapter_events(logs, component)
         self.details.append(
-            f"All {len(E2EImagesDefinitions.WORKLOAD_IMAGES)} SDK workloads emitted {len(E2ES42LogsVerifier.ADAPTER_LOG_EVENTS)} required events covering direct-header resolver, opaque gRPC resolver, and resource-URN to parameterized SQL-scope translation"
+            f"All {len(E2EImagesDefinitions.WORKLOADS)} SDK workloads emitted {len(E2ES42LogsVerifier.ADAPTER_LOG_EVENTS)} required events covering direct-header resolver, opaque gRPC resolver, and resource-URN to parameterized SQL-scope translation"
         )
 
     AUTHN_LOG_EVENTS = frozenset(

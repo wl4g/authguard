@@ -25,20 +25,20 @@ Require Helm 3, a writable StorageClass, and an existing Kubernetes cluster.
 Create one logical Secret payload; all active values must be single-line.
 
 ```bash
-cp deploy/helm/authguard/bootstrap/authguard-secrets.env.example authguard-secrets.env && \
+cp deploy/helm/authguard/bootstrap/authguard-secret.env.example authguard-secrets.env && \
 ${EDITOR:-vi} authguard-secrets.env
 ```
 
 The required base keys are PostgreSQL, Redis, canonical JWT, AuthZ HMAC, and
 the AuthZ API token. Optional provider credentials use their matching
-`AUTHGUARD__...` path; see the template for examples.
+`AUTHGUARD__...` path; see the [Secret template](bootstrap/authguard-secret.env.example) for examples.
 
 ## 2. Initialise the Secret source
 
-Kubernetes Secret is the default and works with bundled PostgreSQL and Redis:
+[Kubernetes Secret setup](bootstrap/setup-secret-k8s.sh) is the default and works with bundled PostgreSQL and Redis:
 
 ```bash
-deploy/helm/authguard/bootstrap/k8s-secrets-setup.sh \
+deploy/helm/authguard/bootstrap/setup-secret-k8s.sh \
   --secret-file "$PWD/authguard-secrets.env"
 ```
 
@@ -47,13 +47,13 @@ file for step 3:
 
 | Source | Setup command | Values file |
 | --- | --- | --- |
-| GCP | `gcp-secrets-setup.sh --project PROJECT --account ACCOUNT --secret-file FILE` | `authguard-gcp-values.yaml` |
-| AWS | `aws-secrets-setup.sh --profile PROFILE --region REGION --cluster EKS_CLUSTER --secret-file FILE` | `authguard-aws-values.yaml` |
-| Vault | `vault-secrets-setup.sh --secret-file FILE` | `authguard-vault-values.yaml` |
+| [GCP](bootstrap/setup-secret-gcp.sh) | `deploy/helm/authguard/bootstrap/setup-secret-gcp.sh --project PROJECT --account ACCOUNT --secret-file FILE` | `authguard-gcp-values.yaml` |
+| [AWS](bootstrap/setup-secret-aws.sh) | `deploy/helm/authguard/bootstrap/setup-secret-aws.sh --profile PROFILE --region REGION --cluster EKS_CLUSTER --secret-file FILE` | `authguard-aws-values.yaml` |
+| [Vault](bootstrap/setup-secret-vault.sh) | `deploy/helm/authguard/bootstrap/setup-secret-vault.sh --secret-file FILE` | `authguard-vault-values.yaml` |
 
 Use `--help` on a setup script for common flags. Optional IaC templates are
-generated without cloud writes via `gcp-secrets-setup.sh --write-replication-policy FILE`
-or `aws-secrets-setup.sh --write-kms-key-policy FILE`.
+generated without cloud writes via `setup-secret-gcp.sh --write-replication-policy FILE`
+or `setup-secret-aws.sh --write-kms-key-policy FILE`.
 
 ## 3. Install or upgrade
 

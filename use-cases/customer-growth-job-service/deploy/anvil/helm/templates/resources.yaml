@@ -44,6 +44,7 @@ spec:
         - name: anvil
           image: {{ .Values.anvil.image | quote }}
           imagePullPolicy: {{ .Values.anvil.pullPolicy }}
+          command: [anvil]
           args:
             - --host=0.0.0.0
             - --port=8545

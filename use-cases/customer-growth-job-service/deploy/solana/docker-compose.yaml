@@ -17,6 +17,6 @@ services:
     - seccomp=unconfined
     volumes:
     - solana-ledger:/tmp/solana-ledger
-    platform: ${AUTHGUARD_E2E_PLATFORM:-linux/amd64}
+    platform: ${AUTHGUARD_E2E_SOLANA_PLATFORM:?use util/images.py}
 volumes:
   solana-ledger: null

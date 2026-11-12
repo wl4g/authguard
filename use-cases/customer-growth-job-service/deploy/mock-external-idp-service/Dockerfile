@@ -2,6 +2,7 @@ ARG PYTHON_IMAGE
 FROM ${PYTHON_IMAGE}
 WORKDIR /app
 COPY use-cases/customer-growth-job-service/deploy/mock-external-idp-service/source/requirements.txt /tmp/service-requirements.txt
+ARG PIP_INDEX_URL=https://pypi.org/simple
 RUN pip install --no-cache-dir -r /tmp/service-requirements.txt
 COPY use-cases/customer-growth-job-service/deploy/mock-external-idp-service/source /app/service
 ENV PYTHONPATH=/app/service

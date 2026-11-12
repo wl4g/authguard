@@ -289,7 +289,7 @@ class E2ES40MetricsVerifier(BaseVerifier):
                 try:
                     opener.open(outgoing, timeout=15)
                 except error.HTTPError as response:
-                    if response.code != 302:
+                    if response.code not in (302, 303, 307, 308):
                         raise
                     if not response.headers.get("Location"):
                         raise RuntimeError(

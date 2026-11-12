@@ -72,7 +72,7 @@ class BaseVerifier:
             self._activate_deployer()
         self._step_number = 0
         scenario_data = json.loads(
-            E2EOtherDefinitions.AUTHGUARD_SCENARIOS_PATH.read_text(encoding="utf-8")
+            E2EOtherDefinitions.SCENARIOS_PATH.read_text(encoding="utf-8")
         )
         if scenario_data.get("version") != 4:
             raise ValueError("AuthGuard E2E scenario data version must be 4")

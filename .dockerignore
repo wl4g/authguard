@@ -16,4 +16,4 @@ use-cases/**/node_modules
 use-cases/**/helm
 use-cases/customer-growth-job-service/reports
 
-use-cases/customer-growth-job-service/deploy/authguard/source/jwt-keys
+use-cases/customer-growth-job-service/deploy/authguard/config/jwt-keys

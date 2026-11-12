@@ -1,12 +1,13 @@
 """Single image matrix for every E2E build, Helm release and Compose service."""
 from __future__ import annotations
-from dataclasses import dataclass, fields
+import platform
 import os
 import json
 import re
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 
@@ -29,7 +30,7 @@ class E2EImagesDefinitions:
         "spring-jdbc": "registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-spring-jdbc:e2e-local",
         "spring-jpa": "registry.cn-shenzhen.aliyuncs.com/wl4g/e2e-authguard-customer-growth-spring-jpa:e2e-local",
     }
-    _REGIONS = {
+    MATRIX = {
         "aliyun": {
             "envoy": "registry.cn-shenzhen.aliyuncs.com/wl4g/envoyproxy_envoy:distroless-v1.36.4",
             "envoy_gateway": "registry.cn-shenzhen.aliyuncs.com/wl4g/envoyproxy_gateway:v1.9.0",
@@ -45,7 +46,7 @@ class E2EImagesDefinitions:
             "chain_builder": "registry.cn-shenzhen.aliyuncs.com/wl4g/rust:1.99.1-slim",
             "go_builder": "registry.cn-shenzhen.aliyuncs.com/wl4g/golang:1.26-alpine",
             "rust_builder": "registry.cn-shenzhen.aliyuncs.com/wl4g/rust:1.99.1-slim",
-            "python_runtime": "registry.cn-shenzhen.aliyuncs.com/wl4g/python:3.12-slim",
+            "python_runtime": "registry.cn-shenzhen.aliyuncs.com/wl4g/python:3.12-slim-amd64",
             "maven_builder": "registry.cn-shenzhen.aliyuncs.com/wl4g/maven:3.9.9-eclipse-temurin-17",
             "java_runtime": "registry.cn-shenzhen.aliyuncs.com/wl4g/eclipse-temurin:17-jre",
             "debian": "registry.cn-shenzhen.aliyuncs.com/wl4g/debian:trixie-slim",
@@ -58,8 +59,8 @@ class E2EImagesDefinitions:
             "ldap": "docker.io/glauth/glauth:v2.5.0",
             "jaeger": "docker.io/jaegertracing/all-in-one:1.76.0",
             "postgres": "docker.io/bitnami/postgresql@sha256:7d77a46bbf200709237318c27dec0eaeae2520e403dd18fdebde2be7a6b04993",
-            "anvil": "authguard-e2e/foundry-anvil:e2e-local",
-            "solana": "authguard-e2e/anza-solana:e2e-local",
+            "anvil": "ghcr.io/foundry-rs/foundry:v1.7.1",
+            "solana": "docker.io/anzaxyz/agave:v3.1.14",
             "web_builder": "docker.io/library/node:22-alpine",
             "web_runtime": "docker.io/nginxinc/nginx-unprivileged:1.27-alpine",
             "chain_builder": "docker.io/library/rust:1.99.1-slim",
@@ -71,6 +72,16 @@ class E2EImagesDefinitions:
             "debian": "docker.io/library/debian:trixie-slim",
         },
     }
+    SOLANA_ARM64 = "registry.cn-shenzhen.aliyuncs.com/wl4g/anza_solana:3.1.14-arm64"
+    HOST_OVERRIDES = {"Darwin": {"solana": SOLANA_ARM64}}
+    for _source, _images in MATRIX.items():
+        for _key, _image in LOCAL_IMAGES.items():
+            _images[_key] = (
+                _image
+                if _source == "aliyun"
+                else "ghcr.io/wl4g/" + _image.rsplit("/", 1)[-1]
+            )
+    del _source, _images, _key, _image
     COMPONENT_ENV = {
         "authguard": "AUTHGUARD_E2E_AUTHGUARD_IMAGE",
         "web": "AUTHGUARD_E2E_WEB_IMAGE",
@@ -100,6 +111,7 @@ class E2EImagesDefinitions:
         "WEB_IMAGE": "web_runtime",
         "DEBIAN_IMAGE": "debian",
         "RUST_IMAGE": "chain_builder",
+        "RUNTIME_IMAGE": "debian",
     }
     HELM_IMAGES = {
         "keycloak.image": "keycloak",
@@ -113,10 +125,6 @@ class E2EImagesDefinitions:
         "envoy_gateway.global.images.envoyGateway.image": "envoy_gateway",
         "envoy_gateway.global.images.envoyProxy.image": "envoy",
     }
-    MATRIX = {
-        region: {arch: references for arch in ("amd64", "arm64")}
-        for region, references in _REGIONS.items()
-    }
 
     @staticmethod
     def source(environment) -> str:
@@ -126,39 +134,38 @@ class E2EImagesDefinitions:
             if source not in {"aliyun", "global"}:
                 raise ValueError("AUTHGUARD_E2E_IMAGE_SOURCE must be aliyun or global")
             return source
-        value = environment.get("IN_GFW", environment.get("IN_CN_GFW"))
-        if value is not None:
-            if str(value).lower() not in {
-                "true",
-                "false",
-                "1",
-                "0",
-                "in_gfw",
-                "non_gfw",
-            }:
-                raise ValueError("IN_GFW/IN_CN_GFW must be true or false")
-            return (
-                "aliyun" if str(value).lower() in {"true", "1", "in_gfw"} else "global"
-            )
-        return (
-            "global"
-            if str(environment.get("NON_GFW", "false")).lower() in {"true", "1"}
-            else "aliyun"
-        )
+        network = environment.get("E2E_IMAGE_NETWORK", "auto").upper()
+        if network != "AUTO":
+            names = {"IN_GFW": "aliyun", "IN_CN_GFW": "aliyun", "NON_GFW": "global"}
+            if network not in names:
+                raise ValueError(
+                    "E2E_IMAGE_NETWORK must be auto, IN_GFW, IN_CN_GFW, or NON_GFW"
+                )
+            return names[network]
+        for variable, inverse in (
+            ("IN_GFW", False),
+            ("IN_CN_GFW", False),
+            ("NON_GFW", True),
+        ):
+            if variable not in environment:
+                continue
+            value = str(environment[variable]).lower()
+            if value not in {"true", "false", "1", "0", "in_gfw", "non_gfw"}:
+                raise ValueError(f"{variable} must be true or false")
+            if value in {"in_gfw", "non_gfw"}:
+                return "aliyun" if value == "in_gfw" else "global"
+            enabled = value in {"true", "1"}
+            return "global" if enabled == inverse else "aliyun"
+        return "aliyun"
 
     @classmethod
     def references(cls, environment):
-        source = cls.source(environment)
-        if source not in cls.MATRIX:
-            raise ValueError("AUTHGUARD_E2E_IMAGE_SOURCE must be aliyun or global")
-        architecture = environment.get(
-            "AUTHGUARD_E2E_PLATFORM",
-            environment.get("DOCKER_DEFAULT_PLATFORM", cls.DEFAULT_PLATFORM),
-        ).split("/")[-1]
-        architecture = "arm64" if architecture == "aarch64" else architecture
-        if architecture not in {"amd64", "arm64"}:
-            raise ValueError(f"unsupported E2E image architecture: {architecture}")
-        images = {**cls.MATRIX[source][architecture], **cls.LOCAL_IMAGES}
+        cls.image_platform("default", environment)
+        cls.image_platform("solana", environment)
+        images = {
+            **cls.MATRIX[cls.source(environment)],
+            **cls.HOST_OVERRIDES.get(cls.host_system(), {}),
+        }
         for key, variable in cls.COMPONENT_ENV.items():
             images[key] = environment.get(variable, images[key])
         for variable, key in cls.BUILD_ENV.items():
@@ -171,15 +178,11 @@ class E2EImagesDefinitions:
         images = cls.references(environment)
         return {
             "AUTHGUARD_E2E_IMAGE_SOURCE": cls.source(environment),
-            "DOCKER_DEFAULT_PLATFORM": environment.get(
-                "AUTHGUARD_E2E_PLATFORM",
-                environment.get("DOCKER_DEFAULT_PLATFORM", cls.DEFAULT_PLATFORM),
-            ),
+            "AUTHGUARD_E2E_PLATFORM": cls.image_platform("default", environment),
+            "AUTHGUARD_E2E_SOLANA_PLATFORM": cls.image_platform("solana", environment),
+            "DOCKER_DEFAULT_PLATFORM": cls.DEFAULT_PLATFORM,
             **{variable: images[key] for key, variable in cls.COMPONENT_ENV.items()},
-            **{
-                variable: environment.get(variable, images[key])
-                for variable, key in cls.BUILD_ENV.items()
-            },
+            **{variable: images[key] for variable, key in cls.BUILD_ENV.items()},
         }
 
     @classmethod
@@ -188,12 +191,17 @@ class E2EImagesDefinitions:
         values = {path: images[key] for path, key in cls.HELM_IMAGES.items()}
         values.update({f"workloads.{key}.image": images[key] for key in cls.WORKLOADS})
         registry, repository = images["redis"].split("/", 1)
-        repository, tag = repository.rsplit(":", 1)
+        repository, tag = (
+            (repository.partition("@")[0], "")
+            if "@" in repository
+            else repository.rsplit(":", 1)
+        )
         values.update(
             {
                 "redis_cluster.image.registry": registry,
                 "redis_cluster.image.repository": repository,
                 "redis_cluster.image.tag": tag,
+                "redis_cluster.image.digest": images["redis"].partition("@")[2],
             }
         )
         for component, key in (
@@ -269,31 +277,42 @@ class E2EImagesDefinitions:
             )
             position = command.index("build") + 1
             command[position:position] = cls.build_arguments(dockerfile, environment)
+            component = (
+                "authguard"
+                if dockerfile.resolve()
+                == E2EOtherDefinitions.PROJECT_ROOT / "deploy/docker/Dockerfile"
+                else "web"
+                if dockerfile.resolve()
+                == E2EOtherDefinitions.PROJECT_ROOT / "web/Dockerfile"
+                else next(
+                    (
+                        key
+                        for key, directory in E2EOtherDefinitions.COMPONENTS.items()
+                        if directory == dockerfile.parent.name
+                    )
+                )
+            )
+            selected_platform = cls.image_platform(component, environment)
+            cls._command_platform(command, "build", selected_platform)
+            environment["DOCKER_DEFAULT_PLATFORM"] = selected_platform
             if not any(
                 (
                     item in {"-t", "--tag"} or item.startswith("--tag=")
                     for item in command
                 )
             ):
-                component = (
-                    "authguard"
-                    if dockerfile.resolve()
-                    == E2EOtherDefinitions.PROJECT_ROOT / "deploy/docker/Dockerfile"
-                    else "web"
-                    if dockerfile.resolve()
-                    == E2EOtherDefinitions.PROJECT_ROOT / "web/Dockerfile"
-                    else next(
-                        (
-                            key
-                            for key, directory in E2EOtherDefinitions.COMPONENTS.items()
-                            if directory == dockerfile.parent.name
-                        )
-                    )
-                )
                 command[position:position] = [
                     "--tag",
                     cls.references(environment)[component],
                 ]
+        if (
+            executable in {"docker", "podman"}
+            and "pull" in command
+            and ("compose" not in command)
+        ):
+            expected = cls.reference_platform(command[-1], environment)
+            cls._command_platform(command, "pull", expected)
+            environment["DOCKER_DEFAULT_PLATFORM"] = expected
         if executable == "helm" and any(
             (item in command for item in ("install", "upgrade", "template", "lint"))
         ):
@@ -359,54 +378,25 @@ class E2EImagesDefinitions:
         maven_builder: str
         java_runtime: str
         debian: str
-        local_chain_images: tuple[str, ...] = ()
 
         @classmethod
         def from_environment(cls, environment=None) -> "E2EImageCatalog":
             environment = os.environ if environment is None else environment
-            source = E2EImagesDefinitions.source(environment)
             images = E2EImagesDefinitions.references(environment)
-            names = {field.name for field in fields(cls)} - {
-                "source",
-                "local_chain_images",
-            }
-            local = (
-                tuple((images[key] for key in ("anvil", "solana")))
-                if source == "global"
-                else ()
-            )
+            names = {field.name for field in fields(cls)} - {"source"}
             return cls(
-                source=source,
-                local_chain_images=local,
+                source=E2EImagesDefinitions.source(environment),
                 **{key: images[key] for key in names},
             )
 
         @property
         def pullable_images(self) -> tuple[str, ...]:
-            images = (
-                self.envoy,
-                self.envoy_gateway,
-                self.redis,
-                self.keycloak,
-                self.ldap,
-                self.jaeger,
-                self.postgres,
-                self.anvil,
-                self.solana,
-            )
-            return tuple(
-                (image for image in images if image not in self.local_chain_images)
-            )
+            return self.all_images
 
         @property
         def docker_pullable_images(self) -> tuple[str, ...]:
             return tuple(
-                (
-                    image
-                    for image in self.all_images
-                    if image != self.envoy_gateway
-                    and image not in self.local_chain_images
-                )
+                (image for image in self.all_images if image != self.envoy_gateway)
             )
 
         @property
@@ -429,28 +419,83 @@ class E2EImagesDefinitions:
             repository, tag = repository_and_tag.rsplit(":", 1)
             return (registry, repository, tag)
 
+    @staticmethod
+    def host_system() -> str:
+        return platform.system()
 
-E2EImagesDefinitions.E2E_IMAGES = (
-    E2EImagesDefinitions.E2EImageCatalog.from_environment()
-)
-E2EImagesDefinitions.DEFAULT_AUTHGUARD_IMAGE = E2EImagesDefinitions.LOCAL_IMAGES[
-    "authguard"
-]
-E2EImagesDefinitions.DEFAULT_AUTHGUARD_WEB_IMAGE = E2EImagesDefinitions.LOCAL_IMAGES[
-    "web"
-]
-E2EImagesDefinitions.AUTHGUARD_IMAGE = os.getenv(
-    "AUTHGUARD_E2E_AUTHGUARD_IMAGE", E2EImagesDefinitions.DEFAULT_AUTHGUARD_IMAGE
-)
-E2EImagesDefinitions.AUTHGUARD_WEB_IMAGE = os.getenv(
-    "AUTHGUARD_E2E_WEB_IMAGE", E2EImagesDefinitions.DEFAULT_AUTHGUARD_WEB_IMAGE
-)
-E2EImagesDefinitions.MOCK_IDP_IMAGE = E2EImagesDefinitions.references(os.environ)[
-    "mock-idp"
-]
-E2EImagesDefinitions.WORKLOAD_IMAGES = {
-    key: E2EImagesDefinitions.references(os.environ)[key]
-    for key in E2EImagesDefinitions.WORKLOADS
-}
+    @classmethod
+    def image_platform(cls, component: str, environment=None) -> str:
+        environment = os.environ if environment is None else environment
+        requested = environment.get("AUTHGUARD_E2E_PLATFORM", cls.DEFAULT_PLATFORM)
+        if requested != cls.DEFAULT_PLATFORM:
+            raise ValueError(
+                "E2E application and middleware images must use linux/amd64"
+            )
+        expected = (
+            "linux/arm64"
+            if component == "solana" and cls.host_system() == "Darwin"
+            else cls.DEFAULT_PLATFORM
+        )
+        if (
+            component == "solana"
+            and environment.get("AUTHGUARD_E2E_SOLANA_PLATFORM", expected) != expected
+        ):
+            raise ValueError(f"Solana on {cls.host_system()} must use {expected}")
+        return expected
+
+    @staticmethod
+    def canonical_reference(reference: str) -> str:
+        first = reference.split("/", 1)[0]
+        if "/" not in reference:
+            return "docker.io/library/" + reference
+        if "." not in first and ":" not in first and (first != "localhost"):
+            return "docker.io/" + reference
+        return reference
+
+    @classmethod
+    def reference_platform(cls, reference: str, environment=None) -> str:
+        environment = os.environ if environment is None else environment
+        solana = cls.references(environment)["solana"]
+        component = (
+            "solana"
+            if cls.canonical_reference(reference) == cls.canonical_reference(solana)
+            else "default"
+        )
+        return cls.image_platform(component, environment)
+
+    @classmethod
+    def local_images(cls, environment=None) -> tuple[str, ...]:
+        environment = os.environ if environment is None else environment
+        images = cls.references(environment)
+        defaults = cls.MATRIX[cls.source(environment)]
+        local = tuple(
+            (images[key] for key in cls.LOCAL_IMAGES if images[key] == defaults[key])
+        )
+        if (
+            cls.canonical_reference(images["solana"])
+            == "docker.io/library/solana:3.1.14-arm64"
+        ):
+            local += (images["solana"],)
+        return local
+
+    @classmethod
+    def cache_references(cls, images: set[str]) -> set[str]:
+        return images | {cls.canonical_reference(image) for image in images}
+
+    @staticmethod
+    def _command_platform(command: list[str], action: str, expected: str) -> None:
+        requested = next(
+            (arg.split("=", 1)[1] for arg in command if arg.startswith("--platform=")),
+            None,
+        )
+        if "--platform" in command:
+            requested = command[command.index("--platform") + 1]
+        if requested is not None and requested != expected:
+            raise ValueError(f"selected E2E image requires {expected}, got {requested}")
+        if requested is None:
+            position = command.index(action) + 1
+            command[position:position] = ["--platform", expected]
+
+
 if __name__ == "__main__":
     raise SystemExit(E2EImagesDefinitions.main())

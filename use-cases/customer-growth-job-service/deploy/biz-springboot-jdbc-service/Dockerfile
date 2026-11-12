@@ -4,28 +4,24 @@ ARG JAVA_IMAGE
 FROM ${MAVEN_IMAGE} AS builder
 ARG MAVEN_PROXY_HOST
 ARG MAVEN_PROXY_PORT
+ARG MAVEN_MIRROR_URL=https://repo.maven.apache.org/maven2
 WORKDIR /workspace
 COPY use-cases/customer-growth-job-service/util/maven/settings.xml /workspace/maven/settings.xml
-RUN if [ -n "${MAVEN_PROXY_HOST:-}" ]; then \
-        sed \
-          -e "s/@MAVEN_PROXY_HOST@/${MAVEN_PROXY_HOST}/g" \
-          -e "s/@MAVEN_PROXY_PORT@/${MAVEN_PROXY_PORT}/g" \
-          /workspace/maven/settings.xml > /workspace/maven-settings-active.xml; \
-    fi
+RUN set -eu; \
+    proxy_active=false; \
+    if [ -n "${MAVEN_PROXY_HOST:-}" ]; then proxy_active=true; fi; \
+    sed \
+      -e "s|@MAVEN_PROXY_HOST@|${MAVEN_PROXY_HOST:-127.0.0.1}|g" \
+      -e "s|@MAVEN_PROXY_PORT@|${MAVEN_PROXY_PORT:-8080}|g" \
+      -e "s|@MAVEN_PROXY_ACTIVE@|${proxy_active}|g" \
+      -e "s|@MAVEN_MIRROR_URL@|${MAVEN_MIRROR_URL}|g" \
+      /workspace/maven/settings.xml > /workspace/maven-settings-active.xml
 COPY src/adapters/java /workspace/adapter
-RUN set -eu; \
-    settings_args=""; \
-    if [ -n "${MAVEN_PROXY_HOST:-}" ]; then \
-        settings_args="-s /workspace/maven-settings-active.xml"; \
-    fi; \
-    mvn -q ${settings_args} -f /workspace/adapter/pom.xml -DskipTests install
+RUN --mount=type=cache,id=authguard-growth-maven,target=/root/.m2,sharing=locked \
+    mvn -q -s /workspace/maven-settings-active.xml -f /workspace/adapter/pom.xml -DskipTests install
 COPY use-cases/customer-growth-job-service/deploy/biz-springboot-jdbc-service/source /workspace/service
-RUN set -eu; \
-    settings_args=""; \
-    if [ -n "${MAVEN_PROXY_HOST:-}" ]; then \
-        settings_args="-s /workspace/maven-settings-active.xml"; \
-    fi; \
-    mvn -q ${settings_args} -f /workspace/service/pom.xml -DskipTests package
+RUN --mount=type=cache,id=authguard-growth-maven,target=/root/.m2,sharing=locked \
+    mvn -q -s /workspace/maven-settings-active.xml -f /workspace/service/pom.xml -DskipTests package
 
 FROM ${JAVA_IMAGE}
 WORKDIR /app

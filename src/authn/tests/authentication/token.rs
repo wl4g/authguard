@@ -8,7 +8,7 @@ use super::*;
 
 const TEST_PRIVATE_KEY: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../use-cases/customer-growth-job-service/deploy/authguard/source/jwt-keys/resign-jwt-key.pem"
+    "/../../use-cases/customer-growth-job-service/deploy/authguard/config/jwt-keys/resign-jwt-key.pem"
 ));
 
 #[test]

@@ -854,7 +854,7 @@ class E2ES26GatewayAuthorizationVerifier(BaseVerifier):
                 )
             ]
         pod = self._postgresql_pod()
-        for component in E2EImagesDefinitions.WORKLOAD_IMAGES:
+        for component in E2EImagesDefinitions.WORKLOADS:
             schema = f"e2e_authguard_customer_growth_{component.replace('-', '_')}"
             query = f"SELECT COALESCE(json_agg(row_to_json(job) ORDER BY job.id), '[]'::json)::text FROM (SELECT {', '.join(columns)} FROM {schema}.e2e_authguard_customer_growth_jobs) AS job"
             actual = json.loads(self._postgresql_query(pod, query))
