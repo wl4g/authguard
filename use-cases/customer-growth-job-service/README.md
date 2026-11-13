@@ -68,9 +68,13 @@ customer-growth-job-service/
     .venv/                             ignored local Python environment
   reports/                             ignored reports, evidence and archived rounds
   runner.py                            common entry point
-  docker-compose.yaml                  component composition and dependencies
+  docker-compose.yaml                  component include list
   requirements.txt
 ```
+
+The top-level Compose file only includes components. Each service owns its
+`depends_on` beside its deployment definition, so Compose 2.38 can load the
+same dependency graph without overriding imported resources.
 
 Each locally built mock business service keeps only its deployable implementation
 in `source/`, beside its Dockerfile, Compose definition and Helm Chart.

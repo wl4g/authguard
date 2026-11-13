@@ -23,3 +23,10 @@ services:
       dockerfile: use-cases/customer-growth-job-service/deploy/biz-python-sqlalchemy-service/Dockerfile
       args:
         PYTHON_IMAGE: ${PYTHON_IMAGE:?use util/images.py}
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      authz:
+        condition: service_started
+      jaeger:
+        condition: service_started
