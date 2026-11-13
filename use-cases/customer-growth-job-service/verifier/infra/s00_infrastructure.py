@@ -430,17 +430,7 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
                     for component in self.workload_images
                 ],
             ):
-                self._run(
-                    (
-                        "kubectl",
-                        "rollout",
-                        "status",
-                        f"deployment/{deployment}",
-                        "-n",
-                        self.namespace,
-                        f"--timeout={self.context.timeout_seconds}s",
-                    )
-                )
+                self.wait_for_deployment(deployment)
 
         def _install_authguard(self) -> None:
             authguard_values = self._authguard_values()
@@ -624,17 +614,7 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
                 f"{self.authguard_release}-authn",
                 self.authguard_web_service,
             ):
-                self._run(
-                    (
-                        "kubectl",
-                        "rollout",
-                        "status",
-                        f"deployment/{deployment}",
-                        "-n",
-                        self.namespace,
-                        f"--timeout={self.context.timeout_seconds}s",
-                    )
-                )
+                self.wait_for_deployment(deployment)
             self._run(
                 (
                     "kubectl",

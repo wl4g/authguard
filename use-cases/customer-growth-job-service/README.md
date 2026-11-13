@@ -188,6 +188,11 @@ the current Aliyun Rust/Debian base tags contain AMD64 only. The normal E2E
 uses the already-published native ARM64 Solana image and does not require
 this expensive source build.
 
+PostgreSQL uses the same 18.6 upstream build in both image sources. Its Kubernetes
+startup probe checks the Pod's TCP listener rather than the temporary loopback
+server used during initialization. Rollout failures include Pod state, recent
+container logs and Kubernetes events in the report before cleanup.
+
 Each round removes and recreates an `e2e-` namespace and installs component-scoped Helm releases.
 The normal Customer Growth support/workload release uses the business Chart's
 default `authguard.enabled=false`. A separate one-time release of that same
