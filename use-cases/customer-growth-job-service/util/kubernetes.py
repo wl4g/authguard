@@ -389,6 +389,81 @@ class E2EKubernetesDeployer(E2EProcessHelper.Deployment):
         )
         return json.loads(self.kubectl(*arguments).output)
 
+    def wait_for_deployment(self, name: str) -> None:
+        try:
+            result = self.kubectl(
+                "rollout",
+                "status",
+                f"deployment/{name}",
+                "-n",
+                self.namespace,
+                f"--timeout={self.context.timeout_seconds}s",
+                allowed_codes={0, 1},
+            )
+        except RuntimeError as error:
+            diagnostics = [str(error)]
+        else:
+            if result.passed:
+                return
+            diagnostics = [result.output]
+        try:
+            deployment = self.resource("deployment", name)
+            selector = ",".join(
+                f"{key}={value}"
+                for key, value in deployment["spec"]["selector"]["matchLabels"].items()
+            )
+            pods = json.loads(
+                self.kubectl(
+                    "get",
+                    "pods",
+                    "-n",
+                    self.namespace,
+                    "-l",
+                    selector,
+                    "-o",
+                    "json",
+                ).output
+            )["items"]
+            for pod in sorted(
+                pods, key=lambda p: p["metadata"]["creationTimestamp"], reverse=True
+            )[:3]:
+                pod_name = pod["metadata"]["name"]
+                status = pod.get("status", {})
+                diagnostics.append(
+                    f"{pod_name} status: {json.dumps(status, sort_keys=True)}"
+                )
+                previous = any(
+                    s.get("restartCount", 0)
+                    for s in status.get("containerStatuses", [])
+                )
+                for flags in ((), ("--previous",)) if previous else ((),):
+                    logs = self.kubectl(
+                        "logs",
+                        pod_name,
+                        "-n",
+                        self.namespace,
+                        "--all-containers=true",
+                        "--tail=80",
+                        "--prefix=true",
+                        *flags,
+                        allowed_codes={0, 1},
+                    )
+                    diagnostics.append(logs.output)
+            events = self.kubectl(
+                "get",
+                "events",
+                "-n",
+                self.namespace,
+                "--sort-by=.lastTimestamp",
+                allowed_codes={0, 1},
+            )
+            diagnostics.append(events.output[-8000:])
+        except Exception as error:
+            diagnostics.append(f"rollout diagnostics unavailable: {error}")
+        raise RuntimeError(
+            f"deployment/{name} failed to become ready:\n" + "\n".join(diagnostics)
+        )
+
     def verify_prerequisites(self) -> None:
         self.require_executables("docker", "helm", "kubectl")
         self._run(("kubectl", "version", "--client=true"))

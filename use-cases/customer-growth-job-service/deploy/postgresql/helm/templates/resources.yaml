@@ -120,12 +120,16 @@ spec:
           ports:
             - { name: postgresql, containerPort: 5432 }
           startupProbe:
-            exec: { command: ["bash", "-ec", "PGPASSWORD=$POSTGRESQL_PASSWORD pg_isready -U $POSTGRESQL_USERNAME -d $POSTGRESQL_DATABASE"] }
-            periodSeconds: 2
-            failureThreshold: 60
+            # The bootstrap server listens only on loopback. Probe the Pod IP
+            # so workloads cannot connect before roles and schemas are seeded.
+            tcpSocket: { port: postgresql }
+            periodSeconds: 3
+            timeoutSeconds: 3
+            failureThreshold: 100
           readinessProbe:
-            exec: { command: ["bash", "-ec", "PGPASSWORD=$POSTGRESQL_PASSWORD pg_isready -U $POSTGRESQL_USERNAME -d $POSTGRESQL_DATABASE"] }
+            exec: { command: ["pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-t", "3"] }
             periodSeconds: 5
+            timeoutSeconds: 5
           resources:
             {{- toYaml .Values.postgresql.resources | nindent 12 }}
           volumeMounts:

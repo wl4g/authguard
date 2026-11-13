@@ -38,7 +38,7 @@ class E2EImagesDefinitions:
             "keycloak": "registry.cn-shenzhen.aliyuncs.com/wl4g/keycloak:26.7.0",
             "ldap": "registry.cn-shenzhen.aliyuncs.com/wl4g/glauth:v2.5.0",
             "jaeger": "registry.cn-shenzhen.aliyuncs.com/wl4g/jaegertracing_all-in-one:1.76.0",
-            "postgres": "registry.cn-shenzhen.aliyuncs.com/wl4g/bitnami_postgresql:18.3",
+            "postgres": "registry.cn-shenzhen.aliyuncs.com/wl4g/bitnami_postgresql:18.6",
             "anvil": "registry.cn-shenzhen.aliyuncs.com/wl4g/foundry_anvil:1.7.1",
             "solana": "registry.cn-shenzhen.aliyuncs.com/wl4g/anza_solana:3.1.14",
             "web_builder": "registry.cn-shenzhen.aliyuncs.com/wl4g/node:22-alpine",
@@ -58,6 +58,7 @@ class E2EImagesDefinitions:
             "keycloak": "quay.io/keycloak/keycloak:26.7.0",
             "ldap": "docker.io/glauth/glauth:v2.5.0",
             "jaeger": "docker.io/jaegertracing/all-in-one:1.76.0",
+            # PostgreSQL 18.6, mirrored as the same patch version in Aliyun.
             "postgres": "docker.io/bitnami/postgresql@sha256:7d77a46bbf200709237318c27dec0eaeae2520e403dd18fdebde2be7a6b04993",
             "anvil": "ghcr.io/foundry-rs/foundry:v1.7.1",
             "solana": "docker.io/anzaxyz/agave:v3.1.14",
