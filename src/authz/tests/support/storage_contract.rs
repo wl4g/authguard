@@ -17,7 +17,7 @@ const ALLOWED_JOB: &str = "urn:iam:prod:customer-growth:global:example-corp:work
 const DENIED_JOB: &str = "urn:iam:prod:customer-growth:global:example-corp:workspace/growth/project/acquisition/job/executive-audience-export";
 
 /// Exercises the externally observable contract shared by the `SQLite` and
-/// `PostgreSQL` implementations. The policy fixture touches every normalized
+/// `PostgreSQL` implementations. The policy input covers every normalized
 /// authorization table: policy, action, role, role-action, role-binding, and
 /// principal.
 pub async fn assert_repository_contract<R>(repository: &R)

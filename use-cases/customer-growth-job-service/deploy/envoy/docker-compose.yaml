@@ -1,0 +1,31 @@
+services:
+  envoy:
+    image: ${AUTHGUARD_E2E_ENVOY_IMAGE:?use util/images.py}
+    command:
+    - -c
+    - /etc/envoy/e2e-envoy.yaml
+    - --log-level
+    - info
+    volumes:
+    - ./source/envoy.yaml:/etc/envoy/e2e-envoy.yaml:ro
+    ports:
+    - 127.0.0.1::8082
+    - 127.0.0.1::19000
+    platform: ${AUTHGUARD_E2E_PLATFORM:-linux/amd64}
+    depends_on:
+      authn:
+        condition: service_started
+      authz:
+        condition: service_started
+      web:
+        condition: service_started
+      go-sqlx:
+        condition: service_started
+      rust-sqlx:
+        condition: service_started
+      python-sqlalchemy:
+        condition: service_started
+      spring-jdbc:
+        condition: service_started
+      spring-jpa:
+        condition: service_started

@@ -1,0 +1,22 @@
+services:
+  solana:
+    image: ${AUTHGUARD_E2E_SOLANA_IMAGE:?use util/images.py}
+    environment:
+      HOME: /tmp
+    entrypoint:
+    - sh
+    - -c
+    command:
+    - exec solana-test-validator --bind-address="$$(hostname -i | cut -d' ' -f1)"
+      --rpc-port=8899 --faucet-port=8900 --ledger=/tmp/solana-ledger --quiet --limit-ledger-size=1000
+      --faucet-sol=10 --rpc-pubsub-max-active-subscriptions=16 --rpc-pubsub-notification-threads=0
+      --rpc-pubsub-worker-threads=1 --rpc-pubsub-queue-capacity-items=32 --rpc-pubsub-queue-capacity-bytes=1048576
+    ports:
+    - 127.0.0.1::8899
+    security_opt:
+    - seccomp=unconfined
+    volumes:
+    - solana-ledger:/tmp/solana-ledger
+    platform: ${AUTHGUARD_E2E_SOLANA_PLATFORM:?use util/images.py}
+volumes:
+  solana-ledger: null

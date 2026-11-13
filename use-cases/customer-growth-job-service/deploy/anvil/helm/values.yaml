@@ -1,0 +1,13 @@
+support:
+  enabled: true
+anvil:
+  enabled: true
+  image: ''
+  pullPolicy: Never
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi

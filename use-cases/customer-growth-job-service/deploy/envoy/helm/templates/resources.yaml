@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: envoy-config }
+data:
+  envoy.yaml: |
+{{ required "config is required" .Values.config | replace "address: authn" (printf "address: %s" .Values.authnService) | replace "address: authz" (printf "address: %s" .Values.authzService) | replace "address: web" (printf "address: %s" .Values.webService) | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: envoy }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app.kubernetes.io/name: envoy } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: envoy } }
+    spec:
+      containers:
+        - name: envoy
+          image: {{ required "image must be supplied by util/images.py" .Values.image | quote }}
+          args: ["-c", "/etc/envoy/source/envoy.yaml"]
+          ports: [{name: http, containerPort: 8082}, {name: admin, containerPort: 19000}]
+          volumeMounts: [{name: config, mountPath: /etc/envoy}]
+      volumes: [{name: config, configMap: {name: envoy-config}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: envoy}
+spec:
+  selector: {app.kubernetes.io/name: envoy}
+  ports: [{name: http, port: 8082, targetPort: http}, {name: admin, port: 19000, targetPort: admin}]

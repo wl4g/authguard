@@ -86,7 +86,7 @@ Keycloak is an optional external enterprise IdP integration, never a runtime dep
 ```text
 src/authn/       authguard-authn: Providers, ExternalIdentity, linking, identity bindings
 src/authz/        authguard-authz: Principals, policy, ext_authz, Authorization Scope
-src/adapters/    workload access-context SDKs
+src/sdk/    workload access-context SDKs
 deploy/          default Envoy Gateway + AuthN + AuthZ deployment
 ```
 

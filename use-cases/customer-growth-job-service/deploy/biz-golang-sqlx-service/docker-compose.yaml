@@ -1,0 +1,33 @@
+services:
+  go-sqlx:
+    environment:
+      PORT: '8080'
+      AUTHGUARD_GRPC_TARGET: authz:8081
+      AUTHGUARD_GRPC_TLS: 'false'
+      AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY: e2e-authguard-access-context-hmac-key
+      OTEL_TRACES_SAMPLER: always_on
+      OTEL_TRACING_ENABLED: 'true'
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
+      AUTHGUARD_OTEL_GRPC_ENDPOINT: http://jaeger:4317
+      OTEL_SERVICE_NAME: go-sqlx
+      DATABASE_URL: postgresql://e2e_authguard_customer_growth_go_sqlx:e2e-authguard-customer-growth-go-sqlx-password@postgresql:5432/e2e_authguard_customer_growth?sslmode=disable&options=-csearch_path%3De2e_authguard_customer_growth_go_sqlx
+    ports:
+    - 127.0.0.1::8080
+    tmpfs:
+    - /tmp
+    image: ${AUTHGUARD_E2E_GO_SQLX_IMAGE:?use util/images.py}
+    platform: ${AUTHGUARD_E2E_PLATFORM:-linux/amd64}
+    build:
+      context: ../../../..
+      dockerfile: use-cases/customer-growth-job-service/deploy/biz-golang-sqlx-service/Dockerfile
+      args:
+        DEBIAN_IMAGE: ${DEBIAN_IMAGE:?use util/images.py}
+        GO_IMAGE: ${GO_IMAGE:?use util/images.py}
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      authz:
+        condition: service_started
+      jaeger:
+        condition: service_started

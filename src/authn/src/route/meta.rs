@@ -94,6 +94,8 @@ struct SessionMetadata {
 
 pub(crate) struct MetaRoutes;
 
+// Axum handlers must return futures even when their work is synchronous.
+#[allow(clippy::unused_async, clippy::unused_async_trait_impl)]
 impl MetaRoutes {
     pub(crate) fn router(pipeline: std::sync::Arc<AuthenticationPipeline>) -> Router {
         Router::new()
@@ -104,8 +106,6 @@ impl MetaRoutes {
             .with_state(pipeline)
     }
 
-    // Axum handlers return futures even when their current work is synchronous.
-    #[allow(clippy::unused_async)]
     async fn metadata(headers: HeaderMap) -> Result<Json<AuthenticationMetadata>, ApiError> {
         let application_config = AppConfig::get();
         let config = application_config.get_authn();
@@ -121,14 +121,12 @@ impl MetaRoutes {
         Ok(Json(Self::build_metadata(config, application)))
     }
 
-    #[allow(clippy::unused_async)]
     async fn jwks(
         State(pipeline): State<std::sync::Arc<AuthenticationPipeline>>,
     ) -> Result<Json<serde_json::Value>, StatusCode> {
         pipeline.jwks().map(Json).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)
     }
 
-    #[allow(clippy::unused_async)]
     async fn session(
         State(pipeline): State<std::sync::Arc<AuthenticationPipeline>>,
         headers: HeaderMap,
@@ -139,7 +137,6 @@ impl MetaRoutes {
         Ok(response)
     }
 
-    #[allow(clippy::unused_async)]
     async fn logout() -> Response {
         let mut response = StatusCode::NO_CONTENT.into_response();
         response.headers_mut().append(
@@ -236,39 +233,5 @@ impl MetaRoutes {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::BTreeMap;
-
-    use authguard_common::config::{EvmWalletChainProperties, OidcProviderProperties};
-    use serde_json::json;
-
-    use super::*;
-
-    #[test]
-    fn discovery_exposes_capabilities_without_provider_secrets() {
-        let mut config = AuthnProperties::default();
-        let oidc = OidcProviderProperties {
-            issuer: "https://id.example".to_string(),
-            client_secret: "must-not-leak".to_string(),
-            ..OidcProviderProperties::default()
-        };
-        config.providers.insert("corporate".to_string(), ProviderProperties::Oidc(oidc));
-        config.standalone.enabled = true;
-        config.standalone.webauthn.enabled = true;
-        config.wallet.enabled = true;
-        config.wallet.chains.eip155 = BTreeMap::from([(
-            "1".to_string(),
-            EvmWalletChainProperties { rpc: Some("https://secret-rpc.example".to_string()) },
-        )]);
-
-        let value =
-            serde_json::to_value(MetaRoutes::build_metadata(&config, None)).expect("metadata JSON");
-        assert_eq!(value["oauth2"]["providers"][0]["id"], "corporate");
-        assert_eq!(value["standalone"]["webauthn"], true);
-        assert_eq!(value["wallet"]["chains"], json!(["eip155:1"]));
-        assert_eq!(value["wallet"]["contractVerificationChains"], json!(["eip155:1"]));
-        let rendered = value.to_string();
-        assert!(!rendered.contains("must-not-leak"));
-        assert!(!rendered.contains("secret-rpc"));
-    }
-}
+#[path = "../../tests/route/meta.rs"]
+mod tests;

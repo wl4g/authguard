@@ -1,0 +1,9 @@
+dependencies:
+- name: authguard
+  repository: file://../../../../../deploy/helm/authguard
+  version: 0.1.0
+- name: customer-growth-lib
+  repository: file://../../../util/helm
+  version: 0.1.0
+digest: sha256:df4e0befb7a6d6302ed555cffe312b7615be198bd76a1fee0dbd6fe8b229f48a
+generated: "2026-11-11T22:41:00.638602+08:00"

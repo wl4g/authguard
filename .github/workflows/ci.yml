@@ -78,8 +78,7 @@ jobs:
           platforms: linux/amd64
           build-args: |
             AUTHGUARD_CARGO_FEATURES=web3
-            RUST_BUILDER_IMAGE=docker.io/library/rust:1.94-bookworm
-            RUNTIME_IMAGE=gcr.io/distroless/cc-debian12:nonroot
+            RUST_BUILDER_IMAGE=docker.io/library/rust:1.99.1-slim
           labels: |
             org.opencontainers.image.revision=${{ github.event.pull_request.head.sha }}
             org.opencontainers.image.version=${{ steps.dirty-tag.outputs.value }}
@@ -125,8 +124,8 @@ jobs:
         with:
           go-version: "1.24.x"
           cache-dependency-path: |
-            src/adapters/golang/go.sum
-            use-cases/customer-growth-job-service/e2e/deploy/biz-golang-sqlx-service/go.sum
+            src/sdk/golang/go.sum
+            use-cases/customer-growth-job-service/deploy/biz-golang-sqlx-service/source/go.sum
 
       - name: Install Java
         uses: actions/setup-java@v4
@@ -202,7 +201,7 @@ jobs:
     needs: build-and-test
     # Set the repository/org variable AUTHGUARD_E2E_RUNNER for a larger or
     # self-hosted runner when the default GitHub-hosted capacity is insufficient.
-    runs-on: ${{ vars.AUTHGUARD_E2E_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.AUTHGUARD_E2E_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 120
     permissions:
       contents: read
@@ -230,24 +229,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Install pinned Rust toolchain
-        run: cargo --version
-
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-
-      - name: Install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.24.x"
-
-      - name: Install Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "21"
 
       - name: Install Python
         uses: actions/setup-python@v5
@@ -259,6 +244,8 @@ jobs:
         with:
           version: v3.17.0
 
+      # Ubuntu 26.04's stacked AppArmor labels can deny PostgreSQL's own
+      # process signals with containerd's default profile (containerd#14485).
       - name: Install k3s
         run: |
           curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
@@ -274,17 +261,25 @@ jobs:
       - name: Install browser runtime
         run: |
           make e2e-python
-          use-cases/customer-growth-job-service/e2e/.venv/bin/python \
+          use-cases/customer-growth-job-service/util/.venv/bin/python \
             -m playwright install --with-deps chromium
 
       - name: Run complete E2E matrix against dirty images
         run: make e2e-k8s E2E_K8S_ARGS=--cleanup-after-run
 
+      - name: Capture Kubernetes node diagnostics
+        if: failure()
+        run: |
+          uname -a
+          cat /etc/os-release
+          sudo sysctl kernel.apparmor_restrict_unprivileged_unconfined || true
+          sudo journalctl -k --no-pager -n 300 | grep -E 'apparmor|DENIED|oom|Out of memory' || true
+
       - name: Capture E2E summary
         id: summary
         if: always()
         run: |
-          summary=use-cases/customer-growth-job-service/e2e/reports/00_summary.md
+          summary=use-cases/customer-growth-job-service/reports/00_summary.md
           if [[ -s "${summary}" ]]; then
             echo "base64=$(base64 -w 0 "${summary}")" >> "$GITHUB_OUTPUT"
           fi
@@ -294,7 +289,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: customer-growth-e2e-kubernetes-${{ needs.build-and-test.outputs.dirty_tag }}
-          path: use-cases/customer-growth-job-service/e2e/reports/
+          path: use-cases/customer-growth-job-service/reports/
           if-no-files-found: warn
           retention-days: 14
 
@@ -303,7 +298,7 @@ jobs:
     needs: build-and-test
     # Keep the two backends on separate runner VMs; never serialize their
     # container, browser, database, Keycloak, and Solana resource peaks.
-    runs-on: ${{ vars.AUTHGUARD_E2E_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.AUTHGUARD_E2E_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 120
     permissions:
       contents: read
@@ -330,24 +325,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Install pinned Rust toolchain
-        run: cargo --version
-
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-
-      - name: Install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.24.x"
-
-      - name: Install Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "21"
 
       - name: Install Python
         uses: actions/setup-python@v5
@@ -367,7 +348,7 @@ jobs:
       - name: Install browser runtime
         run: |
           make e2e-python
-          use-cases/customer-growth-job-service/e2e/.venv/bin/python \
+          use-cases/customer-growth-job-service/util/.venv/bin/python \
             -m playwright install --with-deps chromium
 
       - name: Run complete Docker Compose E2E matrix against dirty images
@@ -377,7 +358,7 @@ jobs:
         id: summary
         if: always()
         run: |
-          summary=use-cases/customer-growth-job-service/e2e/reports/00_summary.md
+          summary=use-cases/customer-growth-job-service/reports/00_summary.md
           if [[ -s "${summary}" ]]; then
             echo "base64=$(base64 -w 0 "${summary}")" >> "$GITHUB_OUTPUT"
           fi
@@ -387,7 +368,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: customer-growth-e2e-docker-${{ needs.build-and-test.outputs.dirty_tag }}
-          path: use-cases/customer-growth-job-service/e2e/reports/
+          path: use-cases/customer-growth-job-service/reports/
           if-no-files-found: warn
           retention-days: 14
 

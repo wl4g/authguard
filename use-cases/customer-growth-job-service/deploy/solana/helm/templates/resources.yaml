@@ -1,0 +1,96 @@
+{{- if and .Values.support.enabled .Values.solana.enabled }}
+{{- $name := include "customer-growth-e2e.solanaName" . }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+    app.kubernetes.io/component: solana
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: solana
+  ports:
+    - { name: json-rpc, port: 8899, targetPort: json-rpc }
+    - { name: faucet, port: 8900, targetPort: faucet }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "customer-growth-e2e.labels" . | nindent 4 }}
+    app.kubernetes.io/component: solana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: solana
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: solana
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        # Agave 3.x asserts io_uring availability for its accounts store. This
+        # disposable validator is isolated from AuthGuard and needs the syscall.
+        seccompProfile: { type: Unconfined }
+      containers:
+        - name: solana-test-validator
+          image: {{ .Values.solana.image | quote }}
+          imagePullPolicy: {{ .Values.solana.pullPolicy }}
+          command: ["sh", "-c"]
+          args:
+            - >-
+              exec solana-test-validator --bind-address="$POD_IP"
+              --rpc-port=8899 --faucet-port=8900
+              --ledger=/tmp/solana-ledger --quiet
+              --limit-ledger-size=1000 --faucet-sol=10
+              --rpc-pubsub-max-active-subscriptions=16
+              --rpc-pubsub-notification-threads=0
+              --rpc-pubsub-worker-threads=1
+              --rpc-pubsub-queue-capacity-items=32
+              --rpc-pubsub-queue-capacity-bytes=1048576
+          env:
+            - { name: HOME, value: /tmp }
+            - name: POD_IP
+              valueFrom:
+                fieldRef: { fieldPath: status.podIP }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          ports:
+            - { name: json-rpc, containerPort: 8899 }
+            - { name: faucet, containerPort: 8900 }
+          startupProbe:
+            tcpSocket: { port: json-rpc }
+            periodSeconds: 3
+            failureThreshold: 80
+          readinessProbe:
+            tcpSocket: { port: json-rpc }
+            periodSeconds: 5
+            timeoutSeconds: 2
+          resources:
+            {{- toYaml .Values.solana.resources | nindent 12 }}
+          volumeMounts:
+            - { name: ledger, mountPath: /tmp/solana-ledger }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: ledger
+          # Agave's compact local ledger settles slightly above 1 GiB. Keep a
+          # bounded margin without depending on a cluster storage provisioner.
+          emptyDir:
+            sizeLimit: 2Gi
+        - name: tmp
+          emptyDir: {}
+{{- end }}

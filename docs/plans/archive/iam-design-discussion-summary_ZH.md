@@ -137,8 +137,8 @@ authguard/
   src/common
   src/authz
   src/gateway
-  src/adapters/{rust,golang,python,java}
-  use-cases/customer-growth-job-service/e2e/deploy/{biz-rust-sqlx-service,biz-golang-sqlx-service,biz-python-sqlalchemy-service,biz-springboot-jdbc-service,biz-springboot-jpa-service}
+  src/sdk/{rust,golang,python,java}
+  use-cases/customer-growth-job-service/deploy/{biz-rust-sqlx-service,biz-golang-sqlx-service,biz-python-sqlalchemy-service,biz-springboot-jdbc-service,biz-springboot-jpa-service}
 ```
 
 正式设计文档：

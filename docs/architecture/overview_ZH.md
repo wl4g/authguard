@@ -85,7 +85,7 @@ Keycloak 是可选 external enterprise IdP integration，不是运行时依赖�
 ```text
 src/authn/       authguard-authn：Provider、ExternalIdentity、Account Linking、identity binding
 src/authz/        authguard-authz：Principal、policy、ext_authz、Authorization Scope
-src/adapters/    业务服务 access-context SDK
+src/sdk/    业务服务 access-context SDK
 deploy/          Envoy Gateway + AuthN + AuthZ 默认部署
 ```
 

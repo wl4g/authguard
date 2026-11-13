@@ -1,0 +1,84 @@
+services:
+  authz:
+    image: ${AUTHGUARD_E2E_AUTHGUARD_IMAGE:?use util/images.py}
+    env_file: &id001
+    - ${AUTHGUARD_E2E_RUNTIME_DIR}/authguard.env
+    volumes:
+    - ${AUTHGUARD_E2E_RUNTIME_DIR}/authguard.yaml:/etc/authguard/authguard.yaml:ro
+    tmpfs: &id002
+    - /tmp
+    command:
+    - --config
+    - /etc/authguard/authguard.yaml
+    - authz
+    environment:
+      AUTHGUARD__SERVER__SERVICE_NAME: authguard-authz
+    ports:
+    - 127.0.0.1::8080
+    - 127.0.0.1::8081
+    - 127.0.0.1::9090
+    - 127.0.0.1::${AUTHGUARD_E2E_MGMT_PORT:-9091}
+    platform: ${AUTHGUARD_E2E_PLATFORM:-linux/amd64}
+    build:
+      context: ../../../..
+      dockerfile: use-cases/customer-growth-job-service/deploy/authguard/Dockerfile
+      args:
+        RUST_BUILDER_IMAGE: ${RUST_BUILDER_IMAGE:?use util/images.py}
+        DEBIAN_IMAGE: ${DEBIAN_IMAGE:?use util/images.py}
+        AUTHGUARD_CARGO_FEATURES: web3
+    depends_on: &id003
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+      ldap:
+        condition: service_started
+      jaeger:
+        condition: service_started
+      mock-idp:
+        condition: service_started
+      anvil:
+        condition: service_started
+      solana:
+        condition: service_started
+  authn:
+    image: ${AUTHGUARD_E2E_AUTHGUARD_IMAGE:?use util/images.py}
+    env_file: *id001
+    volumes:
+    - ${AUTHGUARD_E2E_RUNTIME_DIR}/authguard.yaml:/etc/authguard/authguard.yaml:ro
+    tmpfs: *id002
+    command:
+    - --config
+    - /etc/authguard/authguard.yaml
+    - authn
+    - --bind
+    - 0.0.0.0:8082
+    environment:
+      AUTHGUARD__SERVER__SERVICE_NAME: authguard-authn
+    ports:
+    - 127.0.0.1::8082
+    - 127.0.0.1::${AUTHGUARD_E2E_MGMT_PORT:-9091}
+    platform: ${AUTHGUARD_E2E_PLATFORM:-linux/amd64}
+    build:
+      context: ../../../..
+      dockerfile: use-cases/customer-growth-job-service/deploy/authguard/Dockerfile
+      args:
+        RUST_BUILDER_IMAGE: ${RUST_BUILDER_IMAGE:?use util/images.py}
+        DEBIAN_IMAGE: ${DEBIAN_IMAGE:?use util/images.py}
+        AUTHGUARD_CARGO_FEATURES: web3
+    depends_on: *id003
+  web:
+    image: ${AUTHGUARD_E2E_WEB_IMAGE:?use util/images.py}
+    volumes:
+    - ./helm/files/authguard-theme:/usr/share/nginx/html/assets/themes/custom:ro
+    ports:
+    - 127.0.0.1::8080
+    platform: ${AUTHGUARD_E2E_PLATFORM:-linux/amd64}
+    build:
+      context: ../../../../web
+      dockerfile: Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:?use util/images.py}
+        WEB_IMAGE: ${WEB_IMAGE:?use util/images.py}

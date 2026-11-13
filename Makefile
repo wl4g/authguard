@@ -4,7 +4,7 @@ CARGO ?= cargo
 GO ?= go
 PYTHON ?= python3
 MAVEN ?= mvn
-MAVEN_FLAGS ?= -q
+MAVEN_FLAGS ?= -B
 NPM ?= npm
 GOPROXY ?= https://goproxy.cn,direct
 CONTAINER_CLI ?= docker
@@ -20,13 +20,12 @@ VITE_REOWN_PROJECT_ID ?=
 HELM_OCI_REGISTRY ?= oci://ghcr.io/wl4g/charts
 RELEASE_DIR ?= dist
 USE_CASE_DIR := use-cases/customer-growth-job-service
-E2E_DEPLOY_DIR := $(USE_CASE_DIR)/e2e/deploy
-E2E_DIR := $(USE_CASE_DIR)/e2e
-E2E_VENV_DIR ?= $(E2E_DIR)/.venv
+E2E_DIR := $(USE_CASE_DIR)
+E2E_VENV_DIR ?= $(E2E_DIR)/util/.venv
 E2E_PYTHON := $(E2E_VENV_DIR)/bin/python
 PYTHON_TEST_VENV_DIR ?= target/python-test-venv
 PYTHON_TEST := $(PYTHON_TEST_VENV_DIR)/bin/python
-E2E_K8S_SCENARIOS ?= 01,02,03,00,20,10,21,22,23,24,25,26,30,31,40
+E2E_K8S_SCENARIOS ?= 01,02,00,20,10,26,30,31,40,41,42
 E2E_K8S_ARGS ?=
 E2E_DOCKER_SCENARIOS ?= $(E2E_K8S_SCENARIOS)
 E2E_DOCKER_ARGS ?=
@@ -34,6 +33,25 @@ E2E_DEPLOYER ?= kubernetes
 WEB_DIR := web
 DOCKER_COMPOSE_FILE := deploy/docker/docker-compose.yaml
 DOCKER_ENV_FILE := deploy/docker/.env
+
+# Accept the same region flags as the portable E2E image matrix.
+ifeq ($(origin IN_CN_GFW),undefined)
+ifneq ($(filter IN_GFW IN_CN_GFW,$(E2E_IMAGE_NETWORK)),)
+IN_CN_GFW := true
+else ifeq ($(E2E_IMAGE_NETWORK),NON_GFW)
+IN_CN_GFW := false
+else ifneq ($(origin IN_GFW),undefined)
+ifeq ($(filter $(IN_GFW),true false 1 0 IN_GFW NON_GFW),)
+$(error IN_GFW must be true or false)
+endif
+IN_CN_GFW := $(if $(filter true 1 IN_GFW,$(IN_GFW)),true,false)
+else ifneq ($(origin NON_GFW),undefined)
+ifeq ($(filter $(NON_GFW),true false 1 0 IN_GFW NON_GFW),)
+$(error NON_GFW must be true or false)
+endif
+IN_CN_GFW := $(if $(filter true 1 NON_GFW,$(NON_GFW)),false,true)
+endif
+endif
 
 IMAGE_SOURCE_GOALS := image-source build-image build-runtime-image \
 	build-web-image e2e e2e-k8s e2e-docker release
@@ -81,13 +99,11 @@ export AUTHGUARD_E2E_IMAGE_SOURCE
 ifeq ($(AUTHGUARD_IMAGE_SOURCE),aliyun)
 WEB_NODE_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/node:22-alpine
 WEB_RUNTIME_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/nginxinc_nginx-unprivileged:1.27-alpine
-RUST_BUILDER_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-rust-builder:1.94-bookworm
-RUNTIME_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/authguard-runtime:nonroot
+RUST_BUILDER_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/rust:1.99.1-slim
 else
 WEB_NODE_IMAGE ?= docker.io/library/node:22-alpine
 WEB_RUNTIME_IMAGE ?= docker.io/nginxinc/nginx-unprivileged:1.27-alpine
-RUST_BUILDER_IMAGE ?= docker.io/library/rust:1.94-bookworm
-RUNTIME_IMAGE ?= gcr.io/distroless/cc-debian12:nonroot
+RUST_BUILDER_IMAGE ?= docker.io/library/rust:1.99.1-slim
 endif
 
 ifeq ($(TEST_PROXY_PRESENT),)
@@ -102,9 +118,9 @@ help:
 	@echo "Authguard -- Makefile"
 	@echo ""
 	@echo "  Build:"
-	@echo "    make build         Build backend, AuthGuard Web, and Java modules."
+	@echo "    make build         Build backend, AuthGuard Web, Golang, Python, Java, TS modules."
 	@echo "    make build-web     Build the AuthGuard React Dashboard and Hosted Login UI."
-	@echo "    make build-image   Build AuthGuard runtime + AuthGuard Web release images."
+	@echo "    make build-image   Build the AuthGuard server release image."
 	@echo "    make docker-up     Start the local Docker Compose AuthGuard topology."
 	@echo "    make docker-down   Stop the local Docker Compose topology."
 	@echo "    make docker-logs   Follow local Docker Compose logs."
@@ -115,13 +131,13 @@ help:
 	@echo "    make lint-helm     Lint and render the Authguard Helm chart."
 	@echo ""
 	@echo "  Test:"
-	@echo "    make test          Run the full local matrix."
+	@echo "    make test          Run product lint, tests, and Helm checks."
 	@echo "    make test-rust     Run Rust workspace tests."
-	@echo "    make test-go       Run Go adapter and Go use-case tests."
-	@echo "    make test-python   Run Python adapter and Python use-case tests."
-	@echo "    make test-java     Run Java adapter and Spring Boot use-case tests."
+	@echo "    make test-go       Run Go adapter tests."
+	@echo "    make test-python   Run Python adapter tests."
+	@echo "    make test-java     Run Java adapter tests."
 	@echo "    make test-helm     Verify vendored dependencies, lint, and render Helm manifests."
-	@echo "    make e2e           Run the portable cross-language verifier groups."
+	@echo "    make e2e           Run the complete Kubernetes E2E scenarios."
 	@echo "    make e2e-k8s       Clean-deploy and run the complete AuthN/AuthZ/UI/observability matrix."
 	@echo "    make e2e-docker    Run the same complete matrix through Docker Compose."
 	@echo "    make e2e-cleanup   Remove resources owned by E2E_DEPLOYER=kubernetes|docker."
@@ -137,18 +153,15 @@ image-source:
 	@echo "AUTHGUARD_E2E_IMAGE_SOURCE=$(AUTHGUARD_E2E_IMAGE_SOURCE)"
 	@echo "WEB_NODE_IMAGE=$(WEB_NODE_IMAGE)"
 	@echo "RUST_BUILDER_IMAGE=$(RUST_BUILDER_IMAGE)"
-	@echo "RUNTIME_IMAGE=$(RUNTIME_IMAGE)"
 
 build: build-web
 	$(CARGO) build --workspace
-	$(MAVEN) $(MAVEN_FLAGS) -f src/adapters/java/pom.xml -DskipTests install
-	$(MAVEN) $(MAVEN_FLAGS) -f $(E2E_DEPLOY_DIR)/biz-springboot-jdbc-service/pom.xml -DskipTests package
-	$(MAVEN) $(MAVEN_FLAGS) -f $(E2E_DEPLOY_DIR)/biz-springboot-jpa-service/pom.xml -DskipTests package
+	$(MAVEN) $(MAVEN_FLAGS) -f src/sdk/java/pom.xml -DskipTests install
 
 build-web:
 	cd $(WEB_DIR) && $(NPM) ci && $(NPM) run build
 
-build-image: build-runtime-image build-web-image
+build-image: build-runtime-image
 
 build-runtime-image:
 	@size_kb=$$(du -sk target 2>/dev/null | cut -f1); \
@@ -158,7 +171,6 @@ build-runtime-image:
 	  fi
 	$(CONTAINER_CLI) build $(CONTAINER_BUILD_FLAGS) -f deploy/docker/Dockerfile \
 		--build-arg RUST_BUILDER_IMAGE="$(RUST_BUILDER_IMAGE)" \
-		--build-arg RUNTIME_IMAGE="$(RUNTIME_IMAGE)" \
 		--build-arg AUTHGUARD_CARGO_FEATURES="$(AUTHGUARD_CARGO_FEATURES)" \
 		-t $(GHCR_IMAGE):$(VERSION) -t $(GHCR_IMAGE):latest .
 
@@ -205,22 +217,17 @@ test-web:
 	cd $(WEB_DIR) && $(NPM) run build
 
 test-go:
-	cd src/adapters/golang && $(GO_NETWORK_ENV) $(GO) test ./...
-	cd $(E2E_DEPLOY_DIR)/biz-golang-sqlx-service && $(GO_NETWORK_ENV) $(GO) test ./...
+	cd src/sdk/golang && $(GO_NETWORK_ENV) $(GO) test ./...
 
 test-python: test-python-deps
-	PYTHONPATH="$(CURDIR)/src/adapters/python" $(PYTHON_TEST) -m unittest discover -s "$(CURDIR)/src/adapters/python/tests" -v
-	PYTHONPATH="$(CURDIR)/src/adapters/python:$(CURDIR)/$(E2E_DEPLOY_DIR)/biz-python-sqlalchemy-service" $(PYTHON_TEST) -m unittest discover -s "$(CURDIR)/$(E2E_DEPLOY_DIR)/biz-python-sqlalchemy-service/tests" -v
+	PYTHONPATH="$(CURDIR)/src/sdk/python" $(PYTHON_TEST) -m unittest discover -s "$(CURDIR)/src/sdk/python/tests" -v
 
 test-python-deps:
 	@test -x $(PYTHON_TEST) || $(PYTHON) -m venv $(PYTHON_TEST_VENV_DIR)
-	$(PYTHON_TEST) -m pip install --disable-pip-version-check -r src/adapters/python/requirements.txt
-	$(PYTHON_TEST) -m pip install --disable-pip-version-check -r $(E2E_DEPLOY_DIR)/biz-python-sqlalchemy-service/requirements.txt
+	$(PYTHON_TEST) -m pip install --disable-pip-version-check -r src/sdk/python/requirements.txt
 
 test-java:
-	$(MAVEN) $(MAVEN_FLAGS) -f src/adapters/java/pom.xml install
-	$(MAVEN) $(MAVEN_FLAGS) -f $(E2E_DEPLOY_DIR)/biz-springboot-jdbc-service/pom.xml test
-	$(MAVEN) $(MAVEN_FLAGS) -f $(E2E_DEPLOY_DIR)/biz-springboot-jpa-service/pom.xml test
+	$(MAVEN) $(MAVEN_FLAGS) -f src/sdk/java/pom.xml install
 
 test-helm:
 	test -f deploy/helm/authguard/charts/gateway-helm-v1.9.0.tgz
@@ -233,11 +240,10 @@ test-helm:
 e2e-python:
 	test -x $(E2E_PYTHON) || $(PYTHON) -m venv $(E2E_VENV_DIR)
 	$(E2E_PYTHON) -m pip install --disable-pip-version-check -r $(E2E_DIR)/requirements.txt
-	$(E2E_PYTHON) -m pip install --disable-pip-version-check -r $(E2E_DEPLOY_DIR)/biz-python-sqlalchemy-service/requirements.txt
 
 e2e-prepare: e2e-python
 	cd $(WEB_DIR) && $(NPM) ci
-	$(E2E_PYTHON) -m playwright install chromium
+	$(E2E_PYTHON) -m playwright install --only-shell chromium
 
 e2e: e2e-prepare
 	$(E2E_PYTHON) $(E2E_DIR)/runner.py
@@ -256,7 +262,7 @@ package-chart: test-helm
 	helm package deploy/helm/authguard --destination $(RELEASE_DIR) \
 		--version $(VERSION) --app-version $(VERSION)
 
-release: build-image package-chart release-push release-verify
+release: build-runtime-image build-web-image package-chart release-push release-verify
 
 release-push:
 	$(CONTAINER_CLI) push $(GHCR_IMAGE):$(VERSION)

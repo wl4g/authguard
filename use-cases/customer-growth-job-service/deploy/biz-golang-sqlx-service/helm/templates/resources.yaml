@@ -1,0 +1,1 @@
+{{ include "customer-growth-e2e.workloads" . }}

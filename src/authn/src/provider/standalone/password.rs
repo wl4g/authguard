@@ -43,22 +43,9 @@ fn hash_sync(password: &str) -> anyhow::Result<String> {
 
 fn verify_sync(password: &str, encoded_hash: &str) -> bool {
     PasswordHash::new(encoded_hash)
-        .ok()
-        .is_some_and(|hash| argon2id().verify_password(password.as_bytes(), &hash).is_ok())
+        .is_ok_and(|hash| argon2id().verify_password(password.as_bytes(), &hash).is_ok())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn password_hash_is_argon2id_phc_and_verifies() {
-        let verifier = PasswordVerifier::new(12).expect("password verifier");
-        let hash = verifier.hash("correct horse battery staple".to_string()).await.expect("hash");
-        assert!(hash.starts_with("$argon2id$v=19$"));
-        assert!(
-            verifier.verify("correct horse battery staple".to_string(), Some(hash.clone())).await
-        );
-        assert!(!verifier.verify("wrong".to_string(), Some(hash)).await);
-    }
-}
+#[path = "../../../tests/provider/standalone/password.rs"]
+mod tests;

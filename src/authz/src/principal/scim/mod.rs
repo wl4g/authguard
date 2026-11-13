@@ -30,4 +30,5 @@ pub(crate) use implementation::{
 pub use model::*;
 
 #[cfg(test)]
+#[path = "../../../tests/principal/scim/mod.rs"]
 mod tests;

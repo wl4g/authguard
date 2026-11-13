@@ -1,0 +1,13 @@
+services:
+  jaeger:
+    image: ${AUTHGUARD_E2E_JAEGER_IMAGE:?use util/images.py}
+    environment:
+      COLLECTOR_OTLP_ENABLED: 'true'
+      SPAN_STORAGE_TYPE: memory
+      MEMORY_MAX_TRACES: '10000'
+      OTEL_TRACES_SAMPLER: always_off
+    ports:
+    - 127.0.0.1::4317
+    - 127.0.0.1::4318
+    - 127.0.0.1::16686
+    platform: ${AUTHGUARD_E2E_PLATFORM:-linux/amd64}
