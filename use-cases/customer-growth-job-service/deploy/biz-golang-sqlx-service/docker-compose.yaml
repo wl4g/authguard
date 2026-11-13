@@ -24,3 +24,10 @@ services:
       args:
         DEBIAN_IMAGE: ${DEBIAN_IMAGE:?use util/images.py}
         GO_IMAGE: ${GO_IMAGE:?use util/images.py}
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      authz:
+        condition: service_started
+      jaeger:
+        condition: service_started

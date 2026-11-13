@@ -27,3 +27,10 @@ services:
       args:
         MAVEN_IMAGE: ${MAVEN_IMAGE:?use util/images.py}
         JAVA_IMAGE: ${JAVA_IMAGE:?use util/images.py}
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      authz:
+        condition: service_started
+      jaeger:
+        condition: service_started
