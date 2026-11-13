@@ -188,6 +188,14 @@ the current Aliyun Rust/Debian base tags contain AMD64 only. The normal E2E
 uses the already-published native ARM64 Solana image and does not require
 this expensive source build.
 
+The two CI E2E jobs use separate Ubuntu 24.04 runners. The fixed OS baseline
+avoids Ubuntu 26.04's containerd/AppArmor stacked-profile signal regression
+([containerd#14485](https://github.com/containerd/containerd/issues/14485)), which
+can leave PostgreSQL in startup while denying its internal process signals.
+Self-hosted affected nodes need the corrected runtime AppArmor policy; the
+workloads retain their normal confinement. `AUTHGUARD_E2E_RUNNER` still selects
+an explicitly managed runner.
+
 PostgreSQL uses the same 18.6 upstream build in both image sources. Its Kubernetes
 startup probe checks the Pod's TCP listener rather than the temporary loopback
 server used during initialization. Rollout failures include Pod state, recent
