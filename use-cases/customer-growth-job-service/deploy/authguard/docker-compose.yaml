@@ -78,7 +78,7 @@ services:
     platform: ${AUTHGUARD_E2E_PLATFORM:-linux/amd64}
     build:
       context: ../../../../web
-      dockerfile: Dockerfile
+      dockerfile: ../use-cases/customer-growth-job-service/deploy/authguard/web/Dockerfile
       args:
         NODE_IMAGE: ${NODE_IMAGE:?use util/images.py}
         WEB_IMAGE: ${WEB_IMAGE:?use util/images.py}

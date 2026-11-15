@@ -8,7 +8,7 @@ use sqlx::sqlite::{
 use sqlx::Sqlite;
 use tokio::time::sleep;
 
-use super::{IAM_BOOTSTRAP_DML, IAM_SCHEMA_DDL};
+use super::{SQLITE_IAM_BOOTSTRAP_DML, SQLITE_IAM_SCHEMA_DDL};
 use crate::config::SqliteProperties;
 
 /// Shared `SQLite` infrastructure used by entity-specific repositories.
@@ -89,11 +89,11 @@ impl SqliteRepository {
             .begin_with("BEGIN IMMEDIATE")
             .await
             .context("begin serialized SQLite IAM initialization")?;
-        sqlx::raw_sql(IAM_SCHEMA_DDL)
+        sqlx::raw_sql(SQLITE_IAM_SCHEMA_DDL)
             .execute(&mut *initialization)
             .await
             .context("initialize SQLite IAM schema")?;
-        sqlx::raw_sql(IAM_BOOTSTRAP_DML)
+        sqlx::raw_sql(SQLITE_IAM_BOOTSTRAP_DML)
             .execute(&mut *initialization)
             .await
             .context("initialize SQLite IAM bootstrap data")?;

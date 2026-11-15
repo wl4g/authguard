@@ -137,15 +137,9 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
                         "--pull=false",
                         *build_args,
                         "-f",
-                        str(
-                            E2EOtherDefinitions.PROJECT_ROOT
-                            / "deploy"
-                            / "docker"
-                            / "Dockerfile"
-                        ),
+                        str(E2EOtherDefinitions.AUTHGUARD_DOCKERFILE),
                         *E2EImagesDefinitions.build_arguments(
-                            E2EOtherDefinitions.PROJECT_ROOT
-                            / "deploy/docker/Dockerfile",
+                            E2EOtherDefinitions.AUTHGUARD_DOCKERFILE,
                             self.environment,
                         ),
                         "--build-arg",
@@ -165,7 +159,7 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
                         "--pull=false",
                         *build_args,
                         "-f",
-                        str(ui_dir / "Dockerfile"),
+                        str(E2EOtherDefinitions.AUTHGUARD_WEB_DOCKERFILE),
                         "--build-arg",
                         f"NODE_IMAGE={self.environment['NODE_IMAGE']}",
                         "--build-arg",

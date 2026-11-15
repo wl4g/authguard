@@ -1,11 +1,10 @@
 -- =============================================================================
--- AuthGuard canonical IAM schema
+-- AuthGuard canonical IAM schema (SQLite)
 --
 -- AuthN and AuthZ are independently deployable services over one logical IAM
--- datastore. This file is the only authoritative schema definition. Table
+-- datastore. Both services use this versioned SQLite schema. Table
 -- ownership is still explicit: AuthN owns iam_principal_identity; AuthZ owns
 -- role/action/binding data; iam_principal is their shared aggregate root.
--- The SQL subset is accepted by both SQLite and PostgreSQL.
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS iam_principal (

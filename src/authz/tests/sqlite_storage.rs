@@ -61,10 +61,10 @@ async fn concurrent_sqlite_connections_serialize_initialization() {
 fn sqlite_schema_contains_the_unified_iam_tables() {
     let connection = Connection::open_in_memory().expect("open SQLite");
     connection
-        .execute_batch(authguard_common::storage::IAM_SCHEMA_DDL)
+        .execute_batch(authguard_common::storage::SQLITE_IAM_SCHEMA_DDL)
         .expect("apply shared authorization DDL");
     connection
-        .execute_batch(authguard_common::storage::IAM_BOOTSTRAP_DML)
+        .execute_batch(authguard_common::storage::SQLITE_IAM_BOOTSTRAP_DML)
         .expect("apply shared authorization DML");
     let mut statement = connection
         .prepare(
@@ -97,10 +97,10 @@ fn shared_initialization_scripts_are_idempotent_on_sqlite() {
     let connection = Connection::open_in_memory().expect("open SQLite");
     for _ in 0..2 {
         connection
-            .execute_batch(authguard_common::storage::IAM_SCHEMA_DDL)
+            .execute_batch(authguard_common::storage::SQLITE_IAM_SCHEMA_DDL)
             .expect("apply shared authorization DDL");
         connection
-            .execute_batch(authguard_common::storage::IAM_BOOTSTRAP_DML)
+            .execute_batch(authguard_common::storage::SQLITE_IAM_BOOTSTRAP_DML)
             .expect("apply shared authorization DML");
     }
 }

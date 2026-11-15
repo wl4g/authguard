@@ -384,7 +384,7 @@ Hosted Login Web 路由为 `GET /auth/login`、`GET /auth/account/security` 与 
 | 代码 | 已有能力 |
 |---|---|
 | [`src/authn`](../../src/authn/src/handler/authentication.rs) | 统一 proof → linking → JWT；OIDC/OAuth2-like、opt-in standalone/WebAuthn/wallet |
-| [`migrations`](../../migrations/001_init.ddl.sql) | canonical Principal/identity 唯一约束、独立 credential 与资源授权目录 |
+| [`migration`](../../migration/20260904195419/) | PostgreSQL/SQLite DDL 与 DML：canonical Principal/identity 唯一约束、独立 credential 与资源授权目录 |
 | [`Envoy SecurityPolicy`](../../deploy/helm/authguard/templates/gateway/security-policy.yaml) | 受保护业务路由 canonical JWT + `ext_authz`，`failOpen: false` |
 | [`AuthZ evaluator`](../../src/authz/src/handler/policy/mod.rs) | URL-to-URN、RoleBinding、显式 DENY 与默认拒绝 |
 | [`SDK / SQL`](../../src/common/src/utils/sql.rs) | 签名/opaque scope 与显式列映射的 allow/deny SQL 编译 |
