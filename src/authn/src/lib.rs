@@ -18,9 +18,9 @@ pub use principal::jit as account_linking;
 
 pub use config::{
     AccountLinkingProperties, ApplicationProperties, AuthnProperties, BitcoinWalletChainProperties,
-    EvmWalletChainProperties, LinkingStrategy, OidcProviderProperties, ProviderProperties,
-    StandaloneAuthnProperties, TokenProperties, WalletAuthnProperties, WalletChainsProperties,
-    WebauthnProperties,
+    EvmWalletChainProperties, LdapAuthnProperties, LinkingStrategy, OidcProviderProperties,
+    ProviderProperties, StandaloneAuthnProperties, TokenProperties, WalletAuthnProperties,
+    WalletChainsProperties, WebauthnProperties,
 };
 pub use model::{
     AuthenticatedPrincipalContext, AuthenticationResult, ExternalIdentity, ExternalIdentityKey,

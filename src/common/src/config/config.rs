@@ -219,6 +219,7 @@ pub struct AuthnProperties {
     #[serde(rename = "challengeTtl", with = "humantime_serde")]
     pub challenge_ttl: Duration,
     pub standalone: StandaloneAuthnProperties,
+    pub ldap: LdapAuthnProperties,
     pub wallet: WalletAuthnProperties,
     #[serde(rename = "accountLinking")]
     pub account_linking: AccountLinkingProperties,
@@ -269,6 +270,109 @@ pub struct StandaloneAuthnProperties {
 pub struct PasswordAuthnProperties {
     #[serde(rename = "minLength")]
     pub min_length: usize,
+}
+
+/// User password authentication against an independently configured directory.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct LdapAuthnProperties {
+    pub enabled: bool,
+    pub provider_id: String,
+    pub issuer: String,
+    pub url: String,
+    pub base_dn: String,
+    pub bind_dn: String,
+    pub bind_password: String,
+    pub bind_password_file: String,
+    pub user_filter: String,
+    pub subject_attribute: String,
+    pub display_name_attribute: String,
+    #[serde(with = "humantime_serde")]
+    pub connect_timeout: Duration,
+    #[serde(with = "humantime_serde")]
+    pub request_timeout: Duration,
+    pub start_tls: bool,
+    pub allow_insecure: bool,
+}
+
+impl std::fmt::Debug for LdapAuthnProperties {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LdapAuthnProperties")
+            .field("enabled", &self.enabled)
+            .field("provider_id", &self.provider_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Default for LdapAuthnProperties {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider_id: "ldap".to_string(),
+            issuer: String::new(),
+            url: String::new(),
+            base_dn: String::new(),
+            bind_dn: String::new(),
+            bind_password: String::new(),
+            bind_password_file: String::new(),
+            user_filter: "(uid={login})".to_string(),
+            subject_attribute: "entryUUID".to_string(),
+            display_name_attribute: "displayName".to_string(),
+            connect_timeout: Duration::from_secs(3),
+            request_timeout: Duration::from_secs(5),
+            start_tls: false,
+            allow_insecure: false,
+        }
+    }
+}
+
+impl LdapAuthnProperties {
+    /// Validates transport, search identity, and stable-subject configuration.
+    ///
+    /// # Errors
+    /// Returns an error for incomplete credentials or unsafe directory settings.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let url = reqwest::Url::parse(&self.url).context("authn.ldap.url is invalid")?;
+        if url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || !matches!(url.path(), "" | "/")
+            || !matches!(url.scheme(), "ldap" | "ldaps")
+            || (url.scheme() == "ldap" && !self.start_tls && !self.allow_insecure)
+            || (url.scheme() == "ldaps" && self.start_tls)
+        {
+            bail!(
+                "authn.ldap requires LDAPS or StartTLS; plaintext requires explicit allowInsecure"
+            );
+        }
+        if self.provider_id.is_empty()
+            || self.provider_id.len() > 128
+            || !self
+                .provider_id
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.'))
+            || reqwest::Url::parse(&self.issuer).is_err()
+            || [&self.base_dn, &self.bind_dn]
+                .iter()
+                .any(|v| v.trim().is_empty() || v.chars().any(char::is_control))
+            || (self.bind_password.is_empty() == self.bind_password_file.is_empty())
+            || self.connect_timeout.is_zero()
+            || self.request_timeout.is_zero()
+            || self.user_filter.matches("{login}").count() != 1
+            || self.subject_attribute.is_empty()
+            || [&self.subject_attribute, &self.display_name_attribute].iter().any(|v| {
+                !v.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'.' | b';'))
+            })
+        {
+            bail!("authn.ldap requires providerId, issuer, DNs, one bind credential, timeouts and a {{login}} userFilter with subjectAttribute");
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -896,6 +1000,7 @@ impl Default for AuthnProperties {
             applications: BTreeMap::new(),
             challenge_ttl: Duration::from_mins(5),
             standalone: StandaloneAuthnProperties::default(),
+            ldap: LdapAuthnProperties::default(),
             wallet: WalletAuthnProperties::default(),
             account_linking: AccountLinkingProperties::default(),
             token: TokenProperties::default(),
@@ -1577,6 +1682,13 @@ fn validate_authn(authn: &AuthnProperties, cache: &CacheProperties) -> anyhow::R
     }
 
     validate_standalone_authn(&authn.standalone)?;
+    authn.ldap.validate()?;
+    if authn.ldap.enabled
+        && (authn.providers.contains_key(&authn.ldap.provider_id)
+            || matches!(authn.ldap.provider_id.as_str(), "standalone" | "wallet"))
+    {
+        bail!("authn.ldap.providerId must not collide with another authentication provider");
+    }
     validate_wallet_authn(&authn.wallet)?;
     Ok(())
 }

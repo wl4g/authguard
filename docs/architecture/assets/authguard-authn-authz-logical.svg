@@ -1,0 +1,130 @@
+<?xml version="1.0" ?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1350" viewBox="0 0 1440 1350" role="img" aria-labelledby="title desc">
+  <title id="title">Authguard logical overview</title>
+  <desc id="desc">A compact logical view precedes the detailed physical diagram. Gateway routes authentication to AuthN and protected API checks to AuthZ. AuthN verifies credentials, IdP exchanges or signing proofs, then resolves canonical identity through JIT/account linking and issues JWTs. AuthZ checks CUD actions/targets and read API admission/scope. Gateway forwards business traffic directly to business services; embedded SDKs compile read scope into SQL WHERE and apply mutation guards. Corporate sources support discovery and SCIM lifecycle facts. State combines IAM DB and Redis conceptually. Native authentication/authorization is independent. Number groups reference the physical view.</desc>
+  <metadata>Authguard logical architecture; 2026-11-15; Apache-2.0. Overview; detailed calls and implementation gaps are specified separately.</metadata>
+  <defs>
+    <marker id="run" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10Z" fill="#f0f1df"/>
+    </marker>
+    <marker id="native" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10Z" fill="#e9b681"/>
+    </marker>
+  </defs>
+  <style>text{font-family:"Chalkboard SE","Comic Sans MS","Trebuchet MS",sans-serif}text,path{stroke-linecap:round;stroke-linejoin:round}path{vector-effect:non-scaling-stroke}</style>
+  <rect width="1440" height="1350" fill="#182c24"/>
+  <rect x="350" y="280" width="740" height="840" rx="16" fill="#1b3226" stroke="#b6d8aa" stroke-width="1.7" stroke-dasharray="8 7"/>
+  <g id="corporate" data-component="corporate" data-control="external">
+    <rect x="950" y="110" width="460" height="140" rx="12" fill="#252f47" stroke="#b8c4ed" stroke-width="1.7" stroke-dasharray="8 7"/>
+  </g>
+  <g id="caller" data-component="caller" data-control="external">
+    <rect x="30" y="430" width="260" height="140" rx="12" fill="#252f47" stroke="#b8c4ed" stroke-width="1.7" stroke-dasharray="8 7"/>
+  </g>
+  <g id="gateway" data-component="gateway" data-control="guard">
+    <rect x="400" y="430" width="240" height="140" rx="12" fill="#203c2a" stroke="#b6d8aa" stroke-width="1.7" stroke-dasharray="8 7"/>
+  </g>
+  <g id="authn" data-component="authn" data-control="guard">
+    <rect x="740" y="330" width="320" height="156" rx="12" fill="#203c2a" stroke="#b6d8aa" stroke-width="1.7" stroke-dasharray="8 7"/>
+  </g>
+  <g id="authz" data-component="authz" data-control="guard">
+    <rect x="740" y="730" width="320" height="170" rx="12" fill="#203c2a" stroke="#b6d8aa" stroke-width="1.7" stroke-dasharray="8 7"/>
+  </g>
+  <g id="admin" data-component="admin" data-control="external">
+    <rect x="30" y="730" width="260" height="130" rx="12" fill="#252f47" stroke="#b8c4ed" stroke-width="1.7" stroke-dasharray="8 7"/>
+  </g>
+  <g id="business" data-component="business" data-control="external">
+    <rect x="1140" y="430" width="270" height="320" rx="12" fill="#252f47" stroke="#b8c4ed" stroke-width="1.7" stroke-dasharray="8 7"/>
+  </g>
+  <g id="sdk" data-component="sdk" data-control="guard">
+    <rect x="1160" y="550" width="230" height="165" rx="12" fill="#203c2a" stroke="#b6d8aa" stroke-width="1.7" stroke-dasharray="8 7"/>
+  </g>
+  <g id="state" data-component="state" data-control="guard">
+    <rect x="400" y="990" width="660" height="110" rx="12" fill="#203c2a" stroke="#b6d8aa" stroke-width="1.7" stroke-dasharray="8 7"/>
+  </g>
+  <g id="native" data-component="native" data-control="native">
+    <rect x="1140" y="910" width="270" height="190" rx="12" fill="#3d2c21" stroke="#e9b681" stroke-width="1.7" stroke-dasharray="12 6 2 6"/>
+  </g>
+  <path d="M290 500H400" fill="none" stroke="#182c24" stroke-width="7" stroke-linejoin="round"/>
+  <path class="runtime" d="M290 500H400" fill="none" stroke="#f0f1df" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#run)" marker-start="url(#run)" data-flow="client-gateway"/>
+  <path d="M640 460H680V408H740" fill="none" stroke="#182c24" stroke-width="7" stroke-linejoin="round"/>
+  <path class="runtime" d="M640 460H680V408H740" fill="none" stroke="#f0f1df" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#run)" marker-start="url(#run)" data-flow="login-jwt"/>
+  <path d="M1040 375H1080V250" fill="none" stroke="#182c24" stroke-width="7" stroke-linejoin="round"/>
+  <path class="runtime" d="M1040 375H1080V250" fill="none" stroke="#f0f1df" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#run)" marker-start="url(#run)" data-flow="proof-source"/>
+  <path d="M640 535H680V820H740" fill="none" stroke="#182c24" stroke-width="7" stroke-linejoin="round"/>
+  <path class="runtime" d="M640 535H680V820H740" fill="none" stroke="#f0f1df" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#run)" marker-start="url(#run)" data-flow="api-check-scope"/>
+  <path d="M640 500H1140" fill="none" stroke="#182c24" stroke-width="7" stroke-linejoin="round"/>
+  <path class="runtime" d="M640 500H1140" fill="none" stroke="#f0f1df" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#run)" data-flow="allowed-business-request"/>
+  <path d="M290 795H740" fill="none" stroke="#182c24" stroke-width="7" stroke-linejoin="round"/>
+  <path class="management" d="M290 795H740" fill="none" stroke="#f0f1df" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#run)" stroke-dasharray="8 6" data-flow="preauthorization"/>
+  <path d="M1410 180H1430V868H1060" fill="none" stroke="#182c24" stroke-width="7" stroke-linejoin="round"/>
+  <path class="management" d="M1410 180H1430V868H1060" fill="none" stroke="#f0f1df" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#run)" stroke-dasharray="8 6" marker-start="url(#run)" data-flow="discovery-scim"/>
+  <path d="M1020 486V620H1080V1045H1060" fill="none" stroke="#182c24" stroke-width="7" stroke-linejoin="round"/>
+  <path class="state" d="M1020 486V620H1080V1045H1060" fill="none" stroke="#f0f1df" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#run)" stroke-dasharray="2 5" marker-start="url(#run)" data-flow="identity-state"/>
+  <path d="M900 900V990" fill="none" stroke="#182c24" stroke-width="7" stroke-linejoin="round"/>
+  <path class="state" d="M900 900V990" fill="none" stroke="#f0f1df" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#run)" stroke-dasharray="2 5" marker-start="url(#run)" data-flow="policy-state"/>
+  <path d="M1270 750V910" fill="none" stroke="#182c24" stroke-width="7" stroke-linejoin="round"/>
+  <path class="native" d="M1270 750V910" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#native)" stroke-dasharray="12 5 2 5" data-flow="business-native"/>
+  <path d="M30 540H16V1130H1430V1005H1410" fill="none" stroke="#182c24" stroke-width="7" stroke-linejoin="round"/>
+  <path class="native" d="M30 540H16V1130H1430V1005H1410" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#native)" stroke-dasharray="12 5 2 5" data-flow="sa-native-io"/>
+  <text x="30" y="43" font-size="30" fill="#f0f1df" font-weight="700" text-anchor="start">Authguard - logical overview</text>
+  <text x="30" y="76" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">Identity proof, API decisions and data enforcement (number groups match the physical view).</text>
+  <text x="370" y="310" font-size="18" fill="#b6d8aa" font-weight="600" text-anchor="start">1 Authguard (deploy / configure)</text>
+  <text x="968" y="141" font-size="21" fill="#b8c4ed" font-weight="650" text-anchor="start">Corporate Central Identity / Policy sources</text>
+  <text x="968" y="170" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">LDAP / DSP / Keycloak</text>
+  <text x="968" y="194" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">Identity / group facts</text>
+  <text x="968" y="218" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">(verification / discover / SCIM)</text>
+  <text x="48" y="461" font-size="21" fill="#b8c4ed" font-weight="650" text-anchor="start">User / ServiceAccount</text>
+  <text x="48" y="490" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">UI / Business API (workload)</text>
+  <text x="48" y="514" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">(cookie / bearer token)</text>
+  <text x="418" y="461" font-size="21" fill="#b6d8aa" font-weight="650" text-anchor="start">Envoy Gateway (PEP)</text>
+  <text x="418" y="490" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">JWT check / routing</text>
+  <text x="418" y="514" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">Enforce allow / deny</text>
+  <text x="758" y="361" font-size="21" fill="#b6d8aa" font-weight="650" text-anchor="start">AuthN</text>
+  <text x="758" y="390" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">Local Credentials / redirect IdP verify</text>
+  <text x="758" y="414" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">Identity -&gt; JWT</text>
+  <text x="758" y="438" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">(JIT linking canonical principal after)</text>
+  <text x="758" y="761" font-size="21" fill="#b6d8aa" font-weight="650" text-anchor="start">AuthZ</text>
+  <text x="758" y="790" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">CRUD: Action checks by URNs scope</text>
+  <text x="758" y="814" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">(filtering by http 5 tuples)</text>
+  <text x="758" y="838" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">Management / discover / SCIM</text>
+  <text x="48" y="761" font-size="21" fill="#b8c4ed" font-weight="650" text-anchor="start">Admin UI</text>
+  <text x="48" y="790" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">Discover -&gt; save -&gt; grant</text>
+  <text x="48" y="814" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">(management API)</text>
+  <text x="1158" y="461" font-size="21" fill="#b8c4ed" font-weight="650" text-anchor="start">Business MicroServices</text>
+  <text x="1158" y="490" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">HTTP APIs (R / CUD)</text>
+  <text x="1178" y="581" font-size="21" fill="#b6d8aa" font-weight="650" text-anchor="start">Authguard SDK</text>
+  <text x="1178" y="610" font-size="13" fill="#bdd0bf" font-weight="400" text-anchor="start">R: URNs -&gt; Query SQL WHERE</text>
+  <text x="1178" y="634" font-size="13" fill="#bdd0bf" font-weight="400" text-anchor="start">CUD: URNs -&gt; Update SQL WHERE</text>
+  <text x="1178" y="658" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">(resources PEP)</text>
+  <text x="418" y="1021" font-size="21" fill="#b6d8aa" font-weight="650" text-anchor="start">Authguard State (DB / Redis)</text>
+  <text x="418" y="1050" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">Identity / policy / transient state</text>
+  <text x="418" y="1074" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">(shared by AuthN and AuthZ)</text>
+  <text x="1158" y="941" font-size="21" fill="#e9b681" font-weight="650" text-anchor="start">Native AuthN / AuthZ</text>
+  <text x="1158" y="970" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">(outside Authguard)</text>
+  <text x="1158" y="994" font-size="14" fill="#bdd0bf" font-weight="400" text-anchor="start">PG / Airflow / Kafka / Redis / S3 ...</text>
+  <text x="1158" y="1018" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">Cloud IAM (native grants)</text>
+  <circle cx="345" cy="484" r="14" fill="#182c24" stroke="#f0f1df"/>
+  <text x="345" y="489" font-size="14" fill="#f0f1df" font-weight="650" text-anchor="middle">5,9</text>
+  <text x="430" y="414" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">5-8 Login / canonical JWT</text>
+  <text x="1093" y="301" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">6 External proof (when used)</text>
+  <text x="420" y="712" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">10 Check / 11 scope</text>
+  <text x="780" y="525" font-size="16" fill="#f0f1df" font-weight="400" text-anchor="start">12 Allowed request + scope</text>
+  <text x="350" y="784" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">2-4 Discover / materialize / grant</text>
+  <text x="1110" y="846" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">14 SCIM (corporate changed policies publishing)</text>
+  <circle cx="1147" cy="578" r="14" fill="#182c24" stroke="#b6d8aa"/>
+  <text x="1147" y="583" font-size="14" fill="#b6d8aa" font-weight="650" text-anchor="middle">13</text>
+  <text x="1128" y="888" font-size="15" fill="#e9b681" font-weight="400" text-anchor="start">Native credentials</text>
+  <text x="650" y="1158" font-size="15" fill="#e9b681" font-weight="400" text-anchor="start">ServiceAccount native I/O (outside Authguard)</text>
+  <rect x="30" y="1190" width="22" height="18" rx="3" fill="#203c2a" stroke="#b6d8aa" stroke-width="1.7"/>
+  <text x="62" y="1205" font-size="16" fill="#b6d8aa" font-weight="600" text-anchor="start">Authguard Control</text>
+  <text x="62" y="1230" font-size="15" fill="#b6d8aa" font-weight="400" text-anchor="start">(filter &amp; SDK enforcement)</text>
+  <rect x="500" y="1190" width="22" height="18" rx="3" fill="#252f47" stroke="#b8c4ed" stroke-width="1.7"/>
+  <text x="532" y="1205" font-size="16" fill="#b8c4ed" font-weight="600" text-anchor="start">Authguard Related External Interaction</text>
+  <text x="532" y="1230" font-size="15" fill="#b8c4ed" font-weight="400" text-anchor="start">(corporate central auth source)</text>
+  <rect x="990" y="1190" width="22" height="18" rx="3" fill="#3d2c21" stroke="#e9b681" stroke-width="1.7"/>
+  <text x="1022" y="1205" font-size="16" fill="#e9b681" font-weight="600" text-anchor="start">Outside Authguard (Non-Control)</text>
+  <text x="1022" y="1230" font-size="15" fill="#e9b681" font-weight="400" text-anchor="start">(controlled by each middleware component)</text>
+  <text x="30" y="1270" font-size="15" fill="#bdd0bf" font-weight="400" text-anchor="start">PEP (Policy Enforcement Point) / PDP (Policy Decision Point) / JIT (Just-in-Time provisioning) / DSP (Digital Security Platform)</text>
+  <text x="30" y="1295" font-size="14" fill="#bdd0bf" font-weight="400" text-anchor="start">PEP enforces access / PDP evaluates policy / JIT resolves or creates identity after proof.</text>
+  <text x="30" y="1322" font-size="14" fill="#bdd0bf" font-weight="400" text-anchor="start">R (Read) includes an API check before SDK row filtering.</text>
+</svg>

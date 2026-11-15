@@ -16,10 +16,11 @@ use axum::Router;
 
 #[cfg(feature = "web3")]
 use crate::handler::WalletHandler;
-use crate::handler::{AuthnRuntime, OAuth2Handler, StandaloneHandler};
+use crate::handler::{AuthnRuntime, LdapHandler, OAuth2Handler, StandaloneHandler};
 
 pub(crate) mod application;
 mod authentication;
+pub(crate) mod ldap;
 mod meta;
 mod standalone;
 #[cfg(feature = "web3")]
@@ -49,10 +50,14 @@ impl AuthnRoutes {
     ) -> anyhow::Result<Router> {
         let oauth = OAuth2Handler::open(metrics.clone(), runtime).await?;
         let standalone = StandaloneHandler::open(runtime)?;
+        let ldap = LdapHandler::open(metrics.clone(), runtime)?;
         #[cfg(feature = "web3")]
         let wallet = WalletHandler::open(runtime)?;
 
         let mut routes = meta::MetaRoutes::router(runtime.pipeline.clone());
+        if let Some(handler) = ldap {
+            routes = routes.merge(ldap::LdapRoutes::router(handler));
+        }
         if let Some(handler) = oauth {
             routes = routes.merge(authentication::OAuth2Routes::router(handler));
         }

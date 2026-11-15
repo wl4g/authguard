@@ -34,6 +34,7 @@ export type AuthMetadata = {
     webauthnRegistrationChallengeEndpoint: string; webauthnRegistrationVerifyEndpoint: string
     webauthnAuthenticationChallengeEndpoint: string; webauthnAuthenticationVerifyEndpoint: string
   }
+  ldap: { enabled: boolean; loginEndpoint: string }
   wallet: { enabled: boolean; chains: string[]; contractVerificationChains: string[]; challengeEndpoint: string; verifyEndpoint: string; linkEndpoint: string }
 }
 

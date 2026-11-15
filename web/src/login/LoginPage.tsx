@@ -22,13 +22,14 @@ export function LoginPage() {
   const hosted = location.pathname === '/auth/login'
   const returnTo = new URLSearchParams(location.search).get('return_to') || (hosted ? '/' : '')
   const [meta, setMeta] = useState<AuthMetadata | null>(null)
+  const [passwordSource, setPasswordSource] = useState<'standalone' | 'ldap'>('standalone')
   const [login, setLogin] = useState('')
   const [password, setPassword] = useState('')
   const [totp, setTotp] = useState('')
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
 
-  useEffect(() => { loadMetadata().then(setMeta).catch(cause => setError(String(cause))) }, [])
+  useEffect(() => { loadMetadata().then(value => { setMeta(value); if (value.ldap?.enabled) setPasswordSource('ldap') }).catch(cause => setError(String(cause))) }, [])
   function authenticated(result: LoginResponse) {
     accept(result)
     if (hosted) {
@@ -43,8 +44,9 @@ export function LoginPage() {
     event.preventDefault(); if (!meta) return
     setBusy('password'); setError('')
     try {
-      authenticated(await authn<LoginResponse>(meta.standalone.loginEndpoint, {
-        method: 'POST', body: JSON.stringify({ login, password, totp: totp || null, returnTo }),
+      const endpoint = passwordSource === 'ldap' ? meta.ldap.loginEndpoint : meta.standalone.loginEndpoint
+      authenticated(await authn<LoginResponse>(endpoint, {
+        method: 'POST', body: JSON.stringify(passwordSource === 'ldap' ? { login, password, returnTo } : { login, password, totp: totp || null, returnTo }),
       }))
     } catch (cause) { setError(cause instanceof Error ? cause.message : t('apiError')) }
     finally { setBusy('') }
@@ -95,10 +97,11 @@ export function LoginPage() {
         <div className="mobile-brand">{brand?.logo ? <img src={brand.logo} alt=""/> : <Fingerprint/>}<b>{brandName}</b></div>
         <h2>{hosted && brand ? `${t('signInTo')} ${brandName}` : t('login')}</h2><p>{t('authenticatedAs')} <code>canonical principal</code></p>
         <form onSubmit={passwordLogin}>
+          {meta?.ldap?.enabled && meta.standalone.enabled && <label>{t('provider')}<select data-testid="login-password-source" value={passwordSource} disabled={busy !== ''} onChange={event => { setPasswordSource(event.target.value as 'standalone' | 'ldap'); setPassword(''); setTotp('') }}><option value="ldap">{t('directoryAccount')}</option><option value="standalone">{t('localAccount')}</option></select></label>}
           <label>{t('loginId')}<input data-testid="login-id" autoComplete="username" value={login} onChange={event => setLogin(event.target.value)} required /></label>
           <label>{t('password')}<input data-testid="login-password" type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required /></label>
-          {meta?.standalone.totp && <label>{t('totp')}<input data-testid="login-totp" inputMode="numeric" autoComplete="one-time-code" value={totp} onChange={event => setTotp(event.target.value)} /></label>}
-          <button data-testid="login-password-submit" className="primary" disabled={busy !== '' || !meta?.standalone.password}><KeyRound size={18}/>{busy === 'password' ? t('connecting') : t('login')}</button>
+          {passwordSource === 'standalone' && meta?.standalone.totp && <label>{t('totp')}<input data-testid="login-totp" inputMode="numeric" autoComplete="one-time-code" value={totp} onChange={event => setTotp(event.target.value)} /></label>}
+          <button data-testid="login-password-submit" className="primary" disabled={busy !== '' || !(passwordSource === 'ldap' ? meta?.ldap?.enabled : meta?.standalone.password)}><KeyRound size={18}/>{busy === 'password' ? t('connecting') : t('login')}</button>
         </form>
         {meta?.standalone.webauthn && <button data-testid="login-webauthn" className="auth-method" disabled={busy !== '' || !login} onClick={passkeyLogin}><ScanFace size={19}/><span>{t('passkey')}</span><i>FIDO2</i></button>}
         {meta && <WalletLogin metadata={meta} returnTo={returnTo} onAuthenticated={authenticated}/>}

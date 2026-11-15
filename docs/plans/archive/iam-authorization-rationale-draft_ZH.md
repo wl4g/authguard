@@ -2,11 +2,11 @@
 
 > **历史文档 / Superseded：** 本草稿记录早期 `iam_subject` / `iam_group` /
 > `iam_grant` 候选模型，已被当前 Principal/Action/Role/RoleBinding 模型取代。现行契约以
-> [IAM 授权白皮书](../../architecture/iam-authorization-whitepaper_ZH.md#5-数据模型)为准。
+> [IAM 授权白皮书](../../architecture/Authguard-AuthN-AuthZ-Whitepaper_ZH.md#specification)为准。
 
 **状态：** Historical / Superseded
 **日期：** 2026-08-21
-**用途：** 复盘为什么采用当前 IAM 设计，不作为正式架构规范。正式规范见 `authguard/docs/architecture/iam-authorization-whitepaper_ZH.md`。
+**用途：** 复盘为什么采用当前 IAM 设计，不作为正式架构规范。正式规范见 `authguard/docs/architecture/Authguard-AuthN-AuthZ-Whitepaper_ZH.md`。
 
 ## 1. 为什么不直接用 request 四元组做权限控制？
 
