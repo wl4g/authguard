@@ -738,9 +738,9 @@ class E2ES01StructureVerifier(BaseVerifier):
                 "AuthGuard Helm templates must be module-scoped; unexpected root files: "
                 + ", ".join(sorted(unexpected_root_templates))
             )
-        web_dockerfile_source = (
-            E2EOtherDefinitions.PROJECT_ROOT / "web/Dockerfile"
-        ).read_text(encoding="utf-8")
+        web_dockerfile_source = E2EOtherDefinitions.AUTHGUARD_WEB_DOCKERFILE.read_text(
+            encoding="utf-8"
+        )
         mainland_images = E2EImagesDefinitions.references(
             {"AUTHGUARD_E2E_IMAGE_SOURCE": "aliyun"}
         )
@@ -762,9 +762,9 @@ class E2ES01StructureVerifier(BaseVerifier):
         image_catalog_source = (
             E2EOtherDefinitions.USE_CASE_DIR / "util/images.py"
         ).read_text(encoding="utf-8")
-        runtime_dockerfile_source = (
-            E2EOtherDefinitions.PROJECT_ROOT / "deploy/docker/Dockerfile"
-        ).read_text(encoding="utf-8")
+        runtime_dockerfile_source = E2EOtherDefinitions.AUTHGUARD_DOCKERFILE.read_text(
+            encoding="utf-8"
+        )
         image_source_markers = (
             "AUTHGUARD_E2E_IMAGE_SOURCE",
             "registry-1.docker.io/v2/",

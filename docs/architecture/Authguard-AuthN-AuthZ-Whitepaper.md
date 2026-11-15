@@ -384,7 +384,7 @@ This **2026-11-15 source review includes targeted LDAP verification**. Real-dire
 | Source | Existing behavior |
 |---|---|
 | [`src/authn`](../../src/authn/src/handler/authentication.rs) | One proof → linking → JWT pipeline; OIDC/OAuth2-like and opt-in standalone/WebAuthn/wallet |
-| [`migrations`](../../migrations/001_init.ddl.sql) | Canonical Principal/identity uniqueness, separate credentials and resource-policy catalog |
+| [`migration`](../../migration/20260904195419/) | PostgreSQL/SQLite DDL and DML for canonical Principal/identity uniqueness, separate credentials and resource-policy catalog |
 | [`Envoy SecurityPolicy`](../../deploy/helm/authguard/templates/gateway/security-policy.yaml) | Canonical JWT + `ext_authz` on protected business routes; `failOpen: false` |
 | [`AuthZ evaluator`](../../src/authz/src/handler/policy/mod.rs) | URL-to-URN, RoleBindings, explicit DENY, and default denial |
 | [`SDK / SQL`](../../src/common/src/utils/sql.rs) | Signed/opaque scopes and allow/deny SQL compilation with explicit column mapping |

@@ -21,6 +21,8 @@ class E2EOtherDefinitions:
     USE_CASE_DIR = E2E_DIR
     PROJECT_ROOT = USE_CASE_DIR.parents[1]
     DEPLOY_DIR = E2E_DIR / "deploy"
+    AUTHGUARD_DOCKERFILE = DEPLOY_DIR / "authguard" / "Dockerfile"
+    AUTHGUARD_WEB_DOCKERFILE = DEPLOY_DIR / "authguard" / "web" / "Dockerfile"
     AUTHGUARD_CONFIG_DIR = DEPLOY_DIR / "authguard" / "config"
     AUTHGUARD_INIT_SQL_PATH = DEPLOY_DIR / "postgresql" / "source" / "init.sql"
     SCENARIOS_PATH = E2E_DIR / "verifier" / "scenarios.json"

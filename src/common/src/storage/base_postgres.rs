@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use sqlx::Postgres;
 
-use super::{IAM_BOOTSTRAP_DML, IAM_SCHEMA_DDL, IAM_SCHEMA_LOCK};
+use super::{IAM_SCHEMA_LOCK, POSTGRES_IAM_BOOTSTRAP_DML, POSTGRES_IAM_SCHEMA_DDL};
 use crate::config::PostgresProperties;
 
 /// Shared `PostgreSQL` infrastructure used by entity-specific repositories.
@@ -99,11 +99,11 @@ impl PostgresRepository {
             .execute(&mut *initialization)
             .await
             .context("serialize PostgreSQL IAM initialization")?;
-        sqlx::raw_sql(IAM_SCHEMA_DDL)
+        sqlx::raw_sql(POSTGRES_IAM_SCHEMA_DDL)
             .execute(&mut *initialization)
             .await
             .context("initialize PostgreSQL IAM schema")?;
-        sqlx::raw_sql(IAM_BOOTSTRAP_DML)
+        sqlx::raw_sql(POSTGRES_IAM_BOOTSTRAP_DML)
             .execute(&mut *initialization)
             .await
             .context("initialize PostgreSQL IAM bootstrap data")?;

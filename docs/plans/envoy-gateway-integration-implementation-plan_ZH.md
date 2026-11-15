@@ -66,13 +66,13 @@ src/common/src/storage/       底层按 SQLite/PostgreSQL、上层按 IAM 主实
 src/common/src/cache          Memory/Redis IAuthorizationCache（仅 opaque scope-token context）
 src/common/src/utils      AuthN/AuthZ 共用的 HTTP 匹配、JWT 等工具
 src/common/src/apm        AuthN/AuthZ 共用的 OTel、Prometheus 与运行时诊断
-migrations                单一 IAM datastore 的顶层 DDL/DML（含 AuthN identity binding 与 AuthZ policy）
+migration/20260904195419/{postgres,sqlite}/  按数据库分目录的 IAM DDL/DML（含 AuthN identity binding 与 AuthZ policy）
 src/sdk             Java、Go、Python、Rust workload SDK
 ```
 
 `model/` 只保存协议无关的 IAM 实体模型；HTTP DTO 与业务流程归属 AuthZ handler，SQL
 行映射只封装在对应的 `*_sqlite.rs` / `*_postgres.rs`，不得泄漏到 handler。AuthN 与 AuthZ
-共用顶层、单份、编号一致的 DDL/DML migration；表的写入所有权仍由
+共用同一版本、按数据库分目录的 DDL/DML migration；表的写入所有权仍由
 模块边界约束，不因共用 datastore 而互相调用内部 repository。
 
 ## 2. 配置与存储
@@ -93,7 +93,8 @@ AuthN 与 AuthZ 共用的唯一主配置为 `etc/authguard.yaml`，容器使用
 - `storage`：SQLite 或 PostgreSQL；本地默认 SQLite，生产多副本使用 PostgreSQL。
 - `cache`：Memory 或 Redis Cluster；本地默认 Memory，Helm 默认 Redis Cluster。
 
-AuthN/AuthZ schema 初始化统一使用仓库根目录 `migrations/001_init.ddl.sql` 与 `001_init.dml.sql`；
+AuthN/AuthZ schema 初始化按数据库加载 `migration/20260904195419/{postgres,sqlite}/` 下的
+`init.ddl.sql` 与 `init.dml.sql`；
 两者共用配置文件、migration 和 datastore，但数据库职责和 crate 依赖不耦合。
 
 持久化 schema 不包含 `iam_policy`：授权目录由 `iam_principal`、`iam_action`、`iam_role`、

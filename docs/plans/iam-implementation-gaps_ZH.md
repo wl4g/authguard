@@ -15,8 +15,8 @@
   `iam_role_binding`；不持久化冗余的 `iam_policy` aggregate。
 - SQLite 单机/开发 repository 与 PostgreSQL 共享持久化 repository；策略跨副本一致性尚未完成。
 - `model/` 只承载协议无关的 IAM 实体，HTTP DTO 归属 handler，SQL 行映射封装在
-  对应 `*_sqlite.rs` / `*_postgres.rs`；两种数据库实现共用
-  `001_init.ddl.sql`/`001_init.dml.sql` migration。
+  对应 `*_sqlite.rs` / `*_postgres.rs`；两种数据库实现分别加载
+  `migration/20260904195419/{sqlite,postgres}/` 下的 `init.ddl.sql`/`init.dml.sql`。
 - Memory/Redis Cluster `IAuthorizationCache` 仅保存 opaque scope-token context；
   `PolicyRuntime` 独立持有进程内编译授权目录。
 - Envoy v3 extAuth gRPC、HTTP tuple-to-URN matcher、显式 DENY 优先与默认拒绝。

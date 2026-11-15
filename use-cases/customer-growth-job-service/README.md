@@ -47,6 +47,7 @@ customer-growth-job-service/
       helm/                            component-owned Chart, values and templates
     authguard/config/                  AuthGuard deployment overrides and E2E signing keys
     authguard/Dockerfile                link to the production server Dockerfile
+    authguard/web/Dockerfile            link to the production Web Dockerfile
     postgresql/source/init.sql         shared SQL seed data
   verifier/                            vertical scenario ownership
     context.py                         VerificationContext and shared runtime/result contract
@@ -80,6 +81,8 @@ Each locally built mock business service keeps only its deployable implementatio
 in `source/`, beside its Dockerfile, Compose definition and Helm Chart.
 Configuration-only middleware keeps its custom input under `source/`; AuthGuard
 deployment overrides and test signing keys live under `deploy/authguard/config/`.
+The server and Web Dockerfiles, including their Docker ignore files, link to the
+production build recipes. Web builds use the repository's `web/` as their context.
 
 All E2E verification code under `verifier/` is Python. Services contain no
 acceptance-test source directories or external UT profiles. AuthZ 26 verifies
@@ -226,6 +229,7 @@ util/.venv/bin/python util/images.py -- helm template jaeger deploy/jaeger/helm 
 util/.venv/bin/python util/images.py -- helm install jaeger deploy/jaeger/helm -n e2e-authguard-system --create-namespace
 util/.venv/bin/python util/images.py -- docker compose -f deploy/jaeger/docker-compose.yaml up -d
 util/.venv/bin/python util/images.py -- docker build -f deploy/biz-rust-sqlx-service/Dockerfile ../..
+util/.venv/bin/python util/images.py -- docker build -f deploy/authguard/web/Dockerfile ../../web
 ```
 
 Each Chart owns its resources; PostgreSQL owns shared database bootstrap, and
