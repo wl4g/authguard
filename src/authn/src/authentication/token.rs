@@ -61,8 +61,10 @@ impl TokenIssuer {
         } else {
             config.token.private_key.clone()
         };
-        let authn_enabled =
-            !config.providers.is_empty() || config.standalone.enabled || config.wallet.enabled;
+        let authn_enabled = !config.providers.is_empty()
+            || config.standalone.enabled
+            || config.ldap.enabled
+            || config.wallet.enabled;
         if key.is_empty() && authn_enabled {
             anyhow::bail!(
                 "authn.token privateKey, privateKeyB64, or privateKeyFile is required when AuthN is enabled"
