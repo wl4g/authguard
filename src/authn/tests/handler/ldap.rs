@@ -45,7 +45,7 @@ impl Fixture {
         let mut authn = AuthnProperties { ldap: config.clone(), ..AuthnProperties::default() };
         authn.account_linking.authoritative_providers.insert(config.provider_id.clone());
         authn.token.private_key = include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
-            "/../../use-cases/customer-growth-job-service/deploy/authguard/config/jwt-keys/resign-jwt-key.pem")).into();
+            "/../../use-cases/customer-growth-job-service/deploy/mock-gateway-service/config/jwt-keys/resign-jwt-key.pem")).into();
         let pipeline = AuthenticationPipeline::new(
             authn.account_linking.clone(),
             repository.clone() as Arc<dyn IdentityBindingRepository>,

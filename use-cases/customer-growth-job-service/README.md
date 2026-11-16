@@ -35,20 +35,34 @@ It additionally proves the Envoy Gateway JWT public-key requirement with a
 deterministic realm key, the workload OAuth2 client_credentials flow, and the
 resign-JWT Authguard-origin boundary inside a business microservice.
 
+Middleware definitions live in [`deploy/helm/authguard`](../../deploy/helm/authguard)
+and [`deploy/docker/docker-compose.yaml`](../../deploy/docker/docker-compose.yaml).
+The use case supplies test overrides instead of reimplementing those services.
+`mock-gateway-service` is the simulated platform's unified authentication and
+authorization gateway: the production AuthGuard middleware with this platform's
+Hosted Login theme, routes and configuration. Its `helm/` is the E2E Helm entry.
+The mock identity sources and five `mock-biz-*-service` projects are subcharts;
+`customer-growth-lib` is packaged only under the gateway Chart and provides their
+shared labels and workload templates.
+
 ## Structure
 
 ```text
 customer-growth-job-service/
   deploy/                              horizontal service/component ownership
-    <component>/
+    mock-biz-<implementation>-service/  simulated business microservice
       source/                          deployable mock service implementation only
       Dockerfile                       buildable component only; upstream middleware uses pinned images
       docker-compose.yaml              component-owned Compose service
       helm/                            component-owned Chart, values and templates
-    authguard/config/                  AuthGuard deployment overrides and E2E signing keys
-    authguard/Dockerfile                link to the production server Dockerfile
-    authguard/web/Dockerfile            link to the production Web Dockerfile
-    postgresql/source/init.sql         shared SQL seed data
+    mock-gateway-service/              customized AuthGuard gateway and platform Helm entry
+      config/                          runtime config, init.sql and E2E signing keys
+      Dockerfile                       link to the production server Dockerfile
+      web/Dockerfile                   link to the production Web Dockerfile
+      docker-compose.yaml              overrides for the canonical Compose stack
+      helm/
+        files/authguard-theme/         platform login theme
+        charts/                        AuthGuard, one shared library and mock subcharts
   verifier/                            vertical scenario ownership
     context.py                         VerificationContext and shared runtime/result contract
     scenarios.json                     shared verification inputs and expected outcomes
@@ -73,14 +87,16 @@ customer-growth-job-service/
   requirements.txt
 ```
 
-The top-level Compose file only includes components. Each service owns its
+The top-level Compose file includes the canonical `../../deploy/docker/docker-compose.yaml`
+with use-case overrides, followed by the mock and business components. Each service owns its
 `depends_on` beside its deployment definition, so Compose 2.38 can load the
 same dependency graph without overriding imported resources.
 
-Each locally built mock business service keeps only its deployable implementation
-in `source/`, beside its Dockerfile, Compose definition and Helm Chart.
+Each mock business service keeps its implementation in `source/`, beside its
+Dockerfile, Compose definition and child Chart. Render the child Charts through
+`deploy/mock-gateway-service/helm`; the parent owns the shared library package.
 Configuration-only middleware keeps its custom input under `source/`; AuthGuard
-deployment overrides and test signing keys live under `deploy/authguard/config/`.
+deployment overrides and test signing keys live under `deploy/mock-gateway-service/config/`.
 The server and Web Dockerfiles, including their Docker ignore files, link to the
 production build recipes. Web builds use the repository's `web/` as their context.
 
@@ -208,7 +224,11 @@ startup probe checks the Pod's TCP listener rather than the temporary loopback
 server used during initialization. Rollout failures include Pod state, recent
 container logs and Kubernetes events in the report before cleanup.
 
-Each round removes and recreates an `e2e-` namespace and installs component-scoped Helm releases.
+Each round recreates an isolated `e2e-` namespace. The AuthGuard release owns the
+canonical Envoy Gateway, PostgreSQL, Redis Cluster, and Jaeger. The same gateway
+Chart groups mock identity sources and business services in a separate platform
+release. The runner enables sources first, installs AuthGuard and Gateway API
+CRDs, then enables business subcharts through a platform release upgrade.
 The normal Customer Growth support/workload release uses the business Chart's
 default `authguard.enabled=false`. A separate one-time release of that same
 Chart enables its vendored `charts/authguard-0.1.0.tgz`; `.Files.Glob` packages
@@ -222,22 +242,21 @@ component Compose files require the matrix environment; Dockerfiles receive
 base-image arguments from the same catalog. Environment overrides are applied
 once there. Do not add a versioned image URL to a component definition.
 
-From `use-cases/customer-growth-job-service/`, the same wrapper supports standard standalone deployment commands:
+From `use-cases/customer-growth-job-service/`, use the gateway Chart for Helm
+commands and each service Dockerfile for image builds:
 
 ```bash
-util/.venv/bin/python util/images.py -- helm template jaeger deploy/jaeger/helm -n e2e-authguard-system
-util/.venv/bin/python util/images.py -- helm install jaeger deploy/jaeger/helm -n e2e-authguard-system --create-namespace
-util/.venv/bin/python util/images.py -- docker compose -f deploy/jaeger/docker-compose.yaml up -d
-util/.venv/bin/python util/images.py -- docker build -f deploy/biz-rust-sqlx-service/Dockerfile ../..
-util/.venv/bin/python util/images.py -- docker build -f deploy/authguard/web/Dockerfile ../../web
+util/.venv/bin/python util/images.py -- helm template customer-growth deploy/mock-gateway-service/helm --set mockSources.enabled=true --set mockBusiness.enabled=true
+util/.venv/bin/python util/images.py -- docker build -f deploy/mock-biz-rust-sqlx-service/Dockerfile ../..
+util/.venv/bin/python util/images.py -- docker build -f deploy/mock-gateway-service/web/Dockerfile ../../web
 ```
 
-Each Chart owns its resources; PostgreSQL owns shared database bootstrap, and
-the AuthGuard integration Chart owns shared credentials. The runner supplies
-those integration values to dependent services. Five business Charts reuse one
-local Helm library instead of copying deployment logic. The Envoy Gateway
-controller requires Kubernetes even when run through its optional Compose
-profile; the Compose test topology uses the separate native Envoy component.
+The production Chart owns middleware resources. The use-case integration Chart
+owns only test credentials, PostgreSQL seed/bootstrap inputs, and theme assets. The runner supplies
+those integration values to dependent services. The gateway parent loads one shared Helm library for all mock subcharts. Run
+`helm dependency update deploy/mock-gateway-service/helm` after changing a mock
+Chart; the structure verifier checks that its packaged copy is current. The Kubernetes topology uses the bundled Envoy Gateway controller; Compose
+uses the native Envoy service from the production Compose stack.
 The E2E signing test data are test-only, not production secrets.
 
 Run the equivalent Docker Compose path when Kubernetes is unavailable:
@@ -282,7 +301,7 @@ assertions, but never bearer tokens, client secrets, or LDAP bind credentials.
 
 ### Deterministic realm signing key
 
-The realm imports a fixed RSA key pair (see `deploy/authguard/config/jwt-keys/`) through the
+The realm imports a fixed RSA key pair (see `deploy/mock-gateway-service/config/jwt-keys/`) through the
 realm `keys[]` signing data instead of letting Keycloak generate one at first start.
 The paired public JWKS is rendered as a ConfigMap by the support chart, and the
 Authguard SecurityPolicy consumes it through `localJWKS.existingConfigMap`, so

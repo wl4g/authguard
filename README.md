@@ -102,7 +102,7 @@ The reproducible application and verifier suite lives in
 |---|---|---|
 | Runtime | `ghcr.io/wl4g/authguard:<version>` | `authn`, `authz`, and `api` commands |
 | Web UI | `ghcr.io/wl4g/authguard-web:<version>` | Static React Dashboard and Hosted Login UI |
-| Helm chart | `oci://ghcr.io/wl4g/charts/authguard:<version>` | Envoy Gateway, AuthGuard, Redis Cluster, PostgreSQL, routes, and policies |
+| Helm chart | `oci://ghcr.io/wl4g/charts/authguard:<version>` | Envoy Gateway, AuthGuard, Redis Cluster, PostgreSQL, Jaeger, routes, and policies |
 
 `make release` builds and publishes exactly these two product images and the
 OCI chart, then pulls each artifact back for verification.

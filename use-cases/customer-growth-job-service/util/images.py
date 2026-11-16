@@ -117,7 +117,6 @@ class E2EImagesDefinitions:
     HELM_IMAGES = {
         "keycloak.image": "keycloak",
         "ldap.image": "ldap",
-        "jaeger.image": "jaeger",
         "postgresql.image": "postgres",
         "anvil.image": "anvil",
         "solana.image": "solana",
@@ -276,6 +275,8 @@ class E2EImagesDefinitions:
             dockerfile = Path(
                 command[command.index(flag) + 1] if flag else "Dockerfile"
             )
+            if flag:
+                command[command.index(flag) + 1] = str(dockerfile.resolve())
             position = command.index("build") + 1
             command[position:position] = cls.build_arguments(dockerfile, environment)
             component = (
@@ -333,9 +334,9 @@ class E2EImagesDefinitions:
                 ),
                 None,
             )
-            if component is None:
+            if component != "authguard":
                 raise ValueError(
-                    "select a component Chart under deploy/<component>/helm"
+                    "use deploy/mock-gateway-service/helm as the Helm entry; mock services share its library scope"
                 )
             with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as values:
                 json.dump(

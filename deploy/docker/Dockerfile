@@ -10,7 +10,9 @@ COPY rust-toolchain.toml ./
 RUN cargo --version
 COPY . .
 ARG AUTHGUARD_CARGO_FEATURES=""
-RUN if [ -n "${AUTHGUARD_CARGO_FEATURES}" ]; then \
+ARG CARGO_BUILD_JOBS=2
+RUN if [ -d target ] && [ "$(du -sk target | cut -f1)" -gt 20971520 ]; then cargo clean; fi; \
+    if [ -n "${AUTHGUARD_CARGO_FEATURES}" ]; then \
       cargo build --locked --release -p authguard-cmd --bin authguard \
         --features "${AUTHGUARD_CARGO_FEATURES}"; \
     else \

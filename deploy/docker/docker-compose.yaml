@@ -1,76 +1,140 @@
-version: "3.8"
-
+# Shared production/development stack; E2E adds only fixture/build overrides.
 services:
-  postgres:
-    image: registry.cn-shenzhen.aliyuncs.com/wl4g/bitnami_postgresql:18.3
-    environment:
-      POSTGRESQL_USERNAME: authguard
-      POSTGRESQL_PASSWORD: ${AUTHGUARD__STORAGE__POSTGRES__PASSWORD:?set AUTHGUARD__STORAGE__POSTGRES__PASSWORD in .env}
-      POSTGRESQL_DATABASE: authguard
-    volumes: [postgres-data:/bitnami/postgresql]
-    healthcheck:
-      test: [CMD-SHELL, 'pg_isready -U authguard -d authguard']
-      interval: 5s
-      timeout: 3s
-      retries: 30
-
   redis:
-    # A single local Redis instance preserves AuthN/AuthZ cache semantics. Helm
-    # remains the HA Redis Cluster topology for production Kubernetes.
-    image: redis:7.2-alpine
-    command: [redis-server, --save, "", --appendonly, "no", --requirepass, "${AUTHGUARD__CACHE__REDIS__PASSWORD:?set AUTHGUARD__CACHE__REDIS__PASSWORD in .env}"]
+    image: ${AUTHGUARD_REDIS_IMAGE:-redis:7.2-alpine}
     healthcheck:
-      test: [CMD-SHELL, 'redis-cli --no-auth-warning -a "${AUTHGUARD__CACHE__REDIS__PASSWORD:?set AUTHGUARD__CACHE__REDIS__PASSWORD in .env}" ping | grep -q PONG']
+      test:
+      - CMD-SHELL
+      - redis-cli --no-auth-warning -a "$$REDIS_PASSWORD" cluster info | grep -q cluster_state:ok
       interval: 5s
       timeout: 3s
       retries: 30
-
+    profiles:
+    - redis
+    entrypoint:
+    - /bin/sh
+    - /etc/authguard/redis-entrypoint.sh
+    environment:
+      REDIS_PASSWORD: ${AUTHGUARD__CACHE__REDIS__PASSWORD:?set AUTHGUARD__CACHE__REDIS__PASSWORD
+        in .env}
+    volumes:
+    - ./config/redis-entrypoint.sh:/etc/authguard/redis-entrypoint.sh:ro
   authn:
-    image: ghcr.io/wl4g/authguard:0.1.0
-    command: [--config, /etc/authguard/authguard.yaml, authn, --bind, 0.0.0.0:8082]
-    env_file: [.env]
+    image: ${AUTHGUARD_IMAGE:-ghcr.io/wl4g/authguard:0.1.0}
+    command:
+    - --config
+    - /etc/authguard/authguard.yaml
+    - authn
+    - --bind
+    - 0.0.0.0:8082
+    env_file:
+    - ${AUTHGUARD_ENV_FILE:-.env}
     environment:
       AUTHGUARD__SERVER__SERVICE_NAME: authguard-authn
+      AUTHGUARD__MGMT__OTEL__ENABLED: ${AUTHGUARD_OTEL_ENABLED:-true}
+      AUTHGUARD__MGMT__OTEL__ENDPOINT: ${AUTHGUARD_OTEL_ENDPOINT:-http://jaeger:4317}
     volumes:
-      - ./config/authguard.yaml:/etc/authguard/authguard.yaml:ro
+    - ${AUTHGUARD_CONFIG_FILE:-./config/authguard.yaml}:/etc/authguard/authguard.yaml:ro
     depends_on:
-      postgres: { condition: service_healthy }
-      redis: { condition: service_healthy }
-    expose: ["8082", "9091"]
-
+      redis:
+        condition: service_healthy
+        required: false
+      postgresql:
+        condition: service_healthy
+        required: false
+    expose:
+    - '8082'
+    - '9091'
   authz:
-    image: ghcr.io/wl4g/authguard:0.1.0
-    command: [--config, /etc/authguard/authguard.yaml, authz]
-    env_file: [.env]
+    image: ${AUTHGUARD_IMAGE:-ghcr.io/wl4g/authguard:0.1.0}
+    command:
+    - --config
+    - /etc/authguard/authguard.yaml
+    - authz
+    env_file:
+    - ${AUTHGUARD_ENV_FILE:-.env}
     environment:
       AUTHGUARD__SERVER__SERVICE_NAME: authguard-authz
+      AUTHGUARD__MGMT__OTEL__ENABLED: ${AUTHGUARD_OTEL_ENABLED:-true}
+      AUTHGUARD__MGMT__OTEL__ENDPOINT: ${AUTHGUARD_OTEL_ENDPOINT:-http://jaeger:4317}
     volumes:
-      - ./config/authguard.yaml:/etc/authguard/authguard.yaml:ro
+    - ${AUTHGUARD_CONFIG_FILE:-./config/authguard.yaml}:/etc/authguard/authguard.yaml:ro
     depends_on:
-      postgres: { condition: service_healthy }
-      redis: { condition: service_healthy }
-    expose: ["8080", "8081", "9090", "9091"]
-
+      redis:
+        condition: service_healthy
+        required: false
+      postgresql:
+        condition: service_healthy
+        required: false
+    expose:
+    - '8080'
+    - '8081'
+    - '9090'
+    - '9091'
   web:
-    image: ghcr.io/wl4g/authguard-web:0.1.0
+    image: ${AUTHGUARD_WEB_IMAGE:-ghcr.io/wl4g/authguard-web:0.1.0}
     depends_on:
-      authn: { condition: service_started }
-      authz: { condition: service_started }
-    expose: ["8080"]
-
-  # Mirrors the Helm data plane: one same-origin listener exposes public
-  # AuthN/UI paths and protects the business catch-all with jwt_authn -> ext_authz.
+      authn:
+        condition: service_started
+      authz:
+        condition: service_started
+    expose:
+    - '8080'
   envoy:
-    image: registry.cn-shenzhen.aliyuncs.com/wl4g/envoyproxy_envoy:distroless-v1.36.4
-    command: [-c, /etc/envoy/source/envoy.yaml, --log-level, info]
+    image: ${AUTHGUARD_ENVOY_IMAGE:-registry.cn-shenzhen.aliyuncs.com/wl4g/envoyproxy_envoy:distroless-v1.36.4}
+    command:
+    - -c
+    - /etc/envoy/source/envoy.yaml
+    - --log-level
+    - info
     ports:
-      - "8080:8080"
+    - ${AUTHGUARD_GATEWAY_BIND:-127.0.0.1:8080}:${AUTHGUARD_GATEWAY_PORT:-8080}
     volumes:
-      - ./config/envoy.yaml:/etc/envoy/source/envoy.yaml:ro
+    - ${AUTHGUARD_ENVOY_CONFIG_FILE:-./config/envoy.yaml}:/etc/envoy/source/envoy.yaml:ro
     depends_on:
-      authn: { condition: service_started }
-      authz: { condition: service_started }
-      web: { condition: service_started }
-
+      authn:
+        condition: service_started
+      authz:
+        condition: service_started
+      web:
+        condition: service_started
+    profiles:
+    - envoy
+  postgresql:
+    image: ${AUTHGUARD_POSTGRES_IMAGE:-registry.cn-shenzhen.aliyuncs.com/wl4g/bitnami_postgresql:18.3}
+    environment:
+      POSTGRESQL_USERNAME: ${AUTHGUARD_POSTGRES_USERNAME:-authguard}
+      POSTGRESQL_PASSWORD: ${AUTHGUARD__STORAGE__POSTGRES__PASSWORD:?set AUTHGUARD__STORAGE__POSTGRES__PASSWORD
+        in .env}
+      POSTGRESQL_DATABASE: ${AUTHGUARD_POSTGRES_DATABASE:-authguard}
+    volumes:
+    - postgres-data:/bitnami/postgresql
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -h "$$(hostname -i)" -U "$$POSTGRESQL_USERNAME" -d "$$POSTGRESQL_DATABASE"
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    profiles:
+    - postgresql
+  jaeger:
+    image: ${AUTHGUARD_JAEGER_IMAGE:-registry.cn-shenzhen.aliyuncs.com/wl4g/jaegertracing_all-in-one:1.76.0}
+    profiles:
+    - jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: 'true'
+      SPAN_STORAGE_TYPE: memory
+      MEMORY_MAX_TRACES: ${AUTHGUARD_JAEGER_MAX_TRACES:-10000}
+      OTEL_TRACES_SAMPLER: always_off
+    expose:
+    - '4317'
+    - '4318'
+    - '16686'
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
 volumes:
-  postgres-data:
+  postgres-data: {}

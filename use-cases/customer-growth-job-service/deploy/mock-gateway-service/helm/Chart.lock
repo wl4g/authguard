@@ -1,0 +1,39 @@
+dependencies:
+- name: authguard
+  repository: file://../../../../../deploy/helm/authguard
+  version: 0.1.0
+- name: customer-growth-lib
+  repository: file://../../../util/helm
+  version: 0.1.0
+- name: keycloak
+  repository: file://../../keycloak/helm
+  version: 0.1.0
+- name: ldap
+  repository: file://../../ldap/helm
+  version: 0.1.0
+- name: mock-external-idp-service
+  repository: file://../../mock-external-idp-service/helm
+  version: 0.1.0
+- name: anvil
+  repository: file://../../anvil/helm
+  version: 0.1.0
+- name: solana
+  repository: file://../../solana/helm
+  version: 0.1.0
+- name: mock-biz-golang-sqlx-service
+  repository: file://../../mock-biz-golang-sqlx-service/helm
+  version: 0.1.0
+- name: mock-biz-rust-sqlx-service
+  repository: file://../../mock-biz-rust-sqlx-service/helm
+  version: 0.1.0
+- name: mock-biz-python-sqlalchemy-service
+  repository: file://../../mock-biz-python-sqlalchemy-service/helm
+  version: 0.1.0
+- name: mock-biz-springboot-jdbc-service
+  repository: file://../../mock-biz-springboot-jdbc-service/helm
+  version: 0.1.0
+- name: mock-biz-springboot-jpa-service
+  repository: file://../../mock-biz-springboot-jpa-service/helm
+  version: 0.1.0
+digest: sha256:463cd95c4e558ba26c2b66c144f8d9cd6b5ef0f689a316fc2ebcb4fe001ca5a0
+generated: "2026-11-16T15:25:14.693997+08:00"

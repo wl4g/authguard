@@ -101,8 +101,9 @@ authguard:
     livenessPath: /healthz
     readinessPath: /readyz
     metricsPath: /metrics
-    otelEnabled: false
-    otelEndpoint: http://otel-collector.observability.svc:4317
+    otelEnabled: true
+    # Empty uses the bundled Jaeger. Set an external OTLP/gRPC endpoint when disabled.
+    otelEndpoint: ""
 
   # AuthN owns provider callbacks, normalization, token issuance, and account linking.
   authn:
@@ -276,8 +277,8 @@ authguard:
         enabled: true
         path: {{ .Values.authguard.mgmt.metricsPath | quote }}
       otel:
-        enabled: {{ .Values.authguard.mgmt.otelEnabled }}
-        endpoint: {{ .Values.authguard.mgmt.otelEndpoint | quote }}
+        enabled: {{ and .Values.authguard.mgmt.otelEnabled (or .Values.jaeger.enabled (not (empty .Values.authguard.mgmt.otelEndpoint))) }}
+        endpoint: {{ default (printf "http://%s:4317" (include "authguard.jaegerFullname" .)) .Values.authguard.mgmt.otelEndpoint | quote }}
         protocol: grpc
         timeout: 5s
         sample_rate: 1.0
@@ -491,6 +492,20 @@ authguard:
         max_retry_wait: 65s
         min_retry_wait: 1280ms
         read_from_replica: false
+
+# Optional local OTLP collector and trace UI. Disable for an existing collector;
+# authguard.mgmt.otelEndpoint selects the external endpoint independently.
+jaeger:
+  enabled: true
+  fullnameOverride: ""
+  image:
+    repository: registry.cn-shenzhen.aliyuncs.com/wl4g/jaegertracing_all-in-one
+    tag: "1.76.0"
+    pullPolicy: IfNotPresent
+  memoryMaxTraces: 10000
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
 
 # Independent optional Redis Cluster used for opaque request-access tokens.
 # Only the values key/dependency alias is snake_case; generated Kubernetes
