@@ -1,0 +1,66 @@
+apiVersion: v2
+name: mock-gateway-service
+description: Customer Growth mock platform gateway, AuthGuard customization and mock
+  services
+type: application
+version: 0.1.0
+appVersion: 0.1.0
+dependencies:
+- name: authguard
+  alias: authguard-middleware
+  version: 0.1.0
+  repository: file://../../../../../deploy/helm/authguard
+  condition: authguard-middleware.enabled
+- name: customer-growth-lib
+  version: 0.1.0
+  repository: file://../../../util/helm
+- name: keycloak
+  alias: mock-keycloak
+  version: 0.1.0
+  repository: file://../../keycloak/helm
+  condition: mockSources.enabled
+- name: ldap
+  alias: mock-ldap
+  version: 0.1.0
+  repository: file://../../ldap/helm
+  condition: mockSources.enabled
+- name: mock-external-idp-service
+  alias: mock-external-idp-service
+  version: 0.1.0
+  repository: file://../../mock-external-idp-service/helm
+  condition: mockSources.enabled
+- name: anvil
+  alias: mock-anvil
+  version: 0.1.0
+  repository: file://../../anvil/helm
+  condition: mockSources.enabled
+- name: solana
+  alias: mock-solana
+  version: 0.1.0
+  repository: file://../../solana/helm
+  condition: mockSources.enabled
+- name: mock-biz-golang-sqlx-service
+  alias: mock-biz-golang-sqlx-service
+  version: 0.1.0
+  repository: file://../../mock-biz-golang-sqlx-service/helm
+  condition: mockBusiness.enabled
+- name: mock-biz-rust-sqlx-service
+  alias: mock-biz-rust-sqlx-service
+  version: 0.1.0
+  repository: file://../../mock-biz-rust-sqlx-service/helm
+  condition: mockBusiness.enabled
+- name: mock-biz-python-sqlalchemy-service
+  alias: mock-biz-python-sqlalchemy-service
+  version: 0.1.0
+  repository: file://../../mock-biz-python-sqlalchemy-service/helm
+  condition: mockBusiness.enabled
+- name: mock-biz-springboot-jdbc-service
+  alias: mock-biz-springboot-jdbc-service
+  version: 0.1.0
+  repository: file://../../mock-biz-springboot-jdbc-service/helm
+  condition: mockBusiness.enabled
+- name: mock-biz-springboot-jpa-service
+  alias: mock-biz-springboot-jpa-service
+  version: 0.1.0
+  repository: file://../../mock-biz-springboot-jpa-service/helm
+  condition: mockBusiness.enabled

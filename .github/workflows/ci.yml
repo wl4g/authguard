@@ -125,7 +125,7 @@ jobs:
           go-version: "1.24.x"
           cache-dependency-path: |
             src/sdk/golang/go.sum
-            use-cases/customer-growth-job-service/deploy/biz-golang-sqlx-service/source/go.sum
+            use-cases/customer-growth-job-service/deploy/mock-biz-golang-sqlx-service/source/go.sum
 
       - name: Install Java
         uses: actions/setup-java@v4
