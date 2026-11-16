@@ -22,6 +22,7 @@ struct AuthenticationMetadata {
     methods: AuthenticationMethodsMetadata,
     oauth2: OAuth2Metadata,
     standalone: StandaloneMetadata,
+    ldap: LdapMetadata,
     wallet: WalletMetadata,
 }
 
@@ -84,6 +85,13 @@ struct WalletMetadata {
     challenge_endpoint: &'static str,
     verify_endpoint: &'static str,
     link_endpoint: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LdapMetadata {
+    enabled: bool,
+    login_endpoint: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -199,7 +207,7 @@ impl MetaRoutes {
             version: "1",
             application,
             methods: AuthenticationMethodsMetadata {
-                password: config.standalone.enabled,
+                password: config.standalone.enabled || config.ldap.enabled,
                 totp: config.standalone.enabled && config.standalone.totp.enabled,
                 webauthn: config.standalone.enabled && config.standalone.webauthn.enabled,
                 wallet: config.wallet.enabled && cfg!(feature = "web3"),
@@ -228,6 +236,7 @@ impl MetaRoutes {
                 verify_endpoint: "/auth/wallet/verify",
                 link_endpoint: "/auth/wallet/link",
             },
+            ldap: LdapMetadata { enabled: config.ldap.enabled, login_endpoint: "/auth/ldap/login" },
         }
     }
 }

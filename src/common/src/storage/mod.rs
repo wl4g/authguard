@@ -22,9 +22,17 @@ pub use authz::{
 pub use base_postgres::PostgresRepository;
 pub use base_sqlite::SqliteRepository;
 
-/// The single authoritative IAM schema shared by `AuthN` and `AuthZ`.
-pub const IAM_SCHEMA_DDL: &str = include_str!("../../../../migrations/001_init.ddl.sql");
-pub const IAM_BOOTSTRAP_DML: &str = include_str!("../../../../migrations/001_init.dml.sql");
+/// Versioned `PostgreSQL` IAM schema shared by `AuthN` and `AuthZ`.
+pub const POSTGRES_IAM_SCHEMA_DDL: &str =
+    include_str!("../../../../migration/20260904195419/postgres/init.ddl.sql");
+pub const POSTGRES_IAM_BOOTSTRAP_DML: &str =
+    include_str!("../../../../migration/20260904195419/postgres/init.dml.sql");
+
+/// Versioned `SQLite` IAM schema shared by `AuthN` and `AuthZ`.
+pub const SQLITE_IAM_SCHEMA_DDL: &str =
+    include_str!("../../../../migration/20260904195419/sqlite/init.ddl.sql");
+pub const SQLITE_IAM_BOOTSTRAP_DML: &str =
+    include_str!("../../../../migration/20260904195419/sqlite/init.dml.sql");
 const IAM_SCHEMA_LOCK: i64 = 0x4155_5448_4755_4152;
 
 /// Entity-independent database repository contract composed by AuthN/AuthZ repositories.

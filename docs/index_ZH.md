@@ -2,7 +2,7 @@
 
 Authguard 是一个深度集成 Envoy Gateway 的通用、独立、高性能 AuthN/AuthZ 产品。Envoy 负责入口、canonical JWT 校验、路由和流量治理；AuthN 负责外部 OIDC/OAuth-like 协议、身份规范化与账号绑定，AuthZ 只对稳定 Principal 做资源授权。
 
-它尤其适合多人或多个系统主体协作、但角色和资源范围不同的 2B/2B2C 场景。2C 也能使用同一模型，只是简单的“用户只能访问自己的数据”通常直接使用所有权字段即可，无需完整 IAM。业务服务通过 adapter 接收受信访问上下文，并把 allow/deny Resource URN 安全编译为数据库查询范围。
+它尤其适合多人或多个系统主体协作、但角色和资源范围不同的 2B/2B2C 场景。2C 可使用较小的策略面，但 owner/tenant 检查仍属于授权。业务服务通过 adapter 接收受信访问上下文，基于显式资源/列映射将 allow/deny Resource URN 编译为数据库查询范围。
 
 以下索引按文档用途组织。正式架构以白皮书为准，计划和归档文档用于记录设计演进、实现差异和后续任务。
 
@@ -11,8 +11,8 @@ Authguard 是一个深度集成 Envoy Gateway 的通用、独立、高性能 Aut
 ### 架构
 
 - [架构总览](architecture/overview_ZH.md)：项目边界、核心组件和集成入口。
-- [IAM 授权白皮书](architecture/iam-authorization-whitepaper_ZH.md)：正式授权模型、URN 规则、Principal/Role/Role Binding/条件、SQL 下推和 adapter 边界。
-- [IAM Authorization Whitepaper](architecture/iam-authorization-whitepaper.md)：英文版白皮书。
+- [统一 AuthN/AuthZ 设计规范](architecture/Authguard-AuthN-AuthZ-Whitepaper_ZH.md)：企业动机、调用主体/目标责任矩阵、身份/资源契约与实现审查。
+- [Unified AuthN/AuthZ Specification](architecture/Authguard-AuthN-AuthZ-Whitepaper.md)：英文对照版本，要求与审查编号一致。
 
 ### 计划
 

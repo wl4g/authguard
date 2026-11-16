@@ -32,3 +32,17 @@ fn discovery_exposes_capabilities_without_provider_secrets() {
     assert!(!rendered.contains("must-not-leak"));
     assert!(!rendered.contains("secret-rpc"));
 }
+
+#[test]
+fn ldap_only_login_is_discoverable_without_directory_credentials() {
+    let mut config = AuthnProperties::default();
+    config.ldap.enabled = true;
+    config.ldap.url = "ldaps://private-directory.example".into();
+    config.ldap.bind_password = "must-not-leak".into();
+    let value = serde_json::to_value(MetaRoutes::build_metadata(&config, None)).unwrap();
+    assert_eq!(value["methods"]["password"], true);
+    assert_eq!(value["standalone"]["enabled"], false);
+    assert_eq!(value["ldap"]["loginEndpoint"], "/auth/ldap/login");
+    assert!(!value.to_string().contains("must-not-leak"));
+    assert!(!value.to_string().contains("private-directory"));
+}

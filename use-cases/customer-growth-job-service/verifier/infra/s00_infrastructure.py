@@ -137,15 +137,9 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
                         "--pull=false",
                         *build_args,
                         "-f",
-                        str(
-                            E2EOtherDefinitions.PROJECT_ROOT
-                            / "deploy"
-                            / "docker"
-                            / "Dockerfile"
-                        ),
+                        str(E2EOtherDefinitions.AUTHGUARD_DOCKERFILE.resolve()),
                         *E2EImagesDefinitions.build_arguments(
-                            E2EOtherDefinitions.PROJECT_ROOT
-                            / "deploy/docker/Dockerfile",
+                            E2EOtherDefinitions.AUTHGUARD_DOCKERFILE,
                             self.environment,
                         ),
                         "--build-arg",
@@ -165,7 +159,7 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
                         "--pull=false",
                         *build_args,
                         "-f",
-                        str(ui_dir / "Dockerfile"),
+                        str(E2EOtherDefinitions.AUTHGUARD_WEB_DOCKERFILE.resolve()),
                         "--build-arg",
                         f"NODE_IMAGE={self.environment['NODE_IMAGE']}",
                         "--build-arg",
@@ -249,7 +243,6 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
                 )
             if not self.release:
                 raise ValueError("AUTHGUARD_E2E_RELEASE must not be empty")
-            self.envoy_release = "envoy"
             self.support_release = "customer-growth"
             self.authguard_release = self.release
             self.authguard_authz_service = self.authguard_release
@@ -269,21 +262,20 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
             self.helm_chart = (
                 E2EOtherDefinitions.PROJECT_ROOT / "deploy" / "helm" / "authguard"
             )
-            self.support_chart = (
-                E2EOtherDefinitions.E2E_DIR / "deploy" / "authguard" / "helm"
-            )
-            self.deploy_dir = E2EOtherDefinitions.E2E_DIR / "deploy"
+            self.support_chart = E2EOtherDefinitions.chart("authguard")
+            self.post_renderer = self.support_chart / "post_renderer.py"
             self._image_loader: E2EKubernetesDeployer._LocalImageLoader | None = None
             self.deploy_dir = E2EOtherDefinitions.DEPLOY_DIR
-            self.releases = (
-                *[
-                    E2EOtherDefinitions.COMPONENTS[key]
-                    for key in reversed(E2EOtherDefinitions.SUPPORT_COMPONENTS)
-                ],
-                self.authguard_release,
-                self.support_release,
-                self.envoy_release,
-            )
+            self.releases = (self.authguard_release, self.support_release)
+
+        def verify_prerequisites(self) -> None:
+            super().verify_prerequisites()
+            if not self.post_renderer.is_file() or not os.access(
+                self.post_renderer, os.X_OK
+            ):
+                raise RuntimeError(
+                    f"gateway Helm post-renderer is missing or not executable: {self.post_renderer}"
+                )
 
         @property
         def principal_discovery_secret(self) -> str:
@@ -330,17 +322,15 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
             if self.context.build_images:
                 self._build_images()
             self._prepare_external_images()
-            self._install_envoy_gateway()
             self._remove_mutable_cluster_images()
             self._prepare_workload_images()
             self._install_support_services()
-            self._prepare_external_images()
-            self._prepare_workload_images()
             self._wait_for_support_services()
             self._import_image(self.image_references["authguard"])
             self._import_image(self.image_references["web"])
             self._import_image(self.images.redis)
             self._install_authguard()
+            self._install_business_services()
             self._wait_for_resources()
 
         def _prepare_external_images(self) -> None:
@@ -384,51 +374,32 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
                 *options,
             )
 
-        def _install_envoy_gateway(self) -> None:
-            values = E2EOtherDefinitions.values(self.environment)
-            gateway = values["envoy_gateway"]
-            gateway.setdefault("config", {}).setdefault("envoyGateway", {}).setdefault(
-                "gateway", {}
-            )["controllerName"] = self.gateway_controller_name
-            for image in gateway["global"]["images"].values():
-                image["pullPolicy"] = "Never"
-            self._install_component(
-                "envoy_gateway",
-                self.envoy_release,
-                values,
-                "--post-renderer",
-                str(self.deploy_dir / "envoy-gateway/helm/post_renderer.py"),
-                "--wait",
-                f"--timeout={self.context.timeout_seconds}s",
-            )
-
-        def _install_support_services(self) -> None:
+        def _install_platform(self, *, business_enabled: bool) -> None:
+            """Render mock sources and business services in the gateway's shared Helm scope."""
             values = E2EOtherDefinitions.values(self.environment)
             values["authguard"][
                 "grpcTarget"
             ] = f"{self.authguard_release}.{self.namespace}.svc.cluster.local:8081"
             values["gateway"]["name"] = self.gateway_name
-            values["redis_cluster"]["fullnameOverride"] = self.redis_service
+            values["mockSources"]["enabled"] = True
+            values["mockBusiness"]["enabled"] = business_enabled
             self._install_component("authguard", self.support_release, values)
-            for component in E2EOtherDefinitions.SUPPORT_COMPONENTS:
-                self._install_component(
-                    component, E2EOtherDefinitions.COMPONENTS[component], values
-                )
+
+        def _install_support_services(self) -> None:
+            self._install_platform(business_enabled=False)
+
+        def _install_business_services(self) -> None:
+            """Enable business HTTPRoutes after the canonical Gateway installs its CRDs."""
+            self._install_platform(business_enabled=True)
 
         def _wait_for_support_services(self) -> None:
-            """Wait until every support/workload Deployment has consumed its image."""
+            """Wait for external test sources before generating AuthGuard configuration."""
             for deployment in (
                 self.keycloak_service,
                 self.ldap_service,
-                self.jaeger_service,
-                self.postgresql_service,
                 self.mock_idp_service,
                 self.anvil_service,
                 self.solana_service,
-                *[
-                    self.workload_service(component)
-                    for component in self.workload_images
-                ],
             ):
                 self.wait_for_deployment(deployment)
 
@@ -449,6 +420,8 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
                 "authguard",
                 self.authguard_release,
                 values,
+                "--post-renderer",
+                str(self.post_renderer),
                 "--wait",
                 f"--timeout={self.context.timeout_seconds}s",
             )
@@ -458,17 +431,30 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
             redis_registry, redis_repository, redis_tag = self.images.helm_image_parts(
                 self.images.redis
             )
+            values = E2EOtherDefinitions.values(self.environment)
+            postgres = values["postgresql"]
+            pg_image = values["authguard-middleware"]["postgresql"]["image"]
             return {
                 "theme": {"files": "files/authguard-theme/*"},
                 "envoy_gateway": {
-                    "enabled": False,
+                    "enabled": True,
+                    "deployment": {"replicas": 1},
+                    "config": {
+                        "envoyGateway": {
+                            "gateway": {"controllerName": self.gateway_controller_name}
+                        }
+                    },
                     "fullnameOverride": self.envoy_gateway_deployment,
                     "global": {
                         "images": {
+                            "envoyGateway": {
+                                "image": self.images.envoy_gateway,
+                                "pullPolicy": "Never",
+                            },
                             "envoyProxy": {
                                 "image": self.images.envoy,
                                 "pullPolicy": "Never",
-                            }
+                            },
                         }
                     },
                     "ext_authz": {
@@ -500,7 +486,7 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
                     },
                 },
                 "redis_cluster": {
-                    "enabled": False,
+                    "enabled": True,
                     "fullnameOverride": self.redis_service,
                     "image": {
                         "registry": redis_registry,
@@ -513,7 +499,57 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
                     "cluster": {"nodes": 6, "replicas": 1},
                     "persistence": {"enabled": False},
                 },
-                "postgresql": {"enabled": False},
+                "postgresql": {
+                    "enabled": True,
+                    "fullnameOverride": self.postgresql_service,
+                    "image": pg_image,
+                    "auth": {
+                        "enablePostgresUser": True,
+                        "username": postgres["adminUsername"],
+                        "database": postgres["database"],
+                        "existingSecret": f"{self.postgresql_service}-credentials",
+                        "secretKeys": {
+                            "adminPasswordKey": "superuser-password",
+                            "userPasswordKey": "admin-password",
+                        },
+                        "usePasswordFiles": False,
+                    },
+                    "primary": {
+                        "persistence": {"enabled": False},
+                        "initdb": {
+                            "scriptsSecret": f"{self.postgresql_service}-credentials"
+                        },
+                        "extraVolumes": [
+                            {
+                                "name": "seed-data",
+                                "configMap": {
+                                    "name": f"{self.postgresql_service}-seed-data"
+                                },
+                            }
+                        ],
+                        "extraVolumeMounts": [
+                            {
+                                "name": "seed-data",
+                                "mountPath": "/e2e-seed",
+                                "readOnly": True,
+                            }
+                        ],
+                        "startupProbe": {"enabled": False},
+                        "customStartupProbe": {
+                            "tcpSocket": {"port": "tcp-postgresql"},
+                            "periodSeconds": 3,
+                            "failureThreshold": 100,
+                        },
+                    },
+                },
+                "jaeger": {
+                    "enabled": True,
+                    "fullnameOverride": self.jaeger_service,
+                    "image": {
+                        "repository": self.images.jaeger.rsplit(":", 1)[0],
+                        "tag": self.images.jaeger.rsplit(":", 1)[1],
+                    },
+                },
                 "fullnameOverride": self.authguard_release,
                 "secrets": {
                     "provider": "kubernetes",
@@ -588,21 +624,31 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
                     },
                     "mgmt": {
                         "enabled": True,
+                        "port": self.management_port,
                         "otelEnabled": True,
                         "otelEndpoint": f"http://{self.jaeger_service}.{self.namespace}.svc.cluster.local:4317",
                     },
                     "authguard-config": authguard_config,
-                    "mgmt": {"enabled": True, "port": self.management_port},
                 },
             }
 
         def _wait_for_resources(self) -> None:
+            self._run(
+                (
+                    "kubectl",
+                    "rollout",
+                    "status",
+                    f"statefulset/{self.postgresql_service}",
+                    "-n",
+                    self.namespace,
+                    f"--timeout={self.context.timeout_seconds}s",
+                )
+            )
             for deployment in (
                 self.envoy_gateway_deployment,
                 self.keycloak_service,
                 self.ldap_service,
                 self.jaeger_service,
-                self.postgresql_service,
                 self.mock_idp_service,
                 self.anvil_service,
                 self.solana_service,
@@ -703,7 +749,7 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
                     "-n",
                     self.namespace,
                     "-l",
-                    "app.kubernetes.io/component=postgresql",
+                    "app.kubernetes.io/name=postgresql,app.kubernetes.io/component=primary",
                     "-o",
                     "jsonpath={.items[0].metadata.name}",
                 )
@@ -719,8 +765,8 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
                     *E2EPostgresChecker.command(
                         sql,
                         schema="authguard",
-                        database_variable="POSTGRESQL_DATABASE",
-                        password_variable="POSTGRESQL_POSTGRES_PASSWORD",
+                        database_variable="POSTGRES_DATABASE",
+                        password_variable="POSTGRES_POSTGRES_PASSWORD",
                     ),
                 )
             ).output.strip()
@@ -763,6 +809,20 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
             self.deploy_dir = E2EOtherDefinitions.DEPLOY_DIR
             self.cleanup_image = self.images.postgres
             self.environment["AUTHGUARD_E2E_MGMT_PORT"] = str(self.management_port)
+            self.environment.update(
+                {
+                    "COMPOSE_PROFILES": "postgresql,redis,jaeger,envoy",
+                    "AUTHGUARD_ENV_FILE": str(self.runtime_dir / "authguard.env"),
+                    "AUTHGUARD_CONFIG_FILE": str(self.runtime_dir / "authguard.yaml"),
+                    "AUTHGUARD_ENVOY_CONFIG_FILE": str(
+                        E2EOtherDefinitions.AUTHGUARD_CONFIG_DIR / "envoy.yaml"
+                    ),
+                    "AUTHGUARD_GATEWAY_BIND": "127.0.0.1:",
+                    "AUTHGUARD_GATEWAY_PORT": "8082",
+                    "AUTHGUARD__STORAGE__POSTGRES__PASSWORD": "e2e-authguard-postgres-password",
+                    "AUTHGUARD__CACHE__REDIS__PASSWORD": "e2e-authguard-redis-password",
+                }
+            )
 
         @property
         def issuer(self) -> str:
@@ -1111,6 +1171,9 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
         self.step(
             "verify disposable Anvil and Solana nodes through real JSON-RPC",
             self._verify_wallet_nodes,
+        )
+        self.step(
+            "verify canonical middleware ownership", self._verify_middleware_ownership
         )
         self.step("verify Redis Cluster health", self._verify_redis_cluster)
         self.step("verify immutable running images", self._verify_running_images)
@@ -1597,6 +1660,27 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
             "SecurityPolicy requires only the AuthN issuer/audience and deterministic local JWKS, then calls fail-closed Authguard ext_auth gRPC on labelled routes"
         )
 
+    def _verify_middleware_ownership(self) -> None:
+        for kind, name in (
+            ("deployment", self.envoy_gateway_deployment),
+            ("deployment", self.jaeger_service),
+            ("statefulset", self.postgresql_service),
+            ("statefulset", self.redis_service),
+        ):
+            resource = self.infrastructure.resource(kind, name)
+            owner = (
+                resource["metadata"]
+                .get("annotations", {})
+                .get("meta.helm.sh/release-name")
+            )
+            if owner != self.authguard_release:
+                raise RuntimeError(
+                    f"{kind}/{name} is owned by {owner!r}, expected AuthGuard release {self.authguard_release!r}"
+                )
+        self.details.append(
+            "Envoy Gateway, PostgreSQL, Redis Cluster and Jaeger are owned by the canonical AuthGuard Chart release"
+        )
+
     def _verify_redis_cluster(self) -> None:
         result = self._run(
             (
@@ -1606,7 +1690,7 @@ class E2ES00InfrastructureVerifier(BaseVerifier):
                 "-n",
                 self.namespace,
                 "-l",
-                f"app.kubernetes.io/instance={E2EOtherDefinitions.COMPONENTS['redis']}",
+                f"app.kubernetes.io/instance={self.authguard_release},app.kubernetes.io/name=redis-cluster",
                 "-o",
                 "jsonpath={.items[0].metadata.name}",
             )

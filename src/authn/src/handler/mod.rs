@@ -1,5 +1,6 @@
 pub mod authentication;
 mod error;
+pub(crate) mod ldap;
 pub(crate) mod oauth2;
 pub(crate) mod standalone;
 #[cfg(feature = "web3")]
@@ -16,6 +17,7 @@ pub(crate) use authentication::{
     AuthenticationPipeline, AuthenticationPipelineError, AuthnRuntime, IssuedAuthentication,
 };
 pub(crate) use error::ApiError;
+pub(crate) use ldap::LdapHandler;
 pub(crate) use oauth2::OAuth2Handler;
 pub(crate) use standalone::StandaloneHandler;
 #[cfg(feature = "web3")]

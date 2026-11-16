@@ -43,6 +43,7 @@ spec:
         runAsGroup: 65532
         fsGroup: 65532
         seccompProfile: { type: RuntimeDefault }
+      {{- include "authguard.waitForPostgresql" . | nindent 6 }}
       {{- with .Values.authguard.authz.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

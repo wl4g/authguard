@@ -2,7 +2,7 @@
 
 Authguard is a generic, standalone, high-performance AuthN/AuthZ product built for deep Envoy Gateway integration. Envoy owns ingress, canonical JWT enforcement, routing, and traffic policy; AuthN owns external OIDC/OAuth-like protocols and account linking, while AuthZ owns stable-Principal resource authorization.
 
-It is especially useful in B2B/B2B2C systems where multiple users or workloads collaborate with different roles and resource scopes. B2C systems can use the same model, although simple owner-only filtering rarely needs a complete IAM plane. Business adapters consume trusted access context and safely compile allow/deny Resource URNs into database query scopes.
+It is especially useful in B2B/B2B2C systems where multiple users or workloads collaborate with different roles and resource scopes. B2C systems can use the same model; simple owner filtering may use a smaller policy plane, but ownership and tenant checks remain authorization. Business adapters consume trusted access context and compile allow/deny Resource URNs into database query scopes through explicit mappings.
 
 The index below is organized by document purpose. The whitepaper is the canonical architecture reference; plan and archive documents record design evolution, implementation gaps, and follow-up work.
 
@@ -11,8 +11,8 @@ The index below is organized by document purpose. The whitepaper is the canonica
 ### Architecture
 
 - [Architecture overview](architecture/overview.md): project boundaries, core components, and integration entry points.
-- [IAM authorization whitepaper](architecture/iam-authorization-whitepaper.md): canonical authorization model, URN rules, Principals/Roles/Role Bindings/conditions, SQL pushdown, and adapter boundaries.
-- [IAM authorization whitepaper (ZH)](architecture/iam-authorization-whitepaper_ZH.md): Chinese whitepaper.
+- [Unified AuthN/AuthZ design specification](architecture/Authguard-AuthN-AuthZ-Whitepaper.md): enterprise motivation, caller/target responsibility matrix, identity/resource contracts, and implementation review.
+- [Unified AuthN/AuthZ specification (ZH)](architecture/Authguard-AuthN-AuthZ-Whitepaper_ZH.md): Chinese counterpart with the same requirements and review IDs.
 
 ### Plans
 

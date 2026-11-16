@@ -45,12 +45,12 @@ async fn postgres_implements_the_normalized_authorization_repository_contract() 
         tables,
         vec![
             "iam_action",
-            "iam_standalone_credential",
             "iam_principal",
             "iam_principal_identity",
             "iam_role",
             "iam_role_action",
             "iam_role_binding",
+            "iam_standalone_credential",
         ]
     );
 

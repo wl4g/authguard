@@ -33,6 +33,7 @@ bip322 = { workspace = true, optional = true }
 bs58 = { workspace = true, optional = true }
 chrono.workspace = true
 hex = { workspace = true, optional = true }
+ldap3.workspace = true
 openidconnect.workspace = true
 rand.workspace = true
 reqwest.workspace = true
@@ -52,3 +53,6 @@ webauthn-rs.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tower.workspace = true

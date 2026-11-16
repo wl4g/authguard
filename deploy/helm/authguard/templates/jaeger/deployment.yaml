@@ -1,0 +1,60 @@
+{{- if .Values.jaeger.enabled -}}
+{{- $name := include "authguard.jaegerFullname" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: jaeger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: jaeger
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: jaeger
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: jaeger
+          image: {{ printf "%s:%s" .Values.jaeger.image.repository .Values.jaeger.image.tag | quote }}
+          imagePullPolicy: {{ .Values.jaeger.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          env:
+            - { name: COLLECTOR_OTLP_ENABLED, value: "true" }
+            - { name: SPAN_STORAGE_TYPE, value: "memory" }
+            - { name: MEMORY_MAX_TRACES, value: {{ .Values.jaeger.memoryMaxTraces | quote }} }
+            - { name: OTEL_TRACES_SAMPLER, value: "always_off" }
+          ports:
+            - { name: otlp-grpc, containerPort: 4317 }
+            - { name: otlp-http, containerPort: 4318 }
+            - { name: query-http, containerPort: 16686 }
+            - { name: admin-http, containerPort: 14269 }
+          startupProbe:
+            httpGet: { path: /, port: admin-http }
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /, port: admin-http }
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet: { path: /, port: admin-http }
+            periodSeconds: 10
+            timeoutSeconds: 2
+          resources:
+            {{- toYaml .Values.jaeger.resources | nindent 12 }}
+{{- end }}

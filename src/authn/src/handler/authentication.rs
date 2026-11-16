@@ -42,7 +42,7 @@ pub(crate) enum AuthenticationPipelineError {
 }
 
 impl AuthenticationPipeline {
-    fn new(
+    pub(super) fn new(
         policy: AccountLinkingProperties,
         identities: Arc<dyn IdentityBindingRepository>,
         tokens: TokenIssuer,

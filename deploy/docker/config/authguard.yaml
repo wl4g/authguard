@@ -78,7 +78,7 @@ storage:
   bootstrap_policy: null
   sqlite: { url: sqlite:///tmp/authguard.db, max_connections: 1, connect_timeout: 5s }
   postgres:
-    url: postgresql://postgres:5432/authguard?sslmode=disable
+    url: postgresql://postgresql:5432/authguard?sslmode=disable
     username: authguard
     password: ""
     max_connections: 20

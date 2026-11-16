@@ -3,7 +3,7 @@
 > **历史文档 / Superseded：** 文中早期 subject/group/grant 表结构已被当前
 > `iam_principal` / `iam_action` / `iam_role` / `iam_role_action` /
 > `iam_role_binding` 授权表模型取代（不持久化 `iam_policy` aggregate）。现行契约以
-> [IAM 授权白皮书](../../architecture/iam-authorization-whitepaper_ZH.md#5-数据模型)为准。
+> [IAM 授权白皮书](../../architecture/Authguard-AuthN-AuthZ-Whitepaper_ZH.md#specification)为准。
 
 **状态：** Historical Summary
 **日期：** 2026-08-22
@@ -143,8 +143,8 @@ authguard/
 
 正式设计文档：
 
-- `docs/architecture/iam-authorization-whitepaper_ZH.md`
-- `docs/architecture/iam-authorization-whitepaper.md`
+- `docs/architecture/Authguard-AuthN-AuthZ-Whitepaper_ZH.md`
+- `docs/architecture/Authguard-AuthN-AuthZ-Whitepaper.md`
 
 设计决策草稿：
 

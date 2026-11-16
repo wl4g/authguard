@@ -1,0 +1,65 @@
+support:
+  enabled: true
+global:
+  authguard:
+    themeRevision: v1
+    themeConfigMap: '{{ .Release.Name }}-authguard-theme-{{ .Values.global.authguard.themeRevision
+      }}'
+authguard:
+  enabled: false
+  theme:
+    files: files/authguard-theme/*
+  grpcTarget: ''
+  grpcTLS: false
+  apiToken: e2e-authguard-api-token
+  accessContext:
+    secretName: ''
+    key: hmac-key
+    signingKey: e2e-authguard-access-context-hmac-key
+  authguard:
+    authn:
+      applications:
+        customer-growth:
+          hosts:
+          - localhost
+          - customer-growth.local
+          displayName: Customer Growth
+          logo: /auth/assets/themes/custom/customer-growth.svg
+          theme:
+            id: customer-growth
+            stylesheet: /auth/assets/themes/custom/customer-growth.css
+          returnUris:
+          - https://localhost/**
+          - https://customer-growth.local/**
+        customer-growth-default:
+          hosts:
+          - customer-growth-default.local
+          displayName: Customer Growth
+          returnUris:
+          - https://customer-growth-default.local/**
+authguard-middleware:
+  enabled: false
+  theme:
+    files: files/authguard-theme/*
+databaseBootstrap:
+  image: ''
+  pullPolicy: IfNotPresent
+  database: e2e_authguard_customer_growth
+  adminUsername: e2e_authguard_customer_growth_admin
+  adminPassword: e2e-authguard-customer-growth-admin-password
+  superuserPassword: e2e-authguard-customer-growth-postgres-password
+  authguardUsername: e2e_authguard_service
+  authguardPassword: e2e-authguard-postgres-password
+  authguardSchema: authguard
+  initSQL: ''
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+mockSources:
+  enabled: false
+mockBusiness:
+  enabled: false

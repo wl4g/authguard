@@ -1,0 +1,31 @@
+{{- if .Values.jaeger.enabled -}}
+{{- $name := include "authguard.jaegerFullname" . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "authguard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: jaeger
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: jaeger
+  ports:
+    - name: otlp-grpc
+      appProtocol: grpc
+      port: 4317
+      targetPort: otlp-grpc
+    - name: otlp-http
+      appProtocol: http
+      port: 4318
+      targetPort: otlp-http
+    - name: query-http
+      appProtocol: http
+      port: 16686
+      targetPort: query-http
+    - name: admin-http
+      appProtocol: http
+      port: 14269
+      targetPort: admin-http
+{{- end }}

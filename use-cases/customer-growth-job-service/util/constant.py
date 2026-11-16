@@ -7,11 +7,11 @@ from pathlib import Path
 
 class E2EOtherDefinitions:
     WORKLOAD_DIRECTORIES = {
-        "go-sqlx": "biz-golang-sqlx-service",
-        "rust-sqlx": "biz-rust-sqlx-service",
-        "python-sqlalchemy": "biz-python-sqlalchemy-service",
-        "spring-jdbc": "biz-springboot-jdbc-service",
-        "spring-jpa": "biz-springboot-jpa-service",
+        "go-sqlx": "mock-biz-golang-sqlx-service",
+        "rust-sqlx": "mock-biz-rust-sqlx-service",
+        "python-sqlalchemy": "mock-biz-python-sqlalchemy-service",
+        "spring-jdbc": "mock-biz-springboot-jdbc-service",
+        "spring-jpa": "mock-biz-springboot-jpa-service",
     }
     WORKLOAD_HOSTS = {
         component: f"e2e-authguard-{component}.customer-growth.local"
@@ -21,8 +21,12 @@ class E2EOtherDefinitions:
     USE_CASE_DIR = E2E_DIR
     PROJECT_ROOT = USE_CASE_DIR.parents[1]
     DEPLOY_DIR = E2E_DIR / "deploy"
-    AUTHGUARD_CONFIG_DIR = DEPLOY_DIR / "authguard" / "config"
-    AUTHGUARD_INIT_SQL_PATH = DEPLOY_DIR / "postgresql" / "source" / "init.sql"
+    AUTHGUARD_DOCKERFILE = DEPLOY_DIR / "mock-gateway-service" / "Dockerfile"
+    AUTHGUARD_WEB_DOCKERFILE = (
+        DEPLOY_DIR / "mock-gateway-service" / "web" / "Dockerfile"
+    )
+    AUTHGUARD_CONFIG_DIR = DEPLOY_DIR / "mock-gateway-service" / "config"
+    AUTHGUARD_INIT_SQL_PATH = AUTHGUARD_CONFIG_DIR / "init.sql"
     SCENARIOS_PATH = E2E_DIR / "verifier" / "scenarios.json"
     AUTHGUARD_JWT_KEYS_DIR = AUTHGUARD_CONFIG_DIR / "jwt-keys"
     KEYCLOAK_CONFIG_DIR = DEPLOY_DIR / "keycloak" / "source"
@@ -76,30 +80,34 @@ class E2EOtherDefinitions:
     }
     DEFAULT_SCENARIOS = tuple(SCENARIOS)
     COMPONENTS = {
-        "authguard": "authguard",
-        "envoy_gateway": "envoy-gateway",
-        "envoy": "envoy",
-        "redis": "redis",
-        "postgres": "postgresql",
+        "authguard": "mock-gateway-service",
         "keycloak": "keycloak",
         "ldap": "ldap",
-        "jaeger": "jaeger",
         "mock-idp": "mock-external-idp-service",
         "anvil": "anvil",
         "solana": "solana",
         **WORKLOAD_DIRECTORIES,
     }
     SUPPORT_COMPONENTS = (
-        "postgres",
         "keycloak",
         "ldap",
-        "jaeger",
         "mock-idp",
         "anvil",
         "solana",
-        *WORKLOAD_DIRECTORIES,
-        "redis",
     )
+
+    CHART_ALIASES = {
+        "keycloak": "mock-keycloak",
+        "ldap": "mock-ldap",
+        "mock-idp": "mock-external-idp-service",
+        "anvil": "mock-anvil",
+        "solana": "mock-solana",
+        "go-sqlx": "mock-biz-golang-sqlx-service",
+        "rust-sqlx": "mock-biz-rust-sqlx-service",
+        "python-sqlalchemy": "mock-biz-python-sqlalchemy-service",
+        "spring-jdbc": "mock-biz-springboot-jdbc-service",
+        "spring-jpa": "mock-biz-springboot-jpa-service",
+    }
 
     @classmethod
     def chart(cls, component: str) -> Path:
@@ -122,17 +130,19 @@ class E2EOtherDefinitions:
                 "workloads": {component: values["workloads"][component]},
             }
         keys = {
-            "authguard": ("support", "global", "authguard", "authguard-middleware"),
-            "postgres": ("support", "postgresql", "workloads"),
+            "authguard": (
+                "support",
+                "global",
+                "authguard",
+                "authguard-middleware",
+                "mockSources",
+                "mockBusiness",
+            ),
             "keycloak": ("support", "keycloak"),
             "ldap": ("support", "ldap"),
-            "jaeger": ("support", "jaeger"),
             "mock-idp": ("support", "mockIdp"),
             "anvil": ("support", "anvil"),
             "solana": ("support", "solana"),
-            "redis": ("redis_cluster",),
-            "envoy_gateway": ("envoy_gateway",),
-            "envoy": ("image", "config", "authnService", "authzService", "webService"),
         }[component]
         selected = {key: values[key] for key in keys if key in values}
         if component == "authguard" and values.get("support", {}).get("enabled", False):
@@ -140,9 +150,11 @@ class E2EOtherDefinitions:
                 key: values["keycloak"][key]
                 for key in ("realmSigningPrivateKey", "resignJwtPrivateKey")
             }
-            selected["postgresql"] = {
-                "authguardPassword": values["postgresql"]["authguardPassword"]
-            }
+            selected["ldap"] = {"bindPassword": values["ldap"]["bindPassword"]}
+            selected["databaseBootstrap"] = values["postgresql"]
+            selected["workloads"] = values["workloads"]
+            for child, alias in E2EOtherDefinitions.CHART_ALIASES.items():
+                selected[alias] = E2EOtherDefinitions.select(values, child)
         return selected
 
     @classmethod
@@ -160,6 +172,7 @@ class E2EOtherDefinitions:
                 or {}
             )
             cls.merge(values, own)
+        values["postgresql"] = values.pop("databaseBootstrap")
         values["keycloak"][
             "realm"
         ] = E2EOtherDefinitions.KEYCLOAK_REALM_PATH.read_text()
@@ -183,7 +196,7 @@ class E2EOtherDefinitions:
             E2EOtherDefinitions.DEPLOY_DIR / "ldap/source/config.cfg"
         ).read_text()
         values["config"] = (
-            E2EOtherDefinitions.DEPLOY_DIR / "envoy/source/envoy.yaml"
+            E2EOtherDefinitions.AUTHGUARD_CONFIG_DIR / "envoy.yaml"
         ).read_text()
         values["authguard"]["grpcTarget"] = "authguard:8081"
         values["gateway"] = {"name": "gateway"}

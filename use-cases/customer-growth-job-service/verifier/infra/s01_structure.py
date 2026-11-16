@@ -4,11 +4,12 @@ from util.images import E2EImagesDefinitions
 from util.constant import E2EOtherDefinitions
 import ast
 import tarfile
+import yaml
 import time
 from verifier.context import VerificationContext, VerificationResult, BaseVerifier
 
 REQUIRED_PATHS = {
-    "biz-golang-sqlx-service": (
+    "mock-biz-golang-sqlx-service": (
         "pkg/authorization",
         "pkg/controller",
         "pkg/dto",
@@ -17,7 +18,7 @@ REQUIRED_PATHS = {
         "pkg/service",
         "pkg/telemetry/telemetry.go",
     ),
-    "biz-rust-sqlx-service": (
+    "mock-biz-rust-sqlx-service": (
         "src/authorization",
         "src/config.rs",
         "src/controller",
@@ -27,7 +28,7 @@ REQUIRED_PATHS = {
         "src/server.rs",
         "src/service",
     ),
-    "biz-python-sqlalchemy-service": (
+    "mock-biz-python-sqlalchemy-service": (
         "app/authorization",
         "app/controller",
         "app/dto",
@@ -36,7 +37,7 @@ REQUIRED_PATHS = {
         "app/service",
         "app/telemetry.py",
     ),
-    "biz-springboot-jdbc-service": (
+    "mock-biz-springboot-jdbc-service": (
         "src/main/java/com/authguard/usecases/authorization",
         "src/main/java/com/authguard/usecases/config",
         "src/main/java/com/authguard/usecases/controller",
@@ -45,7 +46,7 @@ REQUIRED_PATHS = {
         "src/main/java/com/authguard/usecases/repository",
         "src/main/java/com/authguard/usecases/service",
     ),
-    "biz-springboot-jpa-service": (
+    "mock-biz-springboot-jpa-service": (
         "src/main/java/com/authguard/usecases/authorization",
         "src/main/java/com/authguard/usecases/config",
         "src/main/java/com/authguard/usecases/controller",
@@ -56,16 +57,11 @@ REQUIRED_PATHS = {
     ),
 }
 SUPPORT_PROJECTS = {
-    "authguard",
+    "mock-gateway-service",
     "anvil",
     "solana",
     "keycloak",
     "ldap",
-    "jaeger",
-    "postgresql",
-    "redis",
-    "envoy",
-    "envoy-gateway",
     "mock-external-idp-service",
 }
 AUTHGUARD_REQUIRED_PATHS = (
@@ -136,11 +132,11 @@ AUTHGUARD_REQUIRED_PATHS = (
     "src/authz/src/principal/scim/model.rs",
     "src/authz/src/principal/scim/scim.rs",
     "src/authz/tests/principal/scim/mod.rs",
-    "use-cases/customer-growth-job-service/deploy/authguard/helm/Chart.lock",
-    "use-cases/customer-growth-job-service/deploy/authguard/helm/charts/authguard-0.1.0.tgz",
-    "use-cases/customer-growth-job-service/deploy/authguard/helm/templates/authguard-theme.yaml",
-    "use-cases/customer-growth-job-service/deploy/authguard/helm/files/authguard-theme/customer-growth.svg",
-    "use-cases/customer-growth-job-service/deploy/authguard/helm/files/authguard-theme/customer-growth.css",
+    "use-cases/customer-growth-job-service/deploy/mock-gateway-service/helm/Chart.lock",
+    "use-cases/customer-growth-job-service/deploy/mock-gateway-service/helm/charts/authguard-0.1.0.tgz",
+    "use-cases/customer-growth-job-service/deploy/mock-gateway-service/helm/templates/authguard-theme.yaml",
+    "use-cases/customer-growth-job-service/deploy/mock-gateway-service/helm/files/authguard-theme/customer-growth.svg",
+    "use-cases/customer-growth-job-service/deploy/mock-gateway-service/helm/files/authguard-theme/customer-growth.css",
     ".agents/skills/authguard-chart-integrator/SKILL.md",
     ".agents/skills/authguard-chart-integrator/agents/openai.yaml",
     ".agents/skills/authguard-chart-integrator/scripts/validate.py",
@@ -235,12 +231,63 @@ class E2ES01StructureVerifier(BaseVerifier):
         )
 
     @staticmethod
+    def _verify_mock_chart_dependencies(errors: list[str]) -> None:
+        """Keep one shared library in the gateway and its mock subcharts current."""
+        gateway = E2EOtherDefinitions.chart("authguard")
+        expected = gateway / "charts/customer-growth-lib-0.1.0.tgz"
+        libraries = list(
+            E2EOtherDefinitions.DEPLOY_DIR.rglob("customer-growth-lib-*.tgz")
+        )
+        if libraries != [expected]:
+            errors.append(
+                "customer-growth-lib must be packaged only in mock-gateway-service/helm/charts"
+            )
+        dependencies = {
+            item.get("alias", item["name"]): item
+            for item in yaml.safe_load((gateway / "Chart.yaml").read_text())[
+                "dependencies"
+            ]
+        }
+        for component, alias in E2EOtherDefinitions.CHART_ALIASES.items():
+            source = E2EOtherDefinitions.chart(component)
+            metadata = yaml.safe_load((source / "Chart.yaml").read_text())
+            if metadata.get("dependencies") or list((source / "charts").glob("*.tgz")):
+                errors.append(
+                    f"{source.parent.name}: mock subcharts must use the gateway's library scope"
+                )
+            dependency = dependencies.get(alias, {})
+            if (
+                dependency.get("name") != metadata["name"]
+                or dependency.get("version") != metadata["version"]
+            ):
+                errors.append(f"gateway dependency differs from {source.parent.name}")
+            archive = (
+                gateway / "charts" / f"{metadata['name']}-{metadata['version']}.tgz"
+            )
+            try:
+                with tarfile.open(archive, "r:gz") as chart:
+                    for path in (
+                        source / "values.yaml",
+                        *(source / "templates").rglob("*"),
+                    ):
+                        if not path.is_file():
+                            continue
+                        name = f"{metadata['name']}/{path.relative_to(source)}"
+                        member = chart.extractfile(name)
+                        if member is None or member.read() != path.read_bytes():
+                            errors.append(f"gateway mock dependency is stale: {path}")
+            except (OSError, KeyError, tarfile.TarError) as error:
+                errors.append(
+                    f"cannot read gateway mock dependency {archive.name}: {error}"
+                )
+
+    @staticmethod
     def _verify_vendored_authguard_chart(errors: list[str]) -> None:
         """Keep the business-chart dependency byte-for-byte aligned with its source Chart."""
         source_chart = E2EOtherDefinitions.PROJECT_ROOT / "deploy/helm/authguard"
         archive = (
             E2EOtherDefinitions.USE_CASE_DIR
-            / "deploy/authguard/helm/charts/authguard-0.1.0.tgz"
+            / "deploy/mock-gateway-service/helm/charts/authguard-0.1.0.tgz"
         )
         source_files = (
             source_chart / "values.yaml",
@@ -331,9 +378,9 @@ class E2ES01StructureVerifier(BaseVerifier):
                     errors.append(
                         f"{directory}: verification code belongs in Python scenario verifiers, not source/{relative}"
                     )
-        if (E2EOtherDefinitions.DEPLOY_DIR / "authguard/source").exists():
+        if (E2EOtherDefinitions.DEPLOY_DIR / "mock-gateway-service/source").exists():
             errors.append(
-                "AuthGuard deployment configuration belongs in deploy/authguard/config"
+                "AuthGuard deployment configuration belongs in deploy/mock-gateway-service/config"
             )
         for path in (root / "verifier").rglob("s[0-9][0-9]_*.py"):
             if len(path.relative_to(root / "verifier").parts) != 2:
@@ -514,7 +561,6 @@ class E2ES01StructureVerifier(BaseVerifier):
             errors.append("Kubernetes infrastructure must expose one cleanup lifecycle")
         isolated_gateway_markers = (
             "gateway_controller_name",
-            '["controllerName"] = self.gateway_controller_name',
             '"controllerName": self.gateway_controller_name',
         )
         if missing := [
@@ -534,7 +580,7 @@ class E2ES01StructureVerifier(BaseVerifier):
                 path.read_text(encoding="utf-8")
                 for path in (
                     E2EOtherDefinitions.USE_CASE_DIR
-                    / "deploy/authguard/helm/values.yaml",
+                    / "deploy/mock-gateway-service/helm/values.yaml",
                     E2EOtherDefinitions.USE_CASE_DIR
                     / "util/helm/templates/_helpers.tpl",
                     E2EOtherDefinitions.USE_CASE_DIR / "verifier/context.py",
@@ -654,8 +700,8 @@ class E2ES01StructureVerifier(BaseVerifier):
                 path.read_text(encoding="utf-8")
                 for path in (
                     E2EOtherDefinitions.DEPLOY_DIR
-                    / "biz-python-sqlalchemy-service/source/app/server.py",
-                    E2EOtherDefinitions.USE_CASE_DIR / "deploy/envoy/source/envoy.yaml",
+                    / "mock-biz-python-sqlalchemy-service/source/app/server.py",
+                    E2EOtherDefinitions.AUTHGUARD_CONFIG_DIR / "envoy.yaml",
                     E2EOtherDefinitions.USE_CASE_DIR
                     / "util/helm/templates/_workloads.tpl",
                 )
@@ -738,9 +784,9 @@ class E2ES01StructureVerifier(BaseVerifier):
                 "AuthGuard Helm templates must be module-scoped; unexpected root files: "
                 + ", ".join(sorted(unexpected_root_templates))
             )
-        web_dockerfile_source = (
-            E2EOtherDefinitions.PROJECT_ROOT / "web/Dockerfile"
-        ).read_text(encoding="utf-8")
+        web_dockerfile_source = E2EOtherDefinitions.AUTHGUARD_WEB_DOCKERFILE.read_text(
+            encoding="utf-8"
+        )
         mainland_images = E2EImagesDefinitions.references(
             {"AUTHGUARD_E2E_IMAGE_SOURCE": "aliyun"}
         )
@@ -762,9 +808,9 @@ class E2ES01StructureVerifier(BaseVerifier):
         image_catalog_source = (
             E2EOtherDefinitions.USE_CASE_DIR / "util/images.py"
         ).read_text(encoding="utf-8")
-        runtime_dockerfile_source = (
-            E2EOtherDefinitions.PROJECT_ROOT / "deploy/docker/Dockerfile"
-        ).read_text(encoding="utf-8")
+        runtime_dockerfile_source = E2EOtherDefinitions.AUTHGUARD_DOCKERFILE.read_text(
+            encoding="utf-8"
+        )
         image_source_markers = (
             "AUTHGUARD_E2E_IMAGE_SOURCE",
             "registry-1.docker.io/v2/",
@@ -884,7 +930,9 @@ class E2ES01StructureVerifier(BaseVerifier):
             if marker in helm_web_source + helm_values_source
         ]:
             errors.append(f"obsolete theme image delivery remains in Helm: {present}")
-        business_chart_root = E2EOtherDefinitions.USE_CASE_DIR / "deploy/authguard/helm"
+        business_chart_root = (
+            E2EOtherDefinitions.USE_CASE_DIR / "deploy/mock-gateway-service/helm"
+        )
         business_chart_source = "\n".join(
             (
                 path.read_text(encoding="utf-8")
@@ -986,7 +1034,7 @@ class E2ES01StructureVerifier(BaseVerifier):
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 key, _value = line.split("=", 1)
-                if not key.startswith("AUTHGUARD__"):
+                if not key.startswith("AUTHGUARD__") and key != "COMPOSE_PROFILES":
                     errors.append(
                         "Docker .env exposes a non-reflected runtime key: " + key
                     )
@@ -1012,17 +1060,17 @@ class E2ES01StructureVerifier(BaseVerifier):
             ),
             "Go workload": (
                 E2EOtherDefinitions.DEPLOY_DIR
-                / "biz-golang-sqlx-service/source/pkg/telemetry/telemetry.go",
+                / "mock-biz-golang-sqlx-service/source/pkg/telemetry/telemetry.go",
                 ("otlptracehttp.New", "otelhttp.NewHandler"),
             ),
             "Rust workload": (
                 E2EOtherDefinitions.DEPLOY_DIR
-                / "biz-rust-sqlx-service/source/src/controller/http.rs",
+                / "mock-biz-rust-sqlx-service/source/src/controller/http.rs",
                 ("propagate_http_trace_context",),
             ),
             "Python workload": (
                 E2EOtherDefinitions.DEPLOY_DIR
-                / "biz-python-sqlalchemy-service/source/app/telemetry.py",
+                / "mock-biz-python-sqlalchemy-service/source/app/telemetry.py",
                 ("OTLPSpanExporter", "FlaskInstrumentor"),
             ),
         }
@@ -1037,7 +1085,7 @@ class E2ES01StructureVerifier(BaseVerifier):
             )
         )
         docker_envoy_source = (
-            E2EOtherDefinitions.USE_CASE_DIR / "deploy/envoy/source/envoy.yaml"
+            E2EOtherDefinitions.AUTHGUARD_CONFIG_DIR / "envoy.yaml"
         ).read_text(encoding="utf-8")
         if "service_name: envoygateway" not in docker_envoy_source:
             errors.append(
@@ -1049,8 +1097,8 @@ class E2ES01StructureVerifier(BaseVerifier):
                     f"Docker {component} must use its component name as the OTel service"
                 )
         spring_trace_services = {
-            "biz-springboot-jdbc-service": "spring-jdbc",
-            "biz-springboot-jpa-service": "spring-jpa",
+            "mock-biz-springboot-jdbc-service": "spring-jdbc",
+            "mock-biz-springboot-jpa-service": "spring-jpa",
         }
         for project, component in spring_trace_services.items():
             pom = (
@@ -1108,6 +1156,7 @@ class E2ES01StructureVerifier(BaseVerifier):
                 errors.append(
                     f"AuthGuard source boundary: obsolete path remains: {relative}"
                 )
+        E2ES01StructureVerifier._verify_mock_chart_dependencies(errors)
         E2ES01StructureVerifier._verify_vendored_authguard_chart(errors)
         details = [
             "One use-case root",

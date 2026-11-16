@@ -100,6 +100,35 @@ app.kubernetes.io/component: web
 {{- default (printf "%s-postgresql" .Release.Name | trunc 63 | trimSuffix "-") $postgres.fullnameOverride -}}
 {{- end -}}
 
+{{/* The bundled database initializes its roles and database before its Service
+     publishes ready endpoints. Keep that cold start outside the application
+     connection timeout; external databases retain their own availability contract. */}}
+{{- define "authguard.waitForPostgresql" -}}
+{{- if .Values.postgresql.enabled }}
+initContainers:
+  - name: wait-postgresql
+    image: {{ include "common.images.image" (dict "imageRoot" .Values.postgresql.image "global" .Values.global) | quote }}
+    imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        until pg_isready --host {{ include "authguard.postgresqlFullname" . | quote }} \
+          --port {{ .Values.postgresql.primary.service.ports.postgresql | quote }} \
+          --username {{ default "postgres" .Values.postgresql.auth.username | quote }} \
+          --dbname {{ default "postgres" .Values.postgresql.auth.database | quote }} --timeout=1; do
+          sleep 1
+        done
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities: { drop: ["ALL"] }
+    resources:
+      requests: { cpu: 10m, memory: 16Mi }
+      limits: { cpu: 100m, memory: 64Mi }
+{{- end }}
+{{- end -}}
+
 {{- define "authguard.joinPath" -}}
 {{- if eq .context "/" -}}
 {{- .path -}}
@@ -125,4 +154,8 @@ vault.hashicorp.com/agent-inject-template-env: |
   {{ print "{{" }}- with secret {{ .Values.secrets.vault.secretPath | quote }} -{{ print "}}" }}
   {{ print "{{" }} .Data.data.env {{ print "}}" }}
   {{ print "{{" }}- end -{{ print "}}" }}
+{{- end -}}
+
+{{- define "authguard.jaegerFullname" -}}
+{{- default (printf "%s-jaeger" (include "authguard.fullname" .)) .Values.jaeger.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

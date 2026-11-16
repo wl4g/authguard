@@ -19,6 +19,25 @@ For request-path review, start with these non-overlapping route owners:
 | `gateway/protected-route.yaml` | a labelled business route protected by JWT + `ext_authz` |
 | `web/dashboard-route.yaml` | optional dedicated AuthGuard Dashboard hostname |
 
+Envoy Gateway, PostgreSQL, Redis Cluster, and Jaeger are enabled by default. They
+are deployed once by this Chart, including when it is a business Chart dependency.
+E2E uses this same Chart and supplies its test data separately.
+
+| Bundled component | Disable when using an existing service | External connection |
+| --- | --- | --- |
+| Envoy Gateway controller | `envoy_gateway.enabled=false` | Configure `envoy_gateway.ext_authz.gateway` for the existing controller/Gateway |
+| PostgreSQL | `postgresql.enabled=false` | Set `storage.postgres` in `authguard.authguard-config` and supply its credentials |
+| Redis Cluster | `redis_cluster.enabled=false` | Set `cache.redis` in `authguard.authguard-config` and supply its credentials |
+| Jaeger | `jaeger.enabled=false` | Set `authguard.mgmt.otelEndpoint` to an OTLP/gRPC collector, or disable `otelEnabled` |
+
+The bundled Jaeger keeps bounded traces in memory. `authguard.mgmt.otelEndpoint`
+overrides its default endpoint. Gateway tracing remains separately configurable
+under `envoy_gateway.ext_authz.tracing`.
+
+When bundled PostgreSQL is enabled, AuthN and AuthZ wait for its ready Service
+before starting. This keeps database initialization outside their normal connection
+timeout. Disabling `postgresql.enabled` removes that startup gate.
+
 ## 1. Prepare
 
 Require Helm 3, a writable StorageClass, and an existing Kubernetes cluster.
@@ -171,7 +190,7 @@ helm upgrade --install business ./business
 its actual name. The Customer Growth reference uses `support.enabled=false`.
 
 The complete executable reference is
-[`use-cases/customer-growth-job-service/deploy/authguard/helm`](../../../use-cases/customer-growth-job-service/deploy/authguard/helm):
+[`use-cases/customer-growth-job-service/deploy/mock-gateway-service/helm`](../../../use-cases/customer-growth-job-service/deploy/mock-gateway-service/helm):
 its default business release disables AuthGuard, while a second release enables
 the vendored tgz and packages `files/authguard-theme/`. The real Chromium E2E
 verifies both that ConfigMap mount and the no-theme fallback.
