@@ -211,9 +211,9 @@ class E2ES31HostedLoginVerifier(BaseVerifier):
             )
         stylesheet_contract = (
             "data-application-theme='customer-growth'",
-            "--customer-growth-brand: #6f7cff",
-            ".login-card",
-            ".account-security-page",
+            "--authguard-customer-growth-brand: #6f7cff",
+            ".authguard-login-card",
+            ".authguard-account-security-page",
             "@media (max-width: 900px)",
         )
         if missing := [marker for marker in stylesheet_contract if marker not in body]:
@@ -296,26 +296,26 @@ class E2ES31HostedLoginVerifier(BaseVerifier):
             expect(
                 page.get_by_role("heading", name="Sign in to Customer Growth")
             ).to_be_visible()
-            expect(page.locator(".visual-brand")).to_contain_text("Customer Growth")
-            expect(page.locator("html")).to_have_attribute(
+            expect(page.locator(".authguard-visual-brand")).to_contain_text("Customer Growth")
+            expect(page.locator(".authguard-root")).to_have_attribute(
                 "data-application-theme", "customer-growth"
             )
             expect(page.locator("#authguard-application-theme")).to_have_attribute(
                 "href", "/auth/assets/themes/custom/customer-growth.css"
             )
             page.wait_for_function(
-                "getComputedStyle(document.documentElement).getPropertyValue('--authguard-application-theme').trim() === 'customer-growth'",
+                "getComputedStyle(document.querySelector('.authguard-root')).getPropertyValue('--authguard-application-theme').trim() === 'customer-growth'",
                 timeout=10000,
             )
             theme_marker = page.evaluate(
-                "getComputedStyle(document.documentElement).getPropertyValue('--authguard-application-theme').trim()"
+                "getComputedStyle(document.querySelector('.authguard-root')).getPropertyValue('--authguard-application-theme').trim()"
             )
             if theme_marker != "customer-growth":
                 raise RuntimeError(
                     f"Customer Growth stylesheet was not applied: {theme_marker!r}"
                 )
             computed_theme = page.evaluate(
-                "() => ({\n                  brand: getComputedStyle(document.documentElement)\n                    .getPropertyValue('--customer-growth-brand').trim(),\n                  cardRadius: getComputedStyle(document.querySelector('.login-card')).borderRadius,\n                  logoWidth: getComputedStyle(document.querySelector('.visual-brand img')).width,\n                  visualBackground: getComputedStyle(document.querySelector('.login-visual')).backgroundImage,\n                })"
+                "() => ({\n                  brand: getComputedStyle(document.querySelector('.authguard-root'))\n                    .getPropertyValue('--authguard-customer-growth-brand').trim(),\n                  cardRadius: getComputedStyle(document.querySelector('.authguard-login-card')).borderRadius,\n                  logoWidth: getComputedStyle(document.querySelector('.authguard-visual-brand img')).width,\n                  visualBackground: getComputedStyle(document.querySelector('.authguard-login-visual')).backgroundImage,\n                })"
             )
             if (
                 computed_theme.get("brand") != "#6f7cff"
@@ -327,14 +327,14 @@ class E2ES31HostedLoginVerifier(BaseVerifier):
                     f"Customer Growth computed theme contract changed: {computed_theme}"
                 )
             if case_id == "HL-07":
-                page.get_by_test_id("locale-select").select_option("zh_CN")
+                page.get_by_test_id("locale-zh_CN").click()
                 expect(
                     page.get_by_role("heading", name="登录 Customer Growth")
                 ).to_be_visible()
-                page.get_by_test_id("theme-select").select_option("dark")
-                expect(page.locator("html")).to_have_attribute("data-theme", "dark")
+                page.get_by_test_id("theme-dark").click()
+                expect(page.locator(".authguard-root")).to_have_attribute("data-authguard-theme", "dark")
                 dark_panel = page.evaluate(
-                    "getComputedStyle(document.documentElement).getPropertyValue('--panel').trim()"
+                    "getComputedStyle(document.querySelector('.authguard-root')).getPropertyValue('--authguard-panel').trim()"
                 )
                 if dark_panel != "#101428":
                     raise RuntimeError(
@@ -343,11 +343,11 @@ class E2ES31HostedLoginVerifier(BaseVerifier):
                 self._screenshot(
                     "HL-07-dark", "Customer Growth dark zh_CN hosted login"
                 )
-                page.get_by_test_id("locale-select").select_option("en_US")
-                page.get_by_test_id("theme-select").select_option("light")
+                page.get_by_test_id("locale-en_US").click()
+                page.get_by_test_id("theme-light").click()
             else:
-                expect(page.locator(".login-visual")).to_be_hidden()
-                expect(page.locator(".mobile-brand")).to_be_visible()
+                expect(page.locator(".authguard-login-visual")).to_be_hidden()
+                expect(page.locator(".authguard-mobile-brand")).to_be_visible()
             self._screenshot(case_id, f"Customer Growth hosted login on {host}")
         self.browser_page.set_viewport_size({"width": 1280, "height": 1000})
 
@@ -360,18 +360,18 @@ class E2ES31HostedLoginVerifier(BaseVerifier):
         expect(
             page.get_by_role("heading", name="Sign in to Customer Growth")
         ).to_be_visible()
-        expect(page.locator(".visual-brand")).to_contain_text("Customer Growth")
-        expect(page.locator(".visual-brand svg")).to_be_visible()
+        expect(page.locator(".authguard-visual-brand")).to_contain_text("Customer Growth")
+        expect(page.locator(".authguard-visual-brand svg")).to_be_visible()
         if page.locator("#authguard-application-theme").count() != 0:
             raise RuntimeError(
                 "unconfigured Application unexpectedly loaded a custom stylesheet"
             )
-        if page.locator("html").get_attribute("data-application-theme") is not None:
+        if page.locator(".authguard-root").get_attribute("data-application-theme") is not None:
             raise RuntimeError(
                 "unconfigured Application retained an application theme marker"
             )
         accent = page.evaluate(
-            "getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()"
+            "getComputedStyle(document.querySelector('.authguard-root')).getPropertyValue('--accent').trim()"
         )
         if accent not in {"#00a889", "#19e6b7"}:
             raise RuntimeError(
@@ -507,7 +507,7 @@ class E2ES31HostedLoginVerifier(BaseVerifier):
         ).to_be_visible()
         expect(page.get_by_test_id("business-sign-out")).to_be_visible()
         session_status = page.evaluate(
-            "async () => (await fetch('/auth/session')).status"
+            "async () => (await fetch('/auth/session')).authguard-status"
         )
         if session_status != 200:
             raise RuntimeError(
@@ -519,9 +519,9 @@ class E2ES31HostedLoginVerifier(BaseVerifier):
             and response.url.endswith("/auth/logout")
         ) as logout_response:
             page.get_by_test_id("business-sign-out").click()
-        if logout_response.value.status != 204:
+        if logout_response.value.authguard-status != 204:
             raise RuntimeError(
-                f"business sign-out did not reach AuthN through the same-origin Gateway: HTTP {logout_response.value.status}"
+                f"business sign-out did not reach AuthN through the same-origin Gateway: HTTP {logout_response.value.authguard-status}"
             )
         page.wait_for_url(
             re.compile(
@@ -533,7 +533,7 @@ class E2ES31HostedLoginVerifier(BaseVerifier):
             page.get_by_role("heading", name="Sign in to Customer Growth")
         ).to_be_visible()
         session_status = page.evaluate(
-            "async () => (await fetch('/auth/session')).status"
+            "async () => (await fetch('/auth/session')).authguard-status"
         )
         if session_status != 401:
             raise RuntimeError(
@@ -546,14 +546,14 @@ class E2ES31HostedLoginVerifier(BaseVerifier):
 
     def _browser_logout(self) -> None:
         status = self.browser_page.evaluate(
-            "async () => (await fetch('/auth/logout', {method: 'POST'})).status"
+            "async () => (await fetch('/auth/logout', {method: 'POST'})).authguard-status"
         )
         if status != 204:
             raise RuntimeError(f"browser logout returned HTTP {status}")
 
     def _assert_browser_session_amr(self, expected: list[str]) -> None:
         session = self.browser_page.evaluate(
-            "async () => { const response = await fetch('/auth/session'); return {status: response.status, body: await response.json()}; }"
+            "async () => { const response = await fetch('/auth/session'); return {status: response.authguard-status, body: await response.json()}; }"
         )
         actual = session.get("body", {}).get("principal", {}).get("amr")
         if session.get("status") != 200 or actual != expected:
@@ -567,9 +567,9 @@ class E2ES31HostedLoginVerifier(BaseVerifier):
             f"http://{E2EOtherDefinitions.AUTHN_BROWSER_HOST}:8082/login",
             wait_until="domcontentloaded",
         )
-        expect(page.locator(".visual-brand")).to_contain_text("AuthGuard")
-        expect(page.locator(".visual-brand")).not_to_contain_text("Customer Growth")
-        expect(page.locator("html")).not_to_have_attribute(
+        expect(page.locator(".authguard-visual-brand")).to_contain_text("AuthGuard")
+        expect(page.locator(".authguard-visual-brand")).not_to_contain_text("Customer Growth")
+        expect(page.locator(".authguard-root")).not_to_have_attribute(
             "data-application-theme", "customer-growth"
         )
         expect(page.locator("#authguard-application-theme")).to_have_count(0)
@@ -607,7 +607,7 @@ class E2ES31HostedLoginVerifier(BaseVerifier):
         )
         try:
             with request.urlopen(outgoing, timeout=15) as response:
-                return (response.status, json.loads(response.read()), response.headers)
+                return (response.authguard-status, json.loads(response.read()), response.headers)
         except error.HTTPError as failure:
             return (failure.code, json.loads(failure.read()), failure.headers)
 

@@ -158,20 +158,21 @@ class E2ES30AuthguardUiVerifier(BaseVerifier):
             expect(page.get_by_test_id(test_id)).to_be_visible()
         expect(page.get_by_test_id("register-webauthn")).to_have_count(0)
         self._checkpoint("UI-01", "metadata-driven authentication choices")
-        page.get_by_test_id("locale-select").select_option("zh_CN")
+        page.get_by_test_id("locale-zh_CN").click()
         expect(page.get_by_role("heading", name="登录", exact=True)).to_be_visible()
         self._checkpoint("UI-02", "zh_CN locale")
-        page.get_by_test_id("theme-select").select_option("dark")
-        expect(page.locator("html")).to_have_attribute("data-theme", "dark")
-        page.get_by_test_id("theme-select").select_option("light")
-        expect(page.locator("html")).to_have_attribute("data-theme", "light")
+        # The initial system preference still resolves correctly before an explicit choice.
         page.emulate_media(color_scheme="dark")
-        page.get_by_test_id("theme-select").select_option("system")
-        expect(page.locator("html")).to_have_attribute("data-theme", "dark")
+        expect(page.locator(".authguard-root")).to_have_attribute("data-authguard-theme", "dark")
+        expect(page.get_by_test_id("theme-dark")).to_have_attribute("aria-pressed", "true")
         page.emulate_media(color_scheme="light")
-        expect(page.locator("html")).to_have_attribute("data-theme", "light")
+        expect(page.locator(".authguard-root")).to_have_attribute("data-authguard-theme", "light")
+        page.get_by_test_id("theme-dark").click()
+        expect(page.locator(".authguard-root")).to_have_attribute("data-authguard-theme", "dark")
+        page.get_by_test_id("theme-light").click()
+        expect(page.locator(".authguard-root")).to_have_attribute("data-authguard-theme", "light")
         self._checkpoint("UI-03", "dark light and system themes")
-        page.get_by_test_id("locale-select").select_option("en_US")
+        page.get_by_test_id("locale-en_US").click()
         self.details.append(
             "Chromium rendered metadata-driven OAuth2, password, WebAuthn, and CAIP controls in zh_CN/en_US and dark/light/system themes"
         )
@@ -193,6 +194,7 @@ class E2ES30AuthguardUiVerifier(BaseVerifier):
             expect(page.get_by_test_id("authenticated-principal")).not_to_have_text("")
             self._checkpoint(case_id, f"{provider} OAuth redirect login")
             if provider != "qq":
+                page.get_by_test_id("authguard-profile-trigger").click()
                 page.get_by_test_id("sign-out").click()
                 page.wait_for_url(f"{UI_ORIGIN}/login")
         self.details.append(
@@ -201,9 +203,14 @@ class E2ES30AuthguardUiVerifier(BaseVerifier):
 
     def _principal_journeys(self) -> None:
         page = self.browser_page
+        page.get_by_test_id("authguard-profile-trigger").click()
         page.get_by_test_id("api-token").fill(E2EOtherDefinitions.AUTHGUARD_API_TOKEN)
         page.get_by_test_id("api-token-submit").click()
-        page.get_by_test_id("nav-principals").click()
+        page.get_by_test_id("authguard-profile-trigger").click()
+        with page.expect_response(lambda authguard_response: '/auth/management/api/v1/principals?' in authguard_response.url) as authguard_response:
+            page.get_by_test_id("nav-principals").click()
+        if authguard_response.value.status != 200:
+            raise RuntimeError(f"Management namespace route failed: HTTP {authguard_response.value.status}")
         page.wait_for_url(f"{UI_ORIGIN}/principals")
         page.get_by_test_id("principal-local-open").click()
         page.get_by_test_id("principal-local-login").fill(self.standalone_login)
@@ -254,7 +261,7 @@ class E2ES30AuthguardUiVerifier(BaseVerifier):
         action = page.locator("article").filter(has_text=self.policy_action)
         expect(action).to_have_count(1)
         self._checkpoint("UI-11", "policy Action creation")
-        action.locator(".row-actions button").first.click()
+        action.locator(".authguard-row-actions button").first.click()
         page.get_by_test_id("policy-json").fill(
             json.dumps(
                 {
@@ -269,7 +276,7 @@ class E2ES30AuthguardUiVerifier(BaseVerifier):
         expect(action).to_contain_text("real Chromium E2E action updated")
         self._checkpoint("UI-12", "policy Action update")
         page.once("dialog", lambda dialog: dialog.accept())
-        action.locator("button.danger").click()
+        action.locator("button.authguard-danger").click()
         expect(
             page.locator("article").filter(has_text=self.policy_action)
         ).to_have_count(0)
@@ -281,6 +288,7 @@ class E2ES30AuthguardUiVerifier(BaseVerifier):
 
     def _password_journey(self) -> None:
         page = self.browser_page
+        page.get_by_test_id("authguard-profile-trigger").click()
         page.get_by_test_id("sign-out").click()
         page.wait_for_url(f"{UI_ORIGIN}/login")
         self._fill_standalone_credentials()
@@ -302,7 +310,7 @@ class E2ES30AuthguardUiVerifier(BaseVerifier):
                 "pwd + webauthn", timeout=20000
             )
         except PlaywrightTimeoutError as error:
-            banner = page.locator(".error-banner")
+            banner = page.locator(".authguard-error-banner")
             detail = banner.inner_text() if banner.count() else "no UI error banner"
             raise RuntimeError(
                 f"WebAuthn registration did not complete: {detail}"
@@ -316,6 +324,7 @@ class E2ES30AuthguardUiVerifier(BaseVerifier):
                 f"Chromium virtual authenticator stored {len(credentials)} credentials"
             )
         self._checkpoint("UI-16", "CTAP2 authenticator credential persistence")
+        page.get_by_test_id("authguard-profile-trigger").click()
         page.get_by_test_id("account-sign-out").click()
         page.wait_for_url(f"{UI_ORIGIN}/auth/login")
         page.goto(f"{UI_ORIGIN}/login", wait_until="domcontentloaded")
@@ -333,6 +342,7 @@ class E2ES30AuthguardUiVerifier(BaseVerifier):
 
     def _wallet_journey(self) -> None:
         page = self.browser_page
+        page.get_by_test_id("authguard-profile-trigger").click()
         page.get_by_test_id("sign-out").click()
         page.wait_for_url(f"{UI_ORIGIN}/login")
         page.get_by_test_id("login-wallet").click()
@@ -350,26 +360,26 @@ class E2ES30AuthguardUiVerifier(BaseVerifier):
         page = self.browser_page
         page.get_by_test_id("nav-principals").click()
         page.wait_for_url(f"{UI_ORIGIN}/principals")
-        standalone = page.locator(".principal-table .table-row").filter(
+        standalone = page.locator(".authguard-principal-table .authguard-table-row").filter(
             has_text=self.standalone_display_name
         )
         expect(standalone).to_have_count(1)
-        standalone.locator(".row-actions button").first.click()
-        expect(standalone.locator(".status")).to_have_text("DISABLED")
+        standalone.locator(".authguard-row-actions button").first.click()
+        expect(standalone.locator(".authguard-status")).to_have_text("Disabled")
         self._checkpoint("UI-19", "Principal disable")
-        standalone.locator(".row-actions button").first.click()
-        expect(standalone.locator(".status")).to_have_text("ACTIVE")
+        standalone.locator(".authguard-row-actions button").first.click()
+        expect(standalone.locator(".authguard-status")).to_have_text("Active")
         self._checkpoint("UI-20", "Principal enable")
         for case_id, display_name in (
             ("UI-21", self.standalone_display_name),
             ("UI-22", "UI Federated Reviewer"),
         ):
-            row = page.locator(".principal-table .table-row").filter(
+            row = page.locator(".authguard-principal-table .authguard-table-row").filter(
                 has_text=display_name
             )
             expect(row).to_have_count(1)
             page.once("dialog", lambda dialog: dialog.accept())
-            row.locator(".row-actions .danger").click()
+            row.locator(".authguard-row-actions .authguard-danger").click()
             expect(row).to_have_count(0)
             self._checkpoint(case_id, f"Principal deletion: {display_name}")
         self.details.append(

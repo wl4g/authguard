@@ -39,7 +39,7 @@ export type AuthMetadata = {
 }
 
 const authnBase = (import.meta.env.VITE_AUTHN_BASE_URL || '').replace(/\/$/, '')
-const authzBase = (import.meta.env.VITE_AUTHZ_BASE_URL || '').replace(/\/$/, '')
+const authzBase = (import.meta.env.VITE_AUTHZ_BASE_URL || '/auth/management').replace(/\/$/, '')
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {

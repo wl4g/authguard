@@ -10,8 +10,8 @@ import { requestOptions, serializeAssertion } from './webauthn'
 import { WalletLogin } from './WalletLogin'
 
 const providerMark: Record<string, React.ReactNode> = {
-  github: <Github/>, google: <span className="provider-letter">G</span>,
-  wechat: <MessageCircle/>, qq: <span className="provider-letter">QQ</span>,
+  github: <Github/>, google: <span className="authguard-provider-letter">G</span>,
+  wechat: <MessageCircle/>, qq: <span className="authguard-provider-letter">QQ</span>,
 }
 
 export function LoginPage() {
@@ -60,7 +60,7 @@ export function LoginPage() {
         method: 'POST', body: JSON.stringify({ login }),
       })
       const credential = await navigator.credentials.get(requestOptions(challenge.options)) as PublicKeyCredential | null
-      if (!credential) throw new Error('No WebAuthn assertion returned')
+      if (!credential) throw new Error(t('authguard_no_passkey'))
       authenticated(await authn<LoginResponse>(meta.standalone.webauthnAuthenticationVerifyEndpoint, {
         method: 'POST', body: JSON.stringify({ challengeId: challenge.challengeId, credential: serializeAssertion(credential), returnTo }),
       }))
@@ -83,31 +83,31 @@ export function LoginPage() {
   const brandName = brand?.displayName || t('product')
   useApplicationTheme(brand)
 
-  return <div className="login-page">
-    <div className="login-visual">
-      <div className="visual-grid"/><div className="visual-glow"/>
-      <div className="visual-brand">{brand?.logo ? <img src={brand.logo} alt=""/> : <Fingerprint/>}<b>{brandName}</b></div>
-      <div className="trust-orbit"><span/><span/><span/><Shield/></div>
-      <div className="visual-copy"><span className="eyebrow"><Sparkles size={14}/> AUTHN FABRIC / 01</span><h1>{t('loginTitle')}</h1><p>{t('loginHint')}</p></div>
-      <div className="protocol-strip"><span>OIDC</span><span>RFC 6238</span><span>WebAuthn</span><span>CAIP-122</span></div>
+  return <div className="authguard-login-page">
+    <div className="authguard-login-visual">
+      <div className="authguard-visual-grid"/><div className="authguard-visual-glow"/>
+      <div className="authguard-visual-brand">{brand?.logo ? <img src={brand.logo} alt=""/> : <Fingerprint/>}<b>{brandName}</b></div>
+      <div className="authguard-trust-orbit"><span/><span/><span/><Shield/></div>
+      <div className="authguard-visual-copy"><span className="authguard-eyebrow"><Sparkles size={14}/> AUTHN FABRIC / 01</span><h1>{t('loginTitle')}</h1><p>{t('loginHint')}</p></div>
+      <div className="authguard-protocol-strip"><span>OIDC</span><span>RFC 6238</span><span>WebAuthn</span><span>CAIP-122</span></div>
     </div>
-    <div className="login-panel">
-      <div className="login-tools"><Preferences/></div>
-      <div className="login-card">
-        <div className="mobile-brand">{brand?.logo ? <img src={brand.logo} alt=""/> : <Fingerprint/>}<b>{brandName}</b></div>
+    <div className="authguard-login-panel">
+      <div className="authguard-login-tools"><Preferences/></div>
+      <div className="authguard-login-card">
+        <div className="authguard-mobile-brand">{brand?.logo ? <img src={brand.logo} alt=""/> : <Fingerprint/>}<b>{brandName}</b></div>
         <h2>{hosted && brand ? `${t('signInTo')} ${brandName}` : t('login')}</h2><p>{t('authenticatedAs')} <code>canonical principal</code></p>
         <form onSubmit={passwordLogin}>
           {meta?.ldap?.enabled && meta.standalone.enabled && <label>{t('provider')}<select data-testid="login-password-source" value={passwordSource} disabled={busy !== ''} onChange={event => { setPasswordSource(event.target.value as 'standalone' | 'ldap'); setPassword(''); setTotp('') }}><option value="ldap">{t('directoryAccount')}</option><option value="standalone">{t('localAccount')}</option></select></label>}
           <label>{t('loginId')}<input data-testid="login-id" autoComplete="username" value={login} onChange={event => setLogin(event.target.value)} required /></label>
           <label>{t('password')}<input data-testid="login-password" type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required /></label>
           {passwordSource === 'standalone' && meta?.standalone.totp && <label>{t('totp')}<input data-testid="login-totp" inputMode="numeric" autoComplete="one-time-code" value={totp} onChange={event => setTotp(event.target.value)} /></label>}
-          <button data-testid="login-password-submit" className="primary" disabled={busy !== '' || !(passwordSource === 'ldap' ? meta?.ldap?.enabled : meta?.standalone.password)}><KeyRound size={18}/>{busy === 'password' ? t('connecting') : t('login')}</button>
+          <button data-testid="login-password-submit" className="authguard-primary" disabled={busy !== '' || !(passwordSource === 'ldap' ? meta?.ldap?.enabled : meta?.standalone.password)}><KeyRound size={18}/>{busy === 'password' ? t('connecting') : t('login')}</button>
         </form>
-        {meta?.standalone.webauthn && <button data-testid="login-webauthn" className="auth-method" disabled={busy !== '' || !login} onClick={passkeyLogin}><ScanFace size={19}/><span>{t('passkey')}</span><i>FIDO2</i></button>}
+        {meta?.standalone.webauthn && <button data-testid="login-webauthn" className="authguard-auth-method" disabled={busy !== '' || !login} onClick={passkeyLogin}><ScanFace size={19}/><span>{t('passkey')}</span><i>FIDO2</i></button>}
         {meta && <WalletLogin metadata={meta} returnTo={returnTo} onAuthenticated={authenticated}/>}
-        {!!meta?.oauth2.providers.length && <><div className="divider"><span>{t('orFederated')}</span></div><div className="provider-grid">{meta.oauth2.providers.map(provider => <button data-testid={`login-provider-${provider.id.toLowerCase()}`} key={provider.id} disabled={busy !== ''} onClick={() => oauthLogin(provider)}>{providerMark[provider.id.toLowerCase()] || <Shield/>}<span>{provider.id}</span></button>)}</div></>}
-        {error && <div className="error-banner">{error}</div>}
-        <div className="proof-line"><span/><small>{hosted ? 'Secured by AuthGuard' : 'Authentication ≠ Identity ≠ Principal ≠ Authorization'}</small></div>
+        {!!meta?.oauth2.providers.length && <><div className="authguard-divider"><span>{t('orFederated')}</span></div><div className="authguard-provider-grid">{meta.oauth2.providers.map(provider => <button data-testid={`login-provider-${provider.id.toLowerCase()}`} key={provider.id} disabled={busy !== ''} onClick={() => oauthLogin(provider)}>{providerMark[provider.id.toLowerCase()] || <Shield/>}<span>{provider.id}</span></button>)}</div></>}
+        {error && <div className="authguard-error-banner">{error}</div>}
+        <div className="authguard-proof-line"><span/><small>{hosted ? t('authguard_secured_by') : t('authguard_auth_boundary')}</small></div>
       </div>
     </div>
   </div>

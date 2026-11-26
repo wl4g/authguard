@@ -1,0 +1,80 @@
+.authguard-business-document { margin:0; }
+.authguard-business-shell {
+  --authguard-business-bg:#f4f7f8;
+  --authguard-business-panel:#ffffff;
+  --authguard-business-hover:#eef4f5;
+  --authguard-business-text:#14252c;
+  --authguard-business-muted:#70828b;
+  --authguard-business-line:#e0e8eb;
+  --authguard-business-accent:#008c75;
+  --authguard-business-shadow:0 16px 48px rgba(20,44,52,.14);
+  min-height:100dvh;background:var(--authguard-business-bg);color:var(--authguard-business-text);
+  font:14px/1.5 Inter,"Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;color-scheme:light;
+}
+.authguard-business-shell[data-authguard-host-theme='dark'] {
+  --authguard-business-bg:#050b0f;
+  --authguard-business-panel:#091318;
+  --authguard-business-hover:#102129;
+  --authguard-business-text:#e9fbf6;
+  --authguard-business-muted:#8ba0a9;
+  --authguard-business-line:#1c323b;
+  --authguard-business-accent:#19e6b7;
+  --authguard-business-shadow:0 20px 60px rgba(0,0,0,.4);
+  color-scheme:dark;
+}
+/* Host control rules also exercise the remote's isolation from ancestor styles. */
+.authguard-business-shell * { box-sizing:border-box; }
+.authguard-business-shell button,.authguard-business-shell input { font:inherit;color:inherit; }
+.authguard-business-shell button { cursor:pointer;transition:background .15s,border-color .15s; }
+.authguard-business-shell button:focus-visible,.authguard-business-shell input:focus-visible { outline:2px solid var(--authguard-business-accent);outline-offset:3px; }
+.authguard-business-header { height:64px;display:flex;align-items:center;gap:24px;padding:0 28px;border-bottom:1px solid var(--authguard-business-line);background:var(--authguard-business-panel);position:relative;z-index:30; }
+.authguard-business-brand { display:flex;align-items:center;gap:11px;white-space:nowrap; }
+.authguard-business-brand>b { font-size:16px;letter-spacing:-.4px; }
+.authguard-business-mark { width:32px;height:32px;display:grid;place-items:center;border-radius:9px;background:var(--authguard-business-accent);color:var(--authguard-business-panel); }
+.authguard-business-icon { width:18px;height:18px;flex-shrink:0; }
+.authguard-business-mark .authguard-business-icon { width:21px;height:21px; }
+.authguard-business-breadcrumb { border-left:1px solid var(--authguard-business-line);padding-left:24px;color:var(--authguard-business-muted);font-size:12px; }
+.authguard-business-dropdown { position:relative;margin-left:auto; }
+.authguard-business-shell .authguard-business-profile { display:flex;align-items:center;gap:11px;border:1px solid transparent;border-radius:12px;padding:5px 9px;background:transparent;text-align:left; }
+.authguard-business-shell .authguard-business-profile:hover,.authguard-business-shell .authguard-business-profile[aria-expanded='true'] { background:var(--authguard-business-hover);border-color:var(--authguard-business-line); }
+.authguard-business-avatar { width:33px;height:33px;display:grid;place-items:center;flex-shrink:0;background:color-mix(in srgb,var(--authguard-business-accent) 12%,var(--authguard-business-panel));color:var(--authguard-business-accent);border:1px solid color-mix(in srgb,var(--authguard-business-accent) 20%,transparent);border-radius:50%;font-size:11px;font-weight:750;letter-spacing:.4px; }
+.authguard-business-user { display:grid;gap:1px; }
+.authguard-business-user b { font-size:12px;font-weight:650; }
+.authguard-business-user small { font-size:10px;color:var(--authguard-business-muted); }
+.authguard-business-profile>.authguard-business-icon { width:14px;color:var(--authguard-business-muted); }
+.authguard-business-menu { position:absolute;right:0;top:calc(100% + 12px);width:min(300px,calc(100vw - 24px));padding:8px;background:var(--authguard-business-panel);border:1px solid var(--authguard-business-line);border-radius:16px;box-shadow:var(--authguard-business-shadow); }
+.authguard-business-menu-heading { display:grid;gap:3px;padding:12px 12px 16px;border-bottom:1px solid var(--authguard-business-line); }
+.authguard-business-menu-heading b { font-size:13px; }
+.authguard-business-menu-heading small { color:var(--authguard-business-muted);font-size:11px; }
+.authguard-business-menu-navigation { display:grid;gap:4px;padding:8px 0; }
+.authguard-business-shell .authguard-business-menu-navigation button { display:flex;align-items:center;gap:11px;width:100%;padding:11px 12px;text-align:left;border:0;border-radius:9px;background:transparent;font-size:12px;font-weight:550; }
+.authguard-business-menu-navigation .authguard-business-icon { color:var(--authguard-business-muted); }
+.authguard-business-shell .authguard-business-menu-navigation button:hover { background:var(--authguard-business-hover); }
+.authguard-business-preferences { display:grid;gap:14px;border-top:1px solid var(--authguard-business-line);padding:16px 12px 12px; }
+.authguard-business-preference-row { display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px;color:var(--authguard-business-muted); }
+.authguard-business-segmented { display:flex;gap:3px;width:156px;padding:3px;background:var(--authguard-business-hover);border:1px solid var(--authguard-business-line);border-radius:10px; }
+.authguard-business-segmented button { flex:1;min-height:30px;padding:5px 8px;border:1px solid transparent;border-radius:7px;background:transparent;font-size:11px;font-weight:600;white-space:nowrap; }
+.authguard-business-segmented button:hover { color:var(--authguard-business-accent); }
+.authguard-business-segmented button[aria-pressed='true'] { color:var(--authguard-business-accent);background:var(--authguard-business-panel);border-color:color-mix(in srgb,var(--authguard-business-accent) 22%,var(--authguard-business-line));box-shadow:0 1px 3px rgba(0,0,0,.06); }
+.authguard-business-layout { display:grid;grid-template-columns:220px minmax(0,1fr);min-height:calc(100dvh - 64px); }
+.authguard-business-layout aside { display:flex;flex-direction:column;padding:24px 16px;gap:8px;background:var(--authguard-business-panel);border-right:1px solid var(--authguard-business-line); }
+.authguard-business-layout aside button { border:0;border-radius:8px;padding:12px;text-align:left;background:transparent;font-size:13px; }
+.authguard-business-layout aside button:hover { background:var(--authguard-business-hover); }
+.authguard-business-layout main { padding:48px;min-width:0; }
+.authguard-business-layout h1 { font-size:32px;letter-spacing:-1px;margin:0 0 28px; }
+.authguard-business-layout main>label { display:grid;gap:10px;max-width:480px;color:var(--authguard-business-muted);font-size:12px; }
+.authguard-business-layout input { width:100%;background:var(--authguard-business-panel);border:1px solid var(--authguard-business-line);border-radius:9px;padding:12px 14px; }
+.authguard-business-shell .authguard-business-primary { background:var(--authguard-business-accent);border:0;border-radius:9px;color:var(--authguard-business-panel);padding:11px 18px;font-size:12px;font-weight:650;margin-top:20px; }
+@media(max-width:640px) {
+  .authguard-business-header { gap:12px;padding:0 16px; }
+  .authguard-business-brand>b { font-size:14px; }
+  .authguard-business-breadcrumb,.authguard-business-user { display:none; }
+  .authguard-business-shell .authguard-business-profile { padding:4px;gap:6px; }
+  .authguard-business-layout { grid-template-columns:144px minmax(0,1fr); }
+  .authguard-business-layout main { padding:24px 16px; }
+  .authguard-business-layout h1 { font-size:26px; }
+}
+@media(prefers-reduced-motion:reduce) { .authguard-business-shell button { transition:none; } }
+.authguard-business-language-row { display:grid;grid-template-columns:minmax(0,1fr);gap:8px; }
+.authguard-business-language-switch { display:grid;width:100%;grid-template-columns:repeat(7,minmax(0,1fr));gap:1px; }
+.authguard-business-language-switch button { min-width:0;padding:5px 1px;font-size:11px; }

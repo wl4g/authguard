@@ -74,6 +74,9 @@ static_resources:
                         - match: { prefix: /.well-known/ }
                           route: { cluster: authn_http }
                           typed_per_filter_config: *public_filters
+                        - match: { prefix: /auth/management/api/ }
+                          route: { cluster: authz_api, prefix_rewrite: /api/ }
+                          typed_per_filter_config: *public_filters
                         - match: { prefix: /auth/ }
                           route: { cluster: authn_http }
                           typed_per_filter_config: *public_filters

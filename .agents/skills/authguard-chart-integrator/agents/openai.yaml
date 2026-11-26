@@ -1,4 +1,4 @@
 interface:
   display_name: "AuthGuard Chart Integrator"
-  short_description: "Integrate AuthGuard into business service Helm Charts"
-  default_prompt: "Use $authguard-chart-integrator to fetch and integrate the latest AuthGuard Chart; ask me for the real business service domain before configuring and validating it."
+  short_description: "Integrate AuthGuard Chart and React management UI"
+  default_prompt: "Use $authguard-chart-integrator to fetch and integrate the latest AuthGuard Chart; use the real business service domain and complete React Module Federation dependency installation, remote configuration, Access Management navigation, preference synchronization and browser validation."

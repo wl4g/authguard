@@ -37,10 +37,10 @@ export function WalletLogin({ metadata, returnTo, onAuthenticated }: { metadata:
       } else if (!isConnected || !selectedAddress) {
         setBusy(false); await open(); return
       }
-      if (!selectedAddress) throw new Error('Wallet returned no account')
+      if (!selectedAddress) throw new Error(t('authguard_no_wallet_account'))
       const normalizedAddress = getAddress(selectedAddress as `0x${string}`)
       const accountId = `eip155:${selectedChainId}:${normalizedAddress}`
-      if (!metadata.wallet.chains.includes(`eip155:${selectedChainId}`)) throw new Error('Connected chain is not enabled by AuthGuard')
+      if (!metadata.wallet.chains.includes(`eip155:${selectedChainId}`)) throw new Error(t('authguard_chain_disabled'))
       const challenge = await authn<Challenge>(metadata.wallet.challengeEndpoint, {
         method: 'POST', body: JSON.stringify({ accountId }),
       })
@@ -70,9 +70,9 @@ export function WalletLogin({ metadata, returnTo, onAuthenticated }: { metadata:
   }
 
   return <div>
-    <button data-testid="login-wallet" className="auth-method wallet" type="button" disabled={busy || !metadata.wallet.enabled} onClick={authenticate}>
+    <button data-testid="login-wallet" className="authguard-auth-method authguard-wallet" type="button" disabled={busy || !metadata.wallet.enabled} onClick={authenticate}>
       <WalletCards size={19} /><span>{busy ? t('connecting') : t('wallet')}</span><i>CAIP</i>
     </button>
-    {error && <p className="field-error">{error}</p>}
+    {error && <p className="authguard-field-error">{error}</p>}
   </div>
 }
