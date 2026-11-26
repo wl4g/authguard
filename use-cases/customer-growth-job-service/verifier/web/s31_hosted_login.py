@@ -371,7 +371,7 @@ class E2ES31HostedLoginVerifier(BaseVerifier):
                 "unconfigured Application retained an application theme marker"
             )
         accent = page.evaluate(
-            "getComputedStyle(document.querySelector('.authguard-root')).getPropertyValue('--accent').trim()"
+            "getComputedStyle(document.querySelector('.authguard-root')).getPropertyValue('--authguard-accent').trim()"
         )
         if accent not in {"#00a889", "#19e6b7"}:
             raise RuntimeError(
@@ -507,7 +507,7 @@ class E2ES31HostedLoginVerifier(BaseVerifier):
         ).to_be_visible()
         expect(page.get_by_test_id("business-sign-out")).to_be_visible()
         session_status = page.evaluate(
-            "async () => (await fetch('/auth/session')).authguard-status"
+            "async () => (await fetch('/auth/session')).status"
         )
         if session_status != 200:
             raise RuntimeError(
@@ -519,9 +519,9 @@ class E2ES31HostedLoginVerifier(BaseVerifier):
             and response.url.endswith("/auth/logout")
         ) as logout_response:
             page.get_by_test_id("business-sign-out").click()
-        if logout_response.value.authguard-status != 204:
+        if logout_response.value.status != 204:
             raise RuntimeError(
-                f"business sign-out did not reach AuthN through the same-origin Gateway: HTTP {logout_response.value.authguard-status}"
+                f"business sign-out did not reach AuthN through the same-origin Gateway: HTTP {logout_response.value.status}"
             )
         page.wait_for_url(
             re.compile(
@@ -533,7 +533,7 @@ class E2ES31HostedLoginVerifier(BaseVerifier):
             page.get_by_role("heading", name="Sign in to Customer Growth")
         ).to_be_visible()
         session_status = page.evaluate(
-            "async () => (await fetch('/auth/session')).authguard-status"
+            "async () => (await fetch('/auth/session')).status"
         )
         if session_status != 401:
             raise RuntimeError(
@@ -546,14 +546,14 @@ class E2ES31HostedLoginVerifier(BaseVerifier):
 
     def _browser_logout(self) -> None:
         status = self.browser_page.evaluate(
-            "async () => (await fetch('/auth/logout', {method: 'POST'})).authguard-status"
+            "async () => (await fetch('/auth/logout', {method: 'POST'})).status"
         )
         if status != 204:
             raise RuntimeError(f"browser logout returned HTTP {status}")
 
     def _assert_browser_session_amr(self, expected: list[str]) -> None:
         session = self.browser_page.evaluate(
-            "async () => { const response = await fetch('/auth/session'); return {status: response.authguard-status, body: await response.json()}; }"
+            "async () => { const response = await fetch('/auth/session'); return {status: response.status, body: await response.json()}; }"
         )
         actual = session.get("body", {}).get("principal", {}).get("amr")
         if session.get("status") != 200 or actual != expected:
@@ -607,7 +607,7 @@ class E2ES31HostedLoginVerifier(BaseVerifier):
         )
         try:
             with request.urlopen(outgoing, timeout=15) as response:
-                return (response.authguard-status, json.loads(response.read()), response.headers)
+                return (response.status, json.loads(response.read()), response.headers)
         except error.HTTPError as failure:
             return (failure.code, json.loads(failure.read()), failure.headers)
 
