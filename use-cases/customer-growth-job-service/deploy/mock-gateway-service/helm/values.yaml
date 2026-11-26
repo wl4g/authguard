@@ -2,7 +2,7 @@ support:
   enabled: true
 global:
   authguard:
-    themeRevision: v1
+    themeRevision: v3
     themeConfigMap: '{{ .Release.Name }}-authguard-theme-{{ .Values.global.authguard.themeRevision
       }}'
 authguard:

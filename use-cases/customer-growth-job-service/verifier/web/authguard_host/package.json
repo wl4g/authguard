@@ -1,0 +1,8 @@
+{
+  "name": "authguard-federation-host-verifier",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "tsc --noEmit && vite build", "preview": "vite preview --host 127.0.0.1 --port 4180 --strictPort" },
+  "dependencies": { "react": "19.3.0", "react-dom": "19.3.0" },
+  "devDependencies": { "@module-federation/vite": "1.25.0", "@types/react": "19.2.14", "@types/react-dom": "19.2.3", "@vitejs/plugin-react": "6.1.1", "typescript": "^5.9.3", "vite": "8.3.0" }
+}

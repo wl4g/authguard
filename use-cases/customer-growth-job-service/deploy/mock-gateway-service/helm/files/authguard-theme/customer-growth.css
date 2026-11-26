@@ -1,40 +1,40 @@
-:root[data-application-theme='customer-growth'] {
+.authguard-root[data-application-theme='customer-growth'] {
   /* Business-owned presentation tokens; the AuthGuard Web image stays immutable. */
   --authguard-application-theme: customer-growth;
-  --customer-growth-brand: #6f7cff;
-  --customer-growth-growth: #20c997;
-  --bg: #f4f6ff;
-  --panel: #ffffff;
-  --panel-2: #f0f2ff;
-  --text: #171a35;
-  --muted: #68708d;
-  --line: #dfe3f5;
-  --accent: #6f7cff;
-  --accent-2: #20c997;
-  --danger: #d94f70;
-  --shadow: 0 28px 80px rgba(46, 51, 112, .16);
+  --authguard-customer-growth-brand: #6f7cff;
+  --authguard-customer-growth-growth: #20c997;
+  --authguard-bg: #f4f6ff;
+  --authguard-panel: #ffffff;
+  --authguard-panel-2: #f0f2ff;
+  --authguard-text: #171a35;
+  --authguard-muted: #68708d;
+  --authguard-line: #dfe3f5;
+  --authguard-accent: #6f7cff;
+  --authguard-accent-2: #20c997;
+  --authguard-danger: #d94f70;
+  --authguard-shadow: 0 28px 80px rgba(46, 51, 112, .16);
 }
 
-:root[data-theme='dark'][data-application-theme='customer-growth'] {
-  --bg: #080b19;
-  --panel: #101428;
-  --panel-2: #171c35;
-  --text: #f3f5ff;
-  --muted: #9299ba;
-  --line: #293052;
-  --accent: #939cff;
-  --accent-2: #48dfb3;
-  --danger: #ff7895;
-  --shadow: 0 30px 90px rgba(0, 0, 0, .48);
+.authguard-root[data-authguard-theme='dark'][data-application-theme='customer-growth'] {
+  --authguard-bg: #080b19;
+  --authguard-panel: #101428;
+  --authguard-panel-2: #171c35;
+  --authguard-text: #f3f5ff;
+  --authguard-muted: #9299ba;
+  --authguard-line: #293052;
+  --authguard-accent: #939cff;
+  --authguard-accent-2: #48dfb3;
+  --authguard-danger: #ff7895;
+  --authguard-shadow: 0 30px 90px rgba(0, 0, 0, .48);
 }
 
 /* Hosted Login composition. */
-:root[data-application-theme='customer-growth'] .login-page {
+.authguard-root[data-application-theme='customer-growth'] .authguard-login-page {
   grid-template-columns: minmax(480px, 1.08fr) minmax(480px, .92fr);
-  background: var(--panel);
+  background: var(--authguard-panel);
 }
 
-:root[data-application-theme='customer-growth'] .login-visual {
+.authguard-root[data-application-theme='customer-growth'] .authguard-login-visual {
   background:
     radial-gradient(circle at 72% 24%, rgba(111, 124, 255, .38), transparent 32%),
     radial-gradient(circle at 24% 76%, rgba(32, 201, 151, .24), transparent 36%),
@@ -42,7 +42,7 @@
   isolation: isolate;
 }
 
-:root[data-application-theme='customer-growth'] .login-visual::before {
+.authguard-root[data-application-theme='customer-growth'] .authguard-login-visual::before {
   position: absolute;
   inset: 18% -18% auto auto;
   width: 440px;
@@ -54,7 +54,7 @@
   transform: rotate(18deg);
 }
 
-:root[data-application-theme='customer-growth'] .visual-grid {
+.authguard-root[data-application-theme='customer-growth'] .authguard-visual-grid {
   opacity: .34;
   background-image:
     linear-gradient(rgba(147, 156, 255, .11) 1px, transparent 1px),
@@ -62,7 +62,7 @@
   background-size: 56px 56px;
 }
 
-:root[data-application-theme='customer-growth'] .visual-glow {
+.authguard-root[data-application-theme='customer-growth'] .authguard-visual-glow {
   width: 520px;
   height: 520px;
   background: linear-gradient(135deg, #6f7cff, #20c997);
@@ -70,7 +70,7 @@
   opacity: .18;
 }
 
-:root[data-application-theme='customer-growth'] .visual-brand {
+.authguard-root[data-application-theme='customer-growth'] .authguard-visual-brand {
   width: max-content;
   padding: 8px 14px 8px 9px;
   border: 1px solid rgba(255, 255, 255, .13);
@@ -80,55 +80,55 @@
   backdrop-filter: blur(16px);
 }
 
-:root[data-application-theme='customer-growth'] .visual-brand img,
-:root[data-application-theme='customer-growth'] .mobile-brand img {
+.authguard-root[data-application-theme='customer-growth'] .authguard-visual-brand img,
+.authguard-root[data-application-theme='customer-growth'] .authguard-mobile-brand img {
   width: 36px;
   height: 36px;
   border-radius: 10px;
   box-shadow: 0 8px 22px rgba(32, 201, 151, .2);
 }
 
-:root[data-application-theme='customer-growth'] .visual-brand b,
-:root[data-application-theme='customer-growth'] .mobile-brand b {
+.authguard-root[data-application-theme='customer-growth'] .authguard-visual-brand b,
+.authguard-root[data-application-theme='customer-growth'] .authguard-mobile-brand b {
   letter-spacing: -.025em;
 }
 
-:root[data-application-theme='customer-growth'] .trust-orbit {
+.authguard-root[data-application-theme='customer-growth'] .authguard-trust-orbit {
   border-color: rgba(147, 156, 255, .34);
   box-shadow:
     0 0 120px rgba(111, 124, 255, .14),
     inset 0 0 74px rgba(32, 201, 151, .08);
 }
 
-:root[data-application-theme='customer-growth'] .trust-orbit::before,
-:root[data-application-theme='customer-growth'] .trust-orbit::after {
+.authguard-root[data-application-theme='customer-growth'] .authguard-trust-orbit::before,
+.authguard-root[data-application-theme='customer-growth'] .authguard-trust-orbit::after {
   border-color: rgba(72, 223, 179, .28);
 }
 
-:root[data-application-theme='customer-growth'] .trust-orbit > svg {
+.authguard-root[data-application-theme='customer-growth'] .authguard-trust-orbit > svg {
   color: #aab1ff;
   filter: drop-shadow(0 0 24px rgba(111, 124, 255, .62));
 }
 
-:root[data-application-theme='customer-growth'] .trust-orbit span {
+.authguard-root[data-application-theme='customer-growth'] .authguard-trust-orbit span {
   background: #48dfb3;
   box-shadow: 0 0 18px rgba(72, 223, 179, .9);
 }
 
-:root[data-application-theme='customer-growth'] .visual-copy h1 {
+.authguard-root[data-application-theme='customer-growth'] .authguard-visual-copy h1 {
   color: #f7f8ff;
   text-wrap: balance;
 }
 
-:root[data-application-theme='customer-growth'] .visual-copy p {
+.authguard-root[data-application-theme='customer-growth'] .authguard-visual-copy p {
   color: #aeb6d2;
 }
 
-:root[data-application-theme='customer-growth'] .eyebrow {
+.authguard-root[data-application-theme='customer-growth'] .authguard-eyebrow {
   color: #48dfb3;
 }
 
-:root[data-application-theme='customer-growth'] .protocol-strip span {
+.authguard-root[data-application-theme='customer-growth'] .authguard-protocol-strip span {
   padding: 5px 8px;
   border: 1px solid rgba(147, 156, 255, .14);
   border-radius: 999px;
@@ -137,40 +137,40 @@
 }
 
 /* Authentication panel and controls. */
-:root[data-application-theme='customer-growth'] .login-panel {
+.authguard-root[data-application-theme='customer-growth'] .authguard-login-panel {
   background:
-    radial-gradient(circle at 95% 4%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 34%),
-    var(--panel);
+    radial-gradient(circle at 95% 4%, color-mix(in srgb, var(--authguard-accent) 11%, transparent), transparent 34%),
+    var(--authguard-panel);
 }
 
-:root[data-application-theme='customer-growth'] .login-card {
+.authguard-root[data-application-theme='customer-growth'] .authguard-login-card {
   width: min(440px, 100%);
   padding: 34px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--authguard-line);
   border-radius: 24px;
-  background: color-mix(in srgb, var(--panel) 94%, transparent);
-  box-shadow: var(--shadow);
+  background: color-mix(in srgb, var(--authguard-panel) 94%, transparent);
+  box-shadow: var(--authguard-shadow);
 }
 
-:root[data-application-theme='customer-growth'] .login-card > h2 {
+.authguard-root[data-application-theme='customer-growth'] .authguard-login-card > h2 {
   font-size: 34px;
   letter-spacing: -.045em;
 }
 
-:root[data-application-theme='customer-growth'] input,
-:root[data-application-theme='customer-growth'] textarea {
+.authguard-root[data-application-theme='customer-growth'] input,
+.authguard-root[data-application-theme='customer-growth'] textarea {
   min-height: 46px;
   border-radius: 12px;
-  background: color-mix(in srgb, var(--panel-2) 78%, var(--panel));
+  background: color-mix(in srgb, var(--authguard-panel-2) 78%, var(--authguard-panel));
 }
 
-:root[data-application-theme='customer-growth'] input:focus,
-:root[data-application-theme='customer-growth'] textarea:focus {
-  border-color: var(--customer-growth-brand);
+.authguard-root[data-application-theme='customer-growth'] input:focus,
+.authguard-root[data-application-theme='customer-growth'] textarea:focus {
+  border-color: var(--authguard-customer-growth-brand);
   box-shadow: 0 0 0 4px rgba(111, 124, 255, .13);
 }
 
-:root[data-application-theme='customer-growth'] .primary {
+.authguard-root[data-application-theme='customer-growth'] .authguard-primary {
   min-height: 48px;
   border-radius: 12px;
   color: #fff;
@@ -178,68 +178,68 @@
   box-shadow: 0 14px 32px rgba(111, 124, 255, .26);
 }
 
-:root[data-application-theme='customer-growth'] .primary:hover:not(:disabled) {
+.authguard-root[data-application-theme='customer-growth'] .authguard-primary:hover:not(:disabled) {
   filter: brightness(1.06);
   transform: translateY(-1px);
 }
 
-:root[data-application-theme='customer-growth'] .auth-method,
-:root[data-application-theme='customer-growth'] .provider-grid button {
+.authguard-root[data-application-theme='customer-growth'] .authguard-auth-method,
+.authguard-root[data-application-theme='customer-growth'] .authguard-provider-grid button {
   border-radius: 12px;
-  background: color-mix(in srgb, var(--panel-2) 42%, transparent);
+  background: color-mix(in srgb, var(--authguard-panel-2) 42%, transparent);
 }
 
-:root[data-application-theme='customer-growth'] .auth-method:hover,
-:root[data-application-theme='customer-growth'] .provider-grid button:hover {
-  border-color: color-mix(in srgb, var(--accent) 70%, var(--line));
-  background: color-mix(in srgb, var(--accent) 9%, var(--panel));
+.authguard-root[data-application-theme='customer-growth'] .authguard-auth-method:hover,
+.authguard-root[data-application-theme='customer-growth'] .authguard-provider-grid button:hover {
+  border-color: color-mix(in srgb, var(--authguard-accent) 70%, var(--authguard-line));
+  background: color-mix(in srgb, var(--authguard-accent) 9%, var(--authguard-panel));
   transform: translateY(-1px);
 }
 
-:root[data-application-theme='customer-growth'] .proof-line span {
-  background: var(--customer-growth-growth);
-  box-shadow: 0 0 12px var(--customer-growth-growth);
+.authguard-root[data-application-theme='customer-growth'] .authguard-proof-line span {
+  background: var(--authguard-customer-growth-growth);
+  box-shadow: 0 0 12px var(--authguard-customer-growth-growth);
 }
 
-:root[data-application-theme='customer-growth'] .preferences label {
+.authguard-root[data-application-theme='customer-growth'] .authguard-preferences .authguard-segmented {
   border-radius: 10px;
-  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  background: color-mix(in srgb, var(--authguard-panel) 86%, transparent);
   backdrop-filter: blur(12px);
 }
 
 /* Authenticated credential-management surface shares the business identity. */
-:root[data-application-theme='customer-growth'] .account-security-page {
+.authguard-root[data-application-theme='customer-growth'] .authguard-account-security-page {
   background:
     radial-gradient(circle at 12% 8%, rgba(111, 124, 255, .17), transparent 33%),
     radial-gradient(circle at 88% 88%, rgba(32, 201, 151, .12), transparent 34%),
-    var(--bg);
+    var(--authguard-bg);
 }
 
-:root[data-application-theme='customer-growth'] .security-card {
+.authguard-root[data-application-theme='customer-growth'] .authguard-security-card {
   border-radius: 24px;
-  border-color: color-mix(in srgb, var(--accent) 22%, var(--line));
+  border-color: color-mix(in srgb, var(--authguard-accent) 22%, var(--authguard-line));
 }
 
-:root[data-application-theme='customer-growth'] .principal-chip {
+.authguard-root[data-application-theme='customer-growth'] .authguard-principal-chip {
   border-radius: 12px;
-  background: color-mix(in srgb, var(--accent) 6%, var(--panel-2));
+  background: color-mix(in srgb, var(--authguard-accent) 6%, var(--authguard-panel-2));
 }
 
 @media (max-width: 900px) {
-  :root[data-application-theme='customer-growth'] .login-page {
+  .authguard-root[data-application-theme='customer-growth'] .authguard-login-page {
     grid-template-columns: 1fr;
   }
 
-  :root[data-application-theme='customer-growth'] .login-panel {
+  .authguard-root[data-application-theme='customer-growth'] .authguard-login-panel {
     padding: 76px 22px 42px;
   }
 
-  :root[data-application-theme='customer-growth'] .login-card {
+  .authguard-root[data-application-theme='customer-growth'] .authguard-login-card {
     padding: clamp(22px, 6vw, 34px);
   }
 
-  :root[data-application-theme='customer-growth'] .mobile-brand {
+  .authguard-root[data-application-theme='customer-growth'] .authguard-mobile-brand {
     padding-bottom: 18px;
-    border-bottom: 1px solid var(--line);
+    border-bottom: 1px solid var(--authguard-line);
   }
 }

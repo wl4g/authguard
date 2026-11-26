@@ -65,6 +65,10 @@ class E2EOtherDefinitions:
             "Web: hosted login application branding and return-target safety",
             "verifier.web.s31_hosted_login",
         ),
+        "32": (
+            "Web: Module Federation, localization and UI isolation (API fixtures)",
+            "verifier.web.s32_module_federation",
+        ),
         "40": (
             "Observability: metrics and management diagnostics",
             "verifier.otel.s40_metrics",
