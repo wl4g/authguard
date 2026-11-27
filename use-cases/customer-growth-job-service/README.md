@@ -17,7 +17,7 @@ Every `sNN_description.py` exposes `E2ESNNDescriptionVerifier` with
 Scenario 00 owns the complete deployment; other scenarios reuse it unless they
 explicitly require redeployment or initialization. Scenario 10 still orchestrates
 its protocol sub-scenarios 11–15 with the same prerequisite ordering and assertions.
-The 11 runner groups cover deployment and the real request path. OTEL signals are metrics (40), tracing (41), and logs (42); persistent data is verified inside the AuthN, AuthZ, gateway, or browser scenario that produces it. There is no separate storage/cache scenario. All five business services are checked through HTTP and PostgreSQL; SDK unit tests are outside the E2E runner.
+The 12 runner groups cover deployment and the real request path. OTEL signals are metrics (40), tracing (41), and logs (42); persistent data is verified inside the AuthN, AuthZ, gateway, or browser scenario that produces it. There is no separate storage/cache scenario. All five business services are checked through HTTP and PostgreSQL; SDK unit tests are outside the E2E runner.
 The architecture boundaries in `docs/architecture/overview_ZH.md` and the two IAM
 whitepapers remain covered by authentication, Principal federation/provisioning,
 SDK scopes, gateway CRUD, browser login and runtime evidence. Planned capabilities
@@ -136,7 +136,7 @@ util/.venv/bin/python -m playwright install --only-shell chromium
 util/.venv/bin/python runner.py --rounds 3
 util/.venv/bin/python runner.py --scenario 01,02
 util/.venv/bin/python runner.py --list
-util/.venv/bin/python runner.py --scenario 01,02,00,20,10,26,30,31,40,41,42 --cleanup-after-run
+util/.venv/bin/python runner.py --scenario 01,02,00,20,10,26,30,31,32,40,41,42 --cleanup-after-run
 ```
 
 By default, every round cleans the selected deployment, builds its service images,
@@ -405,3 +405,26 @@ previous business-event samples, check counter/histogram accounting, and assert
 that three controlled AuthN/AuthZ requests each increment their labelled counter
 by exactly three. E2E AuthGuard uses `sample_rate: 1.0`; every business workload
 explicitly uses `OTEL_TRACES_SAMPLER=always_on`.
+
+
+Scenario 32 builds the current AuthGuard Web and business host production bundles, then verifies
+real ESM federation using deterministic HTTP API fixtures. It runs through the same entry point
+and report/evidence helpers as every other scenario; it does not claim deployed AuthN/AuthZ E2E:
+
+```bash
+util/.venv/bin/python runner.py --scenario 32
+```
+
+Install the dependencies from `requirements.txt` and Playwright Chromium in the runner environment.
+Scenario 32 installs frontend dependencies when absent and records both frontend builds in its
+standard command report. Optional `AUTHGUARD_BROWSER_EXECUTABLE` or `AUTHGUARD_BROWSER_CHANNEL`
+selects an existing browser. Every screenshot and step JSON is registered through
+`BaseVerifier.evidence_path()` / `record_evidence()` under `reports/round-XX/evidence/32/`, linked
+from `reports/round-XX/32_*.md` and the common `reports/00_summary.md`. The runner archives previous
+reports using its existing rules; no scenario-specific root report directory is used.
+
+Coverage includes menu/workspace round trips, independent pages, language/theme props and public
+setters, browser locale detection and saved preferences, isolation, dialogs, remote/session errors,
+and 390–1920px layouts. Desktop evidence includes 1440×1000 and 1920×1080 light/dark captures.
+The language bar uses `EN / 中 / 繁 / 日語 / 한글 / DE / FR` in a compact single row inside the profile
+menu. Appearance uses adjacent Light/Dark buttons; neither control opens a nested menu.

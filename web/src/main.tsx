@@ -9,6 +9,6 @@ import { I18nProvider } from './shared/i18n'
 import { ThemeProvider } from './shared/theme'
 import './shared/styles.css'
 
-createRoot(document.getElementById('root')!).render(
+createRoot(document.getElementById('authguard-root')!).render(
   <StrictMode><ThemeProvider><I18nProvider><Web3Provider><AuthProvider><ApiProvider><BrowserRouter><App/></BrowserRouter></ApiProvider></AuthProvider></Web3Provider></I18nProvider></ThemeProvider></StrictMode>,
 )

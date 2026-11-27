@@ -33,7 +33,7 @@ export function PolicyPage() {
 
   async function save(resource: Resource, original: Resource | null) {
     const id = String(resource[definition.id] || '')
-    if (!id) throw new Error(`${definition.id} is required`)
+    if (!id) throw new Error(`${definition.id}: ${t('authguard_required_field')}`)
     await control(`/api/v1/${type}${original ? `/${encodeURIComponent(String(original[definition.id]))}` : ''}`, token, {
       method: original ? 'PUT' : 'POST', headers: { 'if-match': String(collection.policy_revision) }, body: JSON.stringify(resource),
     })
@@ -48,13 +48,13 @@ export function PolicyPage() {
   }
 
   return <section>
-    <div className="page-heading compact"><div><span className="eyebrow">PAP / CAS</span><h1>{t('policy')}</h1><p>{t('revision')} {collection.policy_revision}</p></div><button className="icon-button" onClick={load}><RefreshCw className={busy ? 'spin' : ''}/></button></div>
-    <div className="tabbar">{(Object.keys(definitions) as ResourceType[]).map(item => <button data-testid={`policy-tab-${item}`} className={type === item ? 'active' : ''} onClick={() => setType(item)} key={item}>{labels[item]}</button>)}</div>
-    <div className="data-card">
-      <div className="data-toolbar"><span>{collection.total} {labels[type].toLowerCase()}</span><button data-testid="policy-create" className="primary small" disabled={!token} onClick={() => setEditing({ ...definition.initial })}><Plus/>{t('add')}</button></div>
-      {error && <div className="error-banner">{error}</div>}
-      {!collection.items.length ? <div className="empty"><Braces/><p>{token ? t('empty') : t('apiToken')}</p></div> : <div className="resource-list">{collection.items.map(resource => {
-        const id = String(resource[definition.id]); return <article key={id}><div><strong>{id}</strong><p>{resource.description as string || resource.name as string || resource.role_id as string || '—'}</p></div><code>{JSON.stringify(resource)}</code><div className="row-actions"><button onClick={() => setEditing(resource)}><Pencil/></button><button className="danger" onClick={() => remove(resource)}><Trash2/></button></div></article>
+    <div className="authguard-page-heading authguard-compact"><div><span className="authguard-eyebrow">PAP / CAS</span><h1>{t('policy')}</h1><p>{t('revision')} {collection.policy_revision}</p></div><button className="authguard-icon-button" onClick={load}><RefreshCw className={busy ? 'authguard-spin' : ''}/></button></div>
+    <div className="authguard-tabbar">{(Object.keys(definitions) as ResourceType[]).map(item => <button data-testid={`policy-tab-${item}`} className={type === item ? 'authguard-active' : ''} onClick={() => setType(item)} key={item}>{labels[item]}</button>)}</div>
+    <div className="authguard-data-card">
+      <div className="authguard-data-toolbar"><span>{collection.total} {labels[type].toLowerCase()}</span><button data-testid="policy-create" className="authguard-primary authguard-small" disabled={!token} onClick={() => setEditing({ ...definition.initial })}><Plus/>{t('add')}</button></div>
+      {error && <div className="authguard-error-banner">{error}</div>}
+      {!collection.items.length ? <div className="authguard-empty"><Braces/><p>{token ? t('empty') : t('apiToken')}</p></div> : <div className="authguard-resource-list">{collection.items.map(resource => {
+        const id = String(resource[definition.id]); return <article key={id}><div><strong>{id}</strong><p>{resource.description as string || resource.name as string || resource.role_id as string || '—'}</p></div><code>{JSON.stringify(resource)}</code><div className="authguard-row-actions"><button onClick={() => setEditing(resource)}><Pencil/></button><button className="authguard-danger" onClick={() => remove(resource)}><Trash2/></button></div></article>
       })}</div>}
     </div>
     {editing && <JsonDialog title={`${editing[definition.id] ? t('edit') : t('add')} ${labels[type]}`} value={editing} isNew={!collection.items.includes(editing)} onClose={() => setEditing(null)} onSave={save}/>}
@@ -64,5 +64,5 @@ export function PolicyPage() {
 function JsonDialog({ title, value, isNew, onClose, onSave }: { title: string; value: Resource; isNew: boolean; onClose: () => void; onSave: (value: Resource, original: Resource | null) => Promise<void> }) {
   const { t } = useI18n(); const [text, setText] = useState(() => JSON.stringify(value, null, 2)); const [error, setError] = useState(''); const [busy, setBusy] = useState(false)
   async function submit() { setBusy(true); setError(''); try { await onSave(JSON.parse(text) as Resource, isNew ? null : value) } catch (cause) { setError(cause instanceof Error ? cause.message : t('apiError')); setBusy(false) } }
-  return <div className="modal-backdrop"><div className="modal"><header><div><span className="eyebrow">JSON RESOURCE</span><h3>{title}</h3></div><button onClick={onClose}><X/></button></header><label>{t('json')}<textarea data-testid="policy-json" rows={17} spellCheck={false} value={text} onChange={event => setText(event.target.value)}/></label>{error && <div className="error-banner">{error}</div>}<footer><button onClick={onClose}>{t('cancel')}</button><button data-testid="policy-save" className="primary" disabled={busy} onClick={submit}>{t('save')}</button></footer></div></div>
+  return <div className="authguard-modal-backdrop"><div className="authguard-modal"><header><div><span className="authguard-eyebrow">JSON RESOURCE</span><h3>{title}</h3></div><button onClick={onClose}><X/></button></header><label>{t('json')}<textarea data-testid="policy-json" rows={17} spellCheck={false} value={text} onChange={event => setText(event.target.value)}/></label>{error && <div className="authguard-error-banner">{error}</div>}<footer><button onClick={onClose}>{t('cancel')}</button><button data-testid="policy-save" className="authguard-primary" disabled={busy} onClick={submit}>{t('save')}</button></footer></div></div>
 }

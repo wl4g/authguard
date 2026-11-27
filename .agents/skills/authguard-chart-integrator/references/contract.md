@@ -52,14 +52,38 @@ releases and enable it only for the separately managed AuthGuard release.
 
 ## 3. Routing boundary
 
-Web owns `/auth/login`, `/auth/account/security`, and `/auth/assets/*`; AuthN owns
-`/.well-known/*` and `/auth/*`. The business service Helm Chart retains `/api/*` and `/*`. The
+Web owns `/auth/login`, `/auth/account/security`, and `/auth/assets/*` (including the federation entry); AuthN owns
+`/.well-known/*` and `/auth/*`. Web also publishes `/auth/assets/authguard-remoteEntry.js`. The dedicated `/auth/management/api/*` route rewrites to the AuthZ management API without claiming the business API namespace. The business service Helm Chart retains `/api/*` and `/*`. The
 browser-facing business Web route MUST use that same Gateway origin; a NodePort, port-forward, or
 direct Service URL bypasses Hosted Login routing and is not a valid integration endpoint. Protect
-only intended service HTTPRoutes with `authguard.io/protected: "true"`, configure cross-namespace
-references explicitly, and never attach the AuthGuard Dashboard catch-all to a business service
-domain. Resolve Applications from the Gateway-preserved `Host`, never query parameters or
-`X-Forwarded-Host`.
+only intended business HTTPRoutes by setting their **`metadata.labels`**, for example:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: business-api
+  labels:
+    authguard.io/protected: "true"
+# spec: retain the business application's Gateway, hostnames, matches and backendRefs.
+```
+
+The AuthGuard Chart renders an Envoy Gateway `SecurityPolicy` when both
+`envoy_gateway.ext_authz.enabled` and `authguard.authz.enabled` are true. Its
+`spec.targetSelectors` targets `kind: HTTPRoute` using
+`envoy_gateway.ext_authz.protectedRouteSelector.matchLabels` (the label above by default).
+Envoy Gateway reconciles these resources and configures Envoy to validate canonical JWTs and
+call AuthGuard's fail-closed gRPC `ext_authz` Check service for selected routes. AuthGuard's
+authorization service does not read Pod annotations to activate protection. Putting this key in
+`HTTPRoute.metadata.annotations`, Pod labels, or Pod annotations does not match this selector.
+
+Selection defaults to the policy's namespace (`protectedRouteSelector.namespaces.from: Same`).
+For cross-namespace selection, configure the selector's namespaces explicitly and a matching
+`ReferenceGrant` in the target namespace; the target namespace must be watched by Envoy Gateway.
+Verify the route labels, active policy selector, and policy/route acceptance status; the label
+alone does not create a policy or prove that requests are protected. Never attach the AuthGuard
+Dashboard catch-all to a business service domain. Resolve Applications from the
+Gateway-preserved `Host`, never query parameters or `X-Forwarded-Host`.
 
 ## 4. Optional Hosted Login theme
 
@@ -86,3 +110,5 @@ without this delta, retain the built-in cyan fallback.
   returns to `GET /auth/login` through the same Gateway origin without a 404.
 - Optional theme assets mount only in Web, and the no-theme fallback remains functional.
 - Normal service upgrades cannot own, upgrade, or delete the separate AuthGuard release.
+
+React applications also complete the default [federation integration](federation.md) and its acceptance checks.

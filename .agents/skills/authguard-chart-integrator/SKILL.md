@@ -1,12 +1,20 @@
 ---
 name: authguard-chart-integrator
-description: Integrate the latest stable AuthGuard Helm Chart into any business service Helm Chart. Use when a service needs to discover and fetch the newest AuthGuard tgz from GHCR into charts/, add an opt-in authguard-middleware.enabled lifecycle, obtain the real business service domain from the developer, configure AuthN/AuthZ/Web/Gateway/Application values and secrets, optionally add a Hosted Login theme, validate disabled and enabled renders, or run an authorized Kubernetes deployment smoke test.
+description: Integrate the latest stable AuthGuard Helm Chart and Module Federation management UI into a business service and its React application. Use when a service needs to discover and fetch the newest AuthGuard tgz from GHCR into charts/, add an opt-in authguard-middleware.enabled lifecycle, obtain the real business service domain from the developer, configure AuthN/AuthZ/Web/Gateway/Application values and secrets, optionally add a Hosted Login theme, validate disabled and enabled renders, or run an authorized Kubernetes deployment smoke test.
 ---
 
 # AuthGuard Chart Integrator
 
 Integrate the complete AuthGuard release lifecycle into a business service Helm Chart. Treat
 Hosted Login theme customization as an optional extension, not the purpose of the integration.
+
+## React UI integration (default)
+
+When a business React UI exists, complete [references/federation.md](references/federation.md):
+install dependencies, configure the ESM remote, mount Access Management under the left first-level
+menu and the host profile dropdown, synchronize language/theme, and verify return to workspace.
+This is part of the default integration, not an optional snippet or a replacement for Hosted Login.
+If no React UI exists, report that fact and complete the applicable Chart work.
 
 ## Workflow
 
@@ -45,13 +53,14 @@ Hosted Login theme customization as an optional extension, not the purpose of th
 9. For deployment validation, wait atomically for the explicit middleware release, inspect Helm
    status and workload readiness, then exercise the relevant metadata, Hosted Login, AuthN, and
    protected-route smoke paths. Remove the test release only when cleanup is authorized.
-10. Report dependency/version/digest, values and ownership decisions, render and deployment
+10. Complete the React integration above and its build/browser validation when a business UI exists.
+11. Report dependency/version/digest, values and ownership decisions, render and deployment
     evidence, optional theme files, and any operator-supplied secrets still required. Do not publish
     or deploy to an unspecified cluster.
 
 ## Optional theme rules
 
-- Scope every rule under `:root[data-application-theme='<application_id>']`.
+- Scope every rule under `.authguard-root[data-application-theme='<application_id>']`.
 - Preserve all authentication controls and focus/disabled/error states.
 - Define light and dark tokens; keep mobile behavior below 900px and respect reduced motion.
 - Forbid `@import`, remote URLs, JavaScript, HTML, `foreignObject`, tracking pixels, and executable SVG.
