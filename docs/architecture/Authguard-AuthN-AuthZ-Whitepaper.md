@@ -86,32 +86,35 @@ An enterprise IT service and asset management (ITSM/ITAM) platform records asset
 | Approval and fulfillment | ITSM/ITAM platforms, tickets/DBAs, `workload-iam-sot`/Terraform, synchronization agents | Separately govern corporate admission, native grants, and directory synchronization; stay outside per-request decisions |
 | AuthN authority / token issuer | `authguard-authn` | Protocol verification, normalization, linking, and canonical JWT issuance; does not proxy business requests |
 | Edge PEP | Envoy Gateway | TLS, routing, canonical JWT verification, `ext_authz`, and removal of forged context |
-| Resource PDP | `authguard-authz` | Evaluates local canonical identity/admission projections and policy; returns ALLOW/DENY and bounded scope |
+| API/resource-policy PDP | `authguard-authz` | Evaluates local canonical identity/admission projections and policy; returns ALLOW/DENY and bounded scope |
 | Policy administration / PAP | AuthZ product API, Dashboard, console | Manages domain Action/Role/RoleBinding and source mappings without exceeding corporate ceilings |
-| Resource PEP | Business service + AuthGuard SDK | Verifies scope and constrains the actual resources, SQL, and object operations behind a URL |
+| Resource-scope PDP | AuthGuard SDK | Validates and refines issued scope into bounded SQL/object predicates; cannot widen upstream grants |
+| Resource PEP | Business service execution points | Applies SDK predicates and guards to actual SQL/object operations |
 | Native resource PEP | Database, broker, cloud resource service, and their IAM | Enforces DB grants, topic ACLs, bucket/prefix permissions, and other native rules |
 
-A product name does not determine its role. One Keycloak installation may expose SSO, federated LDAP/AD directory access, and its own [Authorization Services](https://www.keycloak.org/docs/latest/authorization_services/index.html). This architecture integrates the first two interfaces separately. AuthGuard AuthZ remains the resource PDP; there is no implicit call to Keycloak's PDP. LDAP role attributes do not themselves constitute AuthGuard RoleBindings.
+A product name does not determine its role. One Keycloak installation may expose SSO, federated LDAP/AD directory access, and its own [Authorization Services](https://www.keycloak.org/docs/latest/authorization_services/index.html). This architecture integrates the first two interfaces separately. AuthGuard AuthZ remains the API/resource-policy PDP; there is no implicit call to Keycloak's PDP. LDAP role attributes do not themselves constitute AuthGuard RoleBindings.
 
 OAuth2 **authorization server** is a token-protocol role; the AuthGuard **resource PDP** is a business-policy role. DSP names an enterprise platform, not a protocol or a mandatory extra hop between AuthN and AuthZ.
 
 ### 3. Topology and call phases
 
-Read the logical view for responsibilities and main flows, then the physical view for interfaces, data types, and background synchronization. Both use call numbers 1–14.
+Read the logical view for responsibilities and main flows, then the physical view for interfaces, data types, and background synchronization. Both use call numbers 1–14. All call IDs, including alternatives 6a–6d, use circular badges; ranges or comma-separated IDs in the logical view summarize related physical calls.
 
-The shared color legend is **AuthGuard Control (filter & SDK enforcement)**, **AuthGuard Related External Interaction (corporate central auth source)**, and **Outside AuthGuard (independent native control)**. A business host is external, while its embedded SDK is marked as an AuthGuard enforcement component. Native middleware authentication/authorization does not integrate with AuthN/AuthZ.
+The shared color legend is **AuthGuard Control (gateway enforcement & SDK scope decisions)**, **AuthGuard Related External Interaction (corporate central auth source)**, and **Outside AuthGuard (independent native control)**. A business host is external, while its embedded SDK is marked as an AuthGuard resource-scope decision component. Native middleware authentication/authorization does not integrate with AuthN/AuthZ.
 
 <a id="logical-view"></a>
 #### 3.1 Logical overview
 
-![AuthGuard logical overview](assets/authguard-authn-authz-logical.svg)
+![AuthGuard logical overview](assets/authguard-authn-authz-logical.jpg)
 
 The logical view summarizes authentication, API decisions, data-scope enforcement, and corporate synchronization. State groups IAM DB/Redis responsibilities conceptually rather than colocating them in one process.
 
 <a id="physical-view"></a>
 #### 3.2 Physical calls
 
-![AuthGuard physical calls](assets/authguard-authn-authz-architecture.svg)
+![AuthGuard physical calls](assets/authguard-authn-authz-architecture.jpg)
+
+JPGs are the published renderings; editable SVG sources are retained alongside them.
 
 Each component type is drawn once; replicas are omitted. AuthN and AuthZ are stateless pods, with persistence/shared transient state in IAM DB and Redis. Management and PDP are interfaces of one AuthZ component. Typed connectors distinguish credential reads, JIT, materialization, role grants, status reads, and SCIM writes. Solid/dashed/dotted lines mean runtime/management/state access. B2C and B2B deploy independently; step 14 is background corporate permission-fact synchronization.
 
@@ -275,7 +278,7 @@ Reads and writes use layered decisions rather than changing identity authority b
 | Decision/enforcement stage | Component | Read/write responsibility |
 |---|---|---|
 | API/resource policy PDP | AuthZ | Evaluates query admission and CUD action/resource policy and derives allow/deny scope |
-| Local data-scope evaluation / scope refinement | Business AuthGuard SDK | Compiles issued URN scope into SQL WHERE/object predicates; this is a data-decision stage without authority to widen upstream grants |
+| Resource-scope PDP / local scope refinement | Business AuthGuard SDK | Compiles issued URN scope into SQL WHERE/object predicates; this is a data-decision stage without authority to widen upstream grants |
 | Edge PEP | Envoy `ext_authz` filter | Sends Check, enforces ALLOW/DENY, and forwards business traffic to the business service |
 | Data/object PEP | Business handler and SQL/resource execution point | Applies SDK predicates to actual reads and updates/deletes, and checks owner/tenant/parent on creation |
 

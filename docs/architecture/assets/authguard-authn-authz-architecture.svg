@@ -1,8 +1,8 @@
 <?xml version="1.0" ?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1580" viewBox="0 0 1800 1580" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1610" viewBox="0 0 1800 1610" role="img" aria-labelledby="title desc">
   <title id="title">AuthGuard physical call architecture and three control zones</title>
-  <desc id="desc">Green identifies AuthGuard control and SDK enforcement. Blue identifies interacting corporate identity systems, clients, a SCIM agent and business hosts. Orange identifies independent native product authentication and authorization without AuthGuard integration. Each Gateway, AuthN, AuthZ, Web, Redis and Shared IAM DB component type is drawn once; replica count is omitted. AuthN and AuthZ are stateless pods with external state. AuthN proof verification is grouped into credentials, IdP protocols and signing proofs, followed separately by identity projection/JIT/linking and token issuance. AuthZ checks CUD targets and read API admission/scope; SDKs compile read scopes into SQL WHERE and apply mutation guards. Separate typed arrows show discovered Principal/binding materialization, role policy persistence, local credential reads, JIT binding resolution, Principal status reads and SCIM writes. Step 14 Corporate changes (policies) means identity/group/admission facts via SCIM; department fine policy uses the management API. Native middleware IAM remains independent.</desc>
-  <metadata>AuthGuard architecture; 2026-11-15; Apache-2.0. Numbered physical calls, with explicit implementation gaps.</metadata>
+  <desc id="desc">Green identifies AuthGuard control and SDK enforcement. Blue identifies interacting corporate identity systems, clients, a SCIM agent and business hosts. Orange identifies independent native product authentication and authorization without AuthGuard integration. Each Gateway, AuthN, AuthZ, Web, Redis and Shared IAM DB component type is drawn once; replica count is omitted. AuthN and AuthZ are stateless pods with external state. AuthN proof verification is grouped into credentials, IdP protocols and signing proofs, followed separately by identity projection/JIT/linking and token issuance. AuthZ checks CUD targets and read API admission/scope; SDKs act as resource PDPs by refining bounded scopes into SQL WHERE predicates and mutation guards, which business execution points enforce. Separate typed arrows show discovered Principal/binding materialization, role policy persistence, local credential reads, JIT binding resolution, Principal status reads and SCIM writes. Step 14 Corporate changes (policies) means identity/group/admission facts via SCIM; department fine policy uses the management API. Native middleware IAM remains independent.</desc>
+  <metadata>AuthGuard architecture; 2026-11-27; Apache-2.0. Numbered physical calls, with explicit implementation gaps.</metadata>
   <defs>
     <marker id="run" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M0 0L10 5L0 10Z" fill="#f0f1df"/>
@@ -12,7 +12,7 @@
     </marker>
   </defs>
   <style>text{font-family:"Chalkboard SE","Comic Sans MS","Trebuchet MS",sans-serif}text,path{stroke-linecap:round;stroke-linejoin:round}path{vector-effect:non-scaling-stroke}</style>
-  <rect width="1800" height="1580" fill="#182c24"/>
+  <rect width="1800" height="1610" fill="#182c24"/>
   <rect x="340" y="330" width="1020" height="900" rx="16" fill="#1b3226" stroke="#b6d8aa" stroke-width="1.7" stroke-dasharray="8 7" data-zone="authguard"/>
   <g id="browser" data-component="browser" data-control="external">
     <rect x="30" y="390" width="260" height="184" rx="12" fill="#252f47" stroke="#b8c4ed" stroke-width="1.7" stroke-dasharray="8 7"/>
@@ -131,7 +131,11 @@
   <text x="960" y="238" font-size="18" fill="#bdd0bf" font-weight="400" text-anchor="start">OIDC: ID Token (+ optional UserInfo)</text>
   <text x="960" y="264" font-size="18" fill="#bdd0bf" font-weight="400" text-anchor="start">OAuth2-like: token / identity API</text>
   <text x="50" y="152" font-size="22" fill="#b8c4ed" font-weight="650" text-anchor="start">Sync agent (SCIM)</text>
-  <text x="50" y="186" font-size="18" fill="#bdd0bf" font-weight="400" text-anchor="start">14 Corporate changes (policies)</text>
+  <g class="authguard-step-badge" data-step="14">
+    <circle cx="65" cy="181" r="15" fill="#182c24" stroke="#bdd0bf" stroke-width="1.5"/>
+    <text x="65" y="185.5" font-size="13" fill="#bdd0bf" font-weight="650" text-anchor="middle">14</text>
+  </g>
+  <text x="88" y="186" font-size="18" fill="#bdd0bf" font-weight="400" text-anchor="start">Corporate changes (policies)</text>
   <text x="50" y="212" font-size="18" fill="#bdd0bf" font-weight="400" text-anchor="start">Offboard / group / project</text>
   <text x="390" y="432" font-size="22" fill="#b6d8aa" font-weight="650" text-anchor="start">Web</text>
   <text x="390" y="466" font-size="18" fill="#bdd0bf" font-weight="400" text-anchor="start">Login UI / Dashboard</text>
@@ -163,7 +167,7 @@
   <text x="1440" y="751" font-size="22" fill="#b6d8aa" font-weight="650" text-anchor="start">AuthGuard SDK</text>
   <text x="1440" y="785" font-size="18" fill="#bdd0bf" font-weight="400" text-anchor="start">R: URNs -&gt; SQL WHERE</text>
   <text x="1440" y="811" font-size="18" fill="#bdd0bf" font-weight="400" text-anchor="start">CUD: target / row guards</text>
-  <text x="1440" y="837" font-size="18" fill="#bdd0bf" font-weight="400" text-anchor="start">(resource PEP)</text>
+  <text x="1440" y="837" font-size="18" fill="#bdd0bf" font-weight="400" text-anchor="start">(resource PDP)</text>
   <text x="1420" y="1017" font-size="22" fill="#e9b681" font-weight="650" text-anchor="start">Native AuthN / AuthZ</text>
   <text x="1420" y="1051" font-size="18" fill="#bdd0bf" font-weight="400" text-anchor="start">(no AuthGuard integration)</text>
   <text x="1420" y="1077" font-size="18" fill="#bdd0bf" font-weight="400" text-anchor="start">PG auth / Kafka GSSAPI / Airflow</text>
@@ -171,56 +175,120 @@
   <text x="1420" y="1144" font-size="18" fill="#e9b681" font-weight="600" text-anchor="start">Native provisioning</text>
   <text x="1420" y="1175" font-size="16" fill="#bdd0bf" font-weight="400" text-anchor="start">DBA tickets / workload-iam-sot</text>
   <text x="1420" y="1207" font-size="16" fill="#f0f1df" font-weight="400" text-anchor="start">PR -&gt; Terraform -&gt; Cloud IAM Grant</text>
-  <circle cx="375" cy="382" r="15" fill="#182c24" stroke="#b6d8aa" stroke-width="1.5"/>
-  <text x="375" y="387" font-size="15" fill="#b6d8aa" font-weight="650" text-anchor="middle">1</text>
+  <g class="authguard-step-badge" data-step="1">
+    <circle cx="375" cy="382" r="15" fill="#182c24" stroke="#b6d8aa" stroke-width="1.5"/>
+    <text x="375" y="386.5" font-size="13" fill="#b6d8aa" font-weight="650" text-anchor="middle">1</text>
+  </g>
   <text x="400" y="388" font-size="16" fill="#b6d8aa" font-weight="400" text-anchor="start">Deploy: schema / issuer / keys / providers (2C / 2B independently)</text>
-  <circle cx="618" cy="846" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
-  <text x="618" y="851" font-size="15" fill="#f0f1df" font-weight="650" text-anchor="middle">2</text>
-  <text x="382" y="840" font-size="16" fill="#f0f1df" font-weight="400" text-anchor="start">2-4 Admin APIs</text>
-  <text x="920" y="296" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">2 Discover (live directory APIs)</text>
-  <circle cx="855" cy="1068" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
-  <text x="855" y="1073" font-size="15" fill="#f0f1df" font-weight="650" text-anchor="middle">3</text>
-  <text x="380" y="1074" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">3 Save Principal + identity binding</text>
-  <text x="1040" y="1095" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">4 Action / Role / RoleBinding</text>
-  <circle cx="650" cy="476" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
-  <text x="650" y="481" font-size="15" fill="#f0f1df" font-weight="650" text-anchor="middle">5</text>
-  <text x="600" y="585" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">5 Login / exchange</text>
-  <circle cx="675" cy="531" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
-  <text x="675" y="536" font-size="15" fill="#f0f1df" font-weight="650" text-anchor="middle">8</text>
-  <text x="525" y="552" font-size="16" fill="#f0f1df" font-weight="400" text-anchor="start">8 AuthGuard JWT</text>
-  <text x="880" y="752" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">6a Credentials (local read)</text>
-  <text x="745" y="780" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">7 Principal / binding (reuse / JIT)</text>
-  <circle cx="650" cy="801" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
-  <text x="650" y="806" font-size="15" fill="#f0f1df" font-weight="650" text-anchor="middle">7</text>
-  <text x="410" y="312" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">6b Search + user bind</text>
-  <text x="1214" y="312" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">6c OIDC / OAuth2-like</text>
-  <text x="1214" y="338" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">6d DSP token introspection</text>
-  <text x="34" y="355" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">6c Browser SSO / callback</text>
-  <text x="380" y="607" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">9 Protected API: JWT signature / iss / aud / exp</text>
-  <circle cx="350" cy="697" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
-  <text x="350" y="702" font-size="15" fill="#f0f1df" font-weight="650" text-anchor="middle">9</text>
-  <circle cx="665" cy="951" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
-  <text x="665" y="956" font-size="15" fill="#f0f1df" font-weight="650" text-anchor="middle">10</text>
-  <text x="384" y="953" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">10 ext_authz Check (all methods)</text>
-  <circle cx="636" cy="1044" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
-  <text x="636" y="1049" font-size="15" fill="#f0f1df" font-weight="650" text-anchor="middle">11</text>
-  <text x="380" y="1008" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">11 Allow + scope / deny</text>
-  <text x="380" y="1042" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">10 Principal / group status (read)</text>
-  <circle cx="1115" cy="698" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
-  <text x="1115" y="703" font-size="15" fill="#f0f1df" font-weight="650" text-anchor="middle">12</text>
-  <text x="908" y="682" font-size="17" fill="#f0f1df" font-weight="400" text-anchor="start">12 Forward only if allowed</text>
-  <circle cx="1405" cy="736" r="15" fill="#182c24" stroke="#b6d8aa" stroke-width="1.5"/>
-  <text x="1405" y="741" font-size="15" fill="#b6d8aa" font-weight="650" text-anchor="middle">13</text>
+  <g class="authguard-step-badge" data-step="2-4">
+    <circle cx="399" cy="835" r="17" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="399" y="839.5" font-size="11" fill="#f0f1df" font-weight="650" text-anchor="middle">2-4</text>
+  </g>
+  <text x="424" y="840" font-size="16" fill="#f0f1df" font-weight="400" text-anchor="start">Admin APIs</text>
+  <g class="authguard-step-badge" data-step="2">
+    <circle cx="955" cy="352" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="955" y="356.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">2</text>
+  </g>
+  <text x="978" y="357" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">Discover: directory APIs</text>
+  <g class="authguard-step-badge" data-step="3">
+    <circle cx="395" cy="1069" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="395" y="1073.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">3</text>
+  </g>
+  <text x="418" y="1074" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">Save Principal + identity binding</text>
+  <g class="authguard-step-badge" data-step="4">
+    <circle cx="1055" cy="1084" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="1055" y="1088.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">4</text>
+  </g>
+  <text x="1078" y="1089" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">Action / Role / RoleBinding</text>
+  <g class="authguard-step-badge" data-step="5">
+    <circle cx="607" cy="580" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="607" y="584.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">5</text>
+  </g>
+  <text x="630" y="585" font-size="13" fill="#f0f1df" font-weight="400" text-anchor="start">Login / exchange</text>
+  <g class="authguard-step-badge" data-step="8">
+    <circle cx="540" cy="547" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="540" y="551.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">8</text>
+  </g>
+  <text x="563" y="552" font-size="16" fill="#f0f1df" font-weight="400" text-anchor="start">AuthGuard JWT</text>
+  <g class="authguard-step-badge" data-step="6a">
+    <circle cx="895" cy="747" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="895" y="751.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">6a</text>
+  </g>
+  <text x="918" y="752" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">Credentials (local read)</text>
+  <g class="authguard-step-badge" data-step="7">
+    <circle cx="760" cy="775" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="760" y="779.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">7</text>
+  </g>
+  <text x="783" y="780" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">Principal / binding (reuse / JIT)</text>
+  <g class="authguard-step-badge" data-step="6b">
+    <circle cx="425" cy="307" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="425" y="311.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">6b</text>
+  </g>
+  <text x="448" y="312" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">Search + user bind</text>
+  <g class="authguard-step-badge" data-step="6c">
+    <circle cx="1180" cy="345" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="1180" y="349.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">6c</text>
+  </g>
+  <text x="1214" y="350" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">OIDC / OAuth2-like</text>
+  <g class="authguard-step-badge" data-step="6d">
+    <circle cx="1180" cy="381" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="1180" y="385.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">6d</text>
+  </g>
+  <text x="1214" y="386" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">DSP introspection</text>
+  <g class="authguard-step-badge" data-step="6c">
+    <circle cx="49" cy="350" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="49" y="354.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">6c</text>
+  </g>
+  <text x="72" y="355" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">Browser SSO / callback</text>
+  <g class="authguard-step-badge" data-step="9">
+    <circle cx="395" cy="602" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="395" y="606.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">9</text>
+  </g>
+  <text x="418" y="607" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">JWT check: signature / iss / aud / exp</text>
+  <g class="authguard-step-badge" data-step="10">
+    <circle cx="399" cy="948" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="399" y="952.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">10</text>
+  </g>
+  <text x="422" y="953" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">ext_authz Check (all methods)</text>
+  <g class="authguard-step-badge" data-step="11">
+    <circle cx="395" cy="1003" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="395" y="1007.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">11</text>
+  </g>
+  <text x="418" y="1008" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">Allow + scope / deny</text>
+  <g class="authguard-step-badge" data-step="10">
+    <circle cx="395" cy="1037" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="395" y="1041.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">10</text>
+  </g>
+  <text x="418" y="1042" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">Principal / group status (read)</text>
+  <g class="authguard-step-badge" data-step="12">
+    <circle cx="923" cy="677" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="923" y="681.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">12</text>
+  </g>
+  <text x="946" y="682" font-size="17" fill="#f0f1df" font-weight="400" text-anchor="start">Forward only if allowed</text>
+  <g class="authguard-step-badge" data-step="13">
+    <circle cx="1405" cy="736" r="15" fill="#182c24" stroke="#b6d8aa" stroke-width="1.5"/>
+    <text x="1405" y="740.5" font-size="13" fill="#b6d8aa" font-weight="650" text-anchor="middle">13</text>
+  </g>
   <text x="1420" y="960" font-size="16" fill="#e9b681" font-weight="400" text-anchor="start">Native credentials + grants</text>
-  <text x="1348" y="921" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">13 Opaque scope only (gRPC)</text>
-  <circle cx="358" cy="852" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
-  <text x="358" y="857" font-size="15" fill="#f0f1df" font-weight="650" text-anchor="middle">14</text>
-  <text x="382" y="879" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">14 SCIM (Users / Groups)</text>
-  <text x="1040" y="1048" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">14 Status / groups (write)</text>
+  <g class="authguard-step-badge" data-step="13">
+    <circle cx="1363" cy="916" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="1363" y="920.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">13</text>
+  </g>
+  <text x="1386" y="921" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">Opaque scope only (gRPC)</text>
+  <g class="authguard-step-badge" data-step="14">
+    <circle cx="397" cy="874" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="397" y="878.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">14</text>
+  </g>
+  <text x="420" y="879" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">SCIM (Users / Groups)</text>
+  <g class="authguard-step-badge" data-step="14">
+    <circle cx="1055" cy="1043" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="1055" y="1047.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">14</text>
+  </g>
+  <text x="1078" y="1048" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">Status / groups (write)</text>
   <text x="430" y="1297" font-size="17" fill="#e9b681" font-weight="400" text-anchor="start">Direct native I/O (no AuthN / AuthZ integration with AuthGuard)</text>
   <rect x="30" y="1370" width="24" height="20" rx="3" fill="#203c2a" stroke="#b6d8aa" stroke-width="1.7"/>
   <text x="64" y="1386" font-size="18" fill="#b6d8aa" font-weight="600" text-anchor="start">AuthGuard Control</text>
-  <text x="64" y="1412" font-size="16" fill="#b6d8aa" font-weight="400" text-anchor="start">(filter &amp; SDK enforcement)</text>
+  <text x="64" y="1412" font-size="16" fill="#b6d8aa" font-weight="400" text-anchor="start">(gateway enforcement &amp; SDK scope decisions)</text>
   <rect x="600" y="1370" width="24" height="20" rx="3" fill="#252f47" stroke="#b8c4ed" stroke-width="1.7"/>
   <text x="634" y="1386" font-size="18" fill="#b8c4ed" font-weight="600" text-anchor="start">AuthGuard Related External Interaction</text>
   <text x="634" y="1412" font-size="16" fill="#b8c4ed" font-weight="400" text-anchor="start">(corporate central auth source)</text>
@@ -234,5 +302,6 @@
   <text x="600" y="1510" font-size="16" fill="#bdd0bf" font-weight="400" text-anchor="start">Evaluates API policy and bounded resource scope.</text>
   <text x="1250" y="1484" font-size="18" fill="#f0f1df" font-weight="600" text-anchor="start">JIT (Just-in-Time provisioning)</text>
   <text x="1250" y="1510" font-size="16" fill="#bdd0bf" font-weight="400" text-anchor="start">Resolves/creates Principal and binding at verified login.</text>
-  <text x="30" y="1552" font-size="15" fill="#bdd0bf" font-weight="400" text-anchor="start">Planned: group admission / membership evaluation, durable policy revision / replica publication and scoped admin (see specification).</text>
+  <text x="30" y="1582" font-size="15" fill="#bdd0bf" font-weight="400" text-anchor="start">Planned: group admission / membership evaluation, durable policy revision / replica publication and scoped admin (see specification).</text>
+  <text x="30" y="1548" font-size="18" fill="#f0f1df" font-weight="600" text-anchor="start">DSP: Digital Security Platform</text>
 </svg>

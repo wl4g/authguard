@@ -29,9 +29,9 @@ passkeys, and wallet authentication.
 
 ## Architecture
 
-![AuthGuard logical overview](docs/architecture/assets/authguard-authn-authz-logical.svg)
+![AuthGuard logical overview](docs/architecture/assets/authguard-authn-authz-logical.jpg)
 
-[Physical call diagram](docs/architecture/assets/authguard-authn-authz-architecture.svg)
+[Physical call diagram](docs/architecture/assets/authguard-authn-authz-architecture.jpg)
 
 [Overview](docs/architecture/overview.md) · [中文](docs/architecture/overview_ZH.md)
 

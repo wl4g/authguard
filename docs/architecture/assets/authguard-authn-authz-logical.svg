@@ -1,8 +1,8 @@
 <?xml version="1.0" ?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1350" viewBox="0 0 1440 1350" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1375" viewBox="0 0 1440 1375" role="img" aria-labelledby="title desc">
   <title id="title">Authguard logical overview</title>
-  <desc id="desc">A compact logical view precedes the detailed physical diagram. Gateway routes authentication to AuthN and protected API checks to AuthZ. AuthN verifies credentials, IdP exchanges or signing proofs, then resolves canonical identity through JIT/account linking and issues JWTs. AuthZ checks CUD actions/targets and read API admission/scope. Gateway forwards business traffic directly to business services; embedded SDKs compile read scope into SQL WHERE and apply mutation guards. Corporate sources support discovery and SCIM lifecycle facts. State combines IAM DB and Redis conceptually. Native authentication/authorization is independent. Number groups reference the physical view.</desc>
-  <metadata>Authguard logical architecture; 2026-11-15; Apache-2.0. Overview; detailed calls and implementation gaps are specified separately.</metadata>
+  <desc id="desc">A compact logical view precedes the detailed physical diagram. Gateway routes authentication to AuthN and protected API checks to AuthZ. AuthN verifies credentials, IdP exchanges or signing proofs, then resolves canonical identity through JIT/account linking and issues JWTs. AuthZ checks CUD actions/targets and read API admission/scope. Gateway forwards business traffic directly to business services; embedded SDKs act as resource PDPs by refining bounded scopes into SQL WHERE predicates and mutation guards, which business execution points enforce. Corporate sources support discovery and SCIM lifecycle facts. State combines IAM DB and Redis conceptually. Native authentication/authorization is independent. Number groups reference the physical view.</desc>
+  <metadata>Authguard logical architecture; 2026-11-27; Apache-2.0. Overview; detailed calls and implementation gaps are specified separately.</metadata>
   <defs>
     <marker id="run" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M0 0L10 5L0 10Z" fill="#f0f1df"/>
@@ -12,7 +12,7 @@
     </marker>
   </defs>
   <style>text{font-family:"Chalkboard SE","Comic Sans MS","Trebuchet MS",sans-serif}text,path{stroke-linecap:round;stroke-linejoin:round}path{vector-effect:non-scaling-stroke}</style>
-  <rect width="1440" height="1350" fill="#182c24"/>
+  <rect width="1440" height="1375" fill="#182c24"/>
   <rect x="350" y="280" width="740" height="840" rx="16" fill="#1b3226" stroke="#b6d8aa" stroke-width="1.7" stroke-dasharray="8 7"/>
   <g id="corporate" data-component="corporate" data-control="external">
     <rect x="950" y="110" width="460" height="140" rx="12" fill="#252f47" stroke="#b8c4ed" stroke-width="1.7" stroke-dasharray="8 7"/>
@@ -68,7 +68,11 @@
   <path class="native" d="M30 540H16V1130H1430V1005H1410" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#native)" stroke-dasharray="12 5 2 5" data-flow="sa-native-io"/>
   <text x="30" y="43" font-size="30" fill="#f0f1df" font-weight="700" text-anchor="start">Authguard - logical overview</text>
   <text x="30" y="76" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">Identity proof, API decisions and data enforcement (number groups match the physical view).</text>
-  <text x="370" y="310" font-size="18" fill="#b6d8aa" font-weight="600" text-anchor="start">1 Authguard (deploy / configure)</text>
+  <g class="authguard-step-badge" data-step="1">
+    <circle cx="385" cy="305" r="15" fill="#182c24" stroke="#b6d8aa" stroke-width="1.5"/>
+    <text x="385" y="309.5" font-size="13" fill="#b6d8aa" font-weight="650" text-anchor="middle">1</text>
+  </g>
+  <text x="408" y="310" font-size="18" fill="#b6d8aa" font-weight="600" text-anchor="start">Authguard (deploy / configure)</text>
   <text x="968" y="141" font-size="21" fill="#b8c4ed" font-weight="650" text-anchor="start">Corporate Central Identity / Policy sources</text>
   <text x="968" y="170" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">LDAP / DSP / Keycloak</text>
   <text x="968" y="194" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">Identity / group facts</text>
@@ -95,7 +99,7 @@
   <text x="1178" y="581" font-size="21" fill="#b6d8aa" font-weight="650" text-anchor="start">Authguard SDK</text>
   <text x="1178" y="610" font-size="13" fill="#bdd0bf" font-weight="400" text-anchor="start">R: URNs -&gt; Query SQL WHERE</text>
   <text x="1178" y="634" font-size="13" fill="#bdd0bf" font-weight="400" text-anchor="start">CUD: URNs -&gt; Update SQL WHERE</text>
-  <text x="1178" y="658" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">(resources PEP)</text>
+  <text x="1178" y="658" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">(resource PDP)</text>
   <text x="418" y="1021" font-size="21" fill="#b6d8aa" font-weight="650" text-anchor="start">Authguard State (DB / Redis)</text>
   <text x="418" y="1050" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">Identity / policy / transient state</text>
   <text x="418" y="1074" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">(shared by AuthN and AuthZ)</text>
@@ -103,28 +107,57 @@
   <text x="1158" y="970" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">(outside Authguard)</text>
   <text x="1158" y="994" font-size="14" fill="#bdd0bf" font-weight="400" text-anchor="start">PG / Airflow / Kafka / Redis / S3 ...</text>
   <text x="1158" y="1018" font-size="17" fill="#bdd0bf" font-weight="400" text-anchor="start">Cloud IAM (native grants)</text>
-  <circle cx="345" cy="484" r="14" fill="#182c24" stroke="#f0f1df"/>
-  <text x="345" y="489" font-size="14" fill="#f0f1df" font-weight="650" text-anchor="middle">5,9</text>
-  <text x="430" y="414" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">5-8 Login / canonical JWT</text>
-  <text x="1093" y="301" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">6 External proof (when used)</text>
-  <text x="420" y="712" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">10 Check / 11 scope</text>
-  <text x="780" y="525" font-size="16" fill="#f0f1df" font-weight="400" text-anchor="start">12 Allowed request + scope</text>
-  <text x="350" y="784" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">2-4 Discover / materialize / grant</text>
-  <text x="1110" y="846" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">14 SCIM (corporate changed policies publishing)</text>
-  <circle cx="1147" cy="578" r="14" fill="#182c24" stroke="#b6d8aa"/>
-  <text x="1147" y="583" font-size="14" fill="#b6d8aa" font-weight="650" text-anchor="middle">13</text>
+  <g class="authguard-step-badge" data-step="5,9">
+    <circle cx="345" cy="484" r="17" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="345" y="488.5" font-size="11" fill="#f0f1df" font-weight="650" text-anchor="middle">5,9</text>
+  </g>
+  <g class="authguard-step-badge" data-step="5-8">
+    <circle cx="447" cy="409" r="17" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="447" y="413.5" font-size="11" fill="#f0f1df" font-weight="650" text-anchor="middle">5-8</text>
+  </g>
+  <text x="472" y="414" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">Login / canonical JWT</text>
+  <g class="authguard-step-badge" data-step="6">
+    <circle cx="1108" cy="296" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="1108" y="300.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">6</text>
+  </g>
+  <text x="1131" y="301" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">External proof (when used)</text>
+  <g class="authguard-step-badge" data-step="10,11">
+    <circle cx="442" cy="707" r="22" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="442" y="711.5" font-size="11" fill="#f0f1df" font-weight="650" text-anchor="middle">10,11</text>
+  </g>
+  <text x="472" y="712" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">Check / scope</text>
+  <g class="authguard-step-badge" data-step="12">
+    <circle cx="795" cy="520" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="795" y="524.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">12</text>
+  </g>
+  <text x="818" y="525" font-size="16" fill="#f0f1df" font-weight="400" text-anchor="start">Allowed request + scope</text>
+  <g class="authguard-step-badge" data-step="2-4">
+    <circle cx="367" cy="779" r="17" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="367" y="783.5" font-size="11" fill="#f0f1df" font-weight="650" text-anchor="middle">2-4</text>
+  </g>
+  <text x="392" y="784" font-size="15" fill="#f0f1df" font-weight="400" text-anchor="start">Discover / materialize / grant</text>
+  <g class="authguard-step-badge" data-step="14">
+    <circle cx="1125" cy="841" r="15" fill="#182c24" stroke="#f0f1df" stroke-width="1.5"/>
+    <text x="1125" y="845.5" font-size="13" fill="#f0f1df" font-weight="650" text-anchor="middle">14</text>
+  </g>
+  <text x="1148" y="846" font-size="14" fill="#f0f1df" font-weight="400" text-anchor="start">SCIM: identity / group updates</text>
+  <g class="authguard-step-badge" data-step="13">
+    <circle cx="1147" cy="578" r="15" fill="#182c24" stroke="#b6d8aa" stroke-width="1.5"/>
+    <text x="1147" y="582.5" font-size="13" fill="#b6d8aa" font-weight="650" text-anchor="middle">13</text>
+  </g>
   <text x="1128" y="888" font-size="15" fill="#e9b681" font-weight="400" text-anchor="start">Native credentials</text>
   <text x="650" y="1158" font-size="15" fill="#e9b681" font-weight="400" text-anchor="start">ServiceAccount native I/O (outside Authguard)</text>
   <rect x="30" y="1190" width="22" height="18" rx="3" fill="#203c2a" stroke="#b6d8aa" stroke-width="1.7"/>
   <text x="62" y="1205" font-size="16" fill="#b6d8aa" font-weight="600" text-anchor="start">Authguard Control</text>
-  <text x="62" y="1230" font-size="15" fill="#b6d8aa" font-weight="400" text-anchor="start">(filter &amp; SDK enforcement)</text>
+  <text x="62" y="1230" font-size="15" fill="#b6d8aa" font-weight="400" text-anchor="start">(gateway enforcement &amp; SDK scope decisions)</text>
   <rect x="500" y="1190" width="22" height="18" rx="3" fill="#252f47" stroke="#b8c4ed" stroke-width="1.7"/>
   <text x="532" y="1205" font-size="16" fill="#b8c4ed" font-weight="600" text-anchor="start">Authguard Related External Interaction</text>
   <text x="532" y="1230" font-size="15" fill="#b8c4ed" font-weight="400" text-anchor="start">(corporate central auth source)</text>
   <rect x="990" y="1190" width="22" height="18" rx="3" fill="#3d2c21" stroke="#e9b681" stroke-width="1.7"/>
   <text x="1022" y="1205" font-size="16" fill="#e9b681" font-weight="600" text-anchor="start">Outside Authguard (Non-Control)</text>
   <text x="1022" y="1230" font-size="15" fill="#e9b681" font-weight="400" text-anchor="start">(controlled by each middleware component)</text>
-  <text x="30" y="1270" font-size="15" fill="#bdd0bf" font-weight="400" text-anchor="start">PEP (Policy Enforcement Point) / PDP (Policy Decision Point) / JIT (Just-in-Time provisioning) / DSP (Digital Security Platform)</text>
-  <text x="30" y="1295" font-size="14" fill="#bdd0bf" font-weight="400" text-anchor="start">PEP enforces access / PDP evaluates policy / JIT resolves or creates identity after proof.</text>
+  <text x="30" y="1270" font-size="15" fill="#bdd0bf" font-weight="400" text-anchor="start">PEP (Policy Enforcement Point) / PDP (Policy Decision Point) / JIT (Just-in-Time provisioning)</text>
+  <text x="30" y="1295" font-size="14" fill="#bdd0bf" font-weight="400" text-anchor="start">PEP enforces access / PDP evaluates policy and resource scope / JIT resolves or creates identity after proof.</text>
   <text x="30" y="1322" font-size="14" fill="#bdd0bf" font-weight="400" text-anchor="start">R (Read) includes an API check before SDK row filtering.</text>
+  <text x="30" y="1348" font-size="15" fill="#bdd0bf" font-weight="400" text-anchor="start">DSP: Digital Security Platform</text>
 </svg>

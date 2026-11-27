@@ -3,9 +3,9 @@
 [统一 AuthN/AuthZ 设计规范](Authguard-AuthN-AuthZ-Whitepaper_ZH.md)
 是正式架构参考，并分别标明目标要求与当前实现。
 
-![AuthGuard 逻辑概览](assets/authguard-authn-authz-logical.svg)
+![AuthGuard 逻辑概览](assets/authguard-authn-authz-logical.jpg)
 
-[物理调用图](assets/authguard-authn-authz-architecture.svg) · [双视图说明](Authguard-AuthN-AuthZ-Whitepaper_ZH.md#physical-view)
+[物理调用图](assets/authguard-authn-authz-architecture.jpg) · [双视图说明](Authguard-AuthN-AuthZ-Whitepaper_ZH.md#physical-view)
 
 AuthGuard 在一个业务域内组合 Envoy Gateway、AuthN、AuthZ 与 Web。
 Envoy 负责入口与 edge PEP；AuthN 验证证明、绑定身份并签发 canonical JWT；
