@@ -86,32 +86,35 @@ AuthGuard 统一处理用户和工作负载访问业务 API 时的认证与资�
 | 审批与履约系统 | ITSM/ITAM 平台、工单/DBA、`workload-iam-sot`/Terraform、同步代理 | 分别管理集团准入、原生资源授权与目录同步；不参与逐请求判定 |
 | AuthN authority / token issuer | `authguard-authn` | 协议验证、身份规范化、账号绑定、canonical JWT 签发；不代理业务请求 |
 | 入口 PEP | Envoy Gateway | TLS、路由、canonical JWT 验证、`ext_authz`、移除伪造上下文 |
-| 资源 PDP | `authguard-authz` | 根据本地 canonical 身份/准入投影与策略判定，返回 ALLOW/DENY 和 bounded scope |
+| API/资源策略 PDP | `authguard-authz` | 根据本地 canonical 身份/准入投影与策略判定，返回 ALLOW/DENY 和 bounded scope |
 | 策略管理面 / PAP | AuthZ 产品 API、Dashboard、console | 管理域内 Action/Role/RoleBinding 与来源映射；企业模式下不得突破集团权限上限 |
-| 资源 PEP | 业务服务 + AuthGuard SDK | 验证授权上下文，对 URL 对应的真实资源及 SQL/对象操作执行约束 |
+| 资源范围 PDP | AuthGuard SDK | 验证并细化已签发的 scope，生成有界 SQL/对象谓词；不能扩大上游授权范围 |
+| 资源 PEP | 业务服务执行点 | 将 SDK 谓词和守卫应用到实际 SQL/对象操作 |
 | 原生资源 PEP | 数据库、broker、云资源服务及其 IAM | 执行 DB grants、topic ACL、bucket/prefix 权限等原生规则 |
 
-产品名称不决定角色。同一 Keycloak 可以提供 SSO、联邦 LDAP/AD 查询与自己的 [Authorization Services](https://www.keycloak.org/docs/latest/authorization_services/index.html)；本架构分别接入前两种接口，资源 PDP 仍为 AuthGuard AuthZ，不隐式调用 Keycloak 的 PDP。LDAP 中的角色属性也不等于已经存在 AuthGuard RoleBinding。
+产品名称不决定角色。同一 Keycloak 可以提供 SSO、联邦 LDAP/AD 查询与自己的 [Authorization Services](https://www.keycloak.org/docs/latest/authorization_services/index.html)；本架构分别接入前两种接口，API/资源策略 PDP 仍为 AuthGuard AuthZ，不隐式调用 Keycloak 的 PDP。LDAP 中的角色属性也不等于已经存在 AuthGuard RoleBinding。
 
 OAuth2 **authorization server** 是令牌协议角色；AuthGuard **resource PDP** 是业务资源判定角色。DSP 是企业平台名称，不是协议，也不是 AuthN 与 AuthZ 之间必须增加的一跳。
 
 ### 3. 总体拓扑与调用阶段
 
-先看逻辑图中的职责与主调用，再用物理图追踪接口、数据类型及后台同步。两图沿用 1–14 的调用编号。
+先看逻辑图中的职责与主调用，再用物理图追踪接口、数据类型及后台同步。两图沿用 1–14 的调用编号。所有调用编号（包括 6a–6d 可选分支）统一使用圆圈；逻辑图中范围或逗号分隔的编号表示相关物理调用的合并。
 
-三色图例统一为 **AuthGuard Control (filter & SDK enforcement)**、**AuthGuard Related External Interaction (corporate central auth source)** 和 **Outside AuthGuard (independent native control)**。业务宿主属于交互方，其内嵌 SDK 单独标为 AuthGuard 执行组件；原生中间件的认证鉴权不与 AuthN/AuthZ 集成。
+三色图例统一为 **AuthGuard Control (gateway enforcement & SDK scope decisions)**、**AuthGuard Related External Interaction (corporate central auth source)** 和 **Outside AuthGuard (independent native control)**。业务宿主属于交互方，其内嵌 SDK 单独标为 AuthGuard 资源范围判定组件；原生中间件的认证鉴权不与 AuthN/AuthZ 集成。
 
 <a id="logical-view"></a>
 #### 3.1 逻辑概览
 
-![AuthGuard 逻辑概览](assets/authguard-authn-authz-logical.svg)
+![AuthGuard 逻辑概览](assets/authguard-authn-authz-logical.jpg)
 
 逻辑图归纳认证、接口决策、数据范围执行与集团同步；State 合并表示 IAM DB/Redis 的职责，不表示它们部署在同一进程。
 
 <a id="physical-view"></a>
 #### 3.2 物理调用
 
-![AuthGuard 物理调用图](assets/authguard-authn-authz-architecture.svg)
+![AuthGuard 物理调用图](assets/authguard-authn-authz-architecture.jpg)
+
+JPG 用于文档展示；同目录 SVG 仅保留为可编辑源文件。
 
 物理图每种组件只画一次，多副本省略。AuthN 与 AuthZ 均为 stateless Pod，持久化/共享瞬态状态外置到 IAM DB 与 Redis；AuthZ 管理 API 和 PDP 是同一组件的不同接口。连线分别标识凭据读取、JIT、预授权物化、角色绑定、状态读取及 SCIM 写入。实线/虚线/点线表示运行时/管理/状态访问。2C、2B 独立部署；第 14 步是后台集团权限事实同步。
 
@@ -275,7 +278,7 @@ R 表示读取，CUD 表示 Create/Update/Delete（创建、更新、删除）�
 | 判定/执行阶段 | 所在组件 | 读写职责 |
 |---|---|---|
 | 接口/资源策略 PDP | AuthZ | 对查询入口及 CUD 的 action/resource 做判定，并计算允许和拒绝范围 |
-| 本地数据范围求值（scope refinement） | 业务 AuthGuard SDK | 将已签发的 URN 范围编译为 SQL WHERE/对象谓词；可视为数据判定阶段，但不能自行扩大上游授权 |
+| 资源范围 PDP / 本地 scope 细化 | 业务 AuthGuard SDK | 将已签发的 URN 范围编译为 SQL WHERE/对象谓词；可视为数据判定阶段，但不能自行扩大上游授权 |
 | 入口 PEP | Envoy 的 `ext_authz` filter | 发出 Check、执行 ALLOW/DENY，再将业务请求交给业务服务 |
 | 数据/对象 PEP | 业务处理器、SQL/资源执行位置 | 把 SDK 谓词用于真实查询及更新/删除，并校验创建对象的 owner/tenant/parent |
 

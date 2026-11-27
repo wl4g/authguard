@@ -3,9 +3,9 @@
 The [unified AuthN/AuthZ specification](Authguard-AuthN-AuthZ-Whitepaper.md)
 is the architecture reference. It separates target requirements from current implementation.
 
-![AuthGuard logical overview](assets/authguard-authn-authz-logical.svg)
+![AuthGuard logical overview](assets/authguard-authn-authz-logical.jpg)
 
-[Physical call diagram](assets/authguard-authn-authz-architecture.svg) · [View guide](Authguard-AuthN-AuthZ-Whitepaper.md#physical-view)
+[Physical call diagram](assets/authguard-authn-authz-architecture.jpg) · [View guide](Authguard-AuthN-AuthZ-Whitepaper.md#physical-view)
 
 AuthGuard combines Envoy Gateway, AuthN, AuthZ, and Web within an application domain.
 Envoy owns ingress and the edge PEP. AuthN verifies proofs, links identities, and issues

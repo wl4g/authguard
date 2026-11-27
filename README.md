@@ -29,9 +29,9 @@ passkeys, and wallet authentication.
 
 ## Architecture
 
-![AuthGuard logical overview](docs/architecture/assets/authguard-authn-authz-logical.svg)
+![AuthGuard logical overview](docs/architecture/assets/authguard-authn-authz-logical.jpg)
 
-[Physical call diagram](docs/architecture/assets/authguard-authn-authz-architecture.svg)
+[Physical call diagram](docs/architecture/assets/authguard-authn-authz-architecture.jpg)
 
 [Overview](docs/architecture/overview.md) · [中文](docs/architecture/overview_ZH.md)
 
@@ -142,7 +142,7 @@ Authentication-only deployment:
 
 ```bash
 helm upgrade --install authguard oci://ghcr.io/wl4g/charts/authguard \
-  --version 0.1.0 --namespace authguard --create-namespace \
+  --version latest --namespace authguard --create-namespace \
   --set authguard.authz.enabled=false \
   --set envoy_gateway.ext_authz.enabled=false
 ```
