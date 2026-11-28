@@ -74,6 +74,7 @@ function authguard_host() {
     authguard_set_path(authguard_next); authguard_set_open(false)
   }
   const authguard_props: authguard_remote_props = {
+    authguard_api_token: new URLSearchParams(location.search).has('policy_fixture') ? 'authguard-browser-fixture-token' : undefined,
     authguard_locale: authguard_functions ? undefined : authguard_locale,
     authguard_theme: authguard_functions ? undefined : authguard_theme,
     authguard_on_return: () => authguard_navigate(authguard_previous.current),

@@ -428,3 +428,8 @@ setters, browser locale detection and saved preferences, isolation, dialogs, rem
 and 390–1920px layouts. Desktop evidence includes 1440×1000 and 1920×1080 light/dark captures.
 The language bar uses `EN / 中 / 繁 / 日語 / 한글 / DE / FR` in a compact single row inside the profile
 menu. Appearance uses adjacent Light/Dark buttons; neither control opens a nested menu.
+
+Policy regressions in scenario 32 cover nonempty Actions/Roles/Bindings lists in standalone and
+embedded modes. API responses are explicitly held and released to verify list clearing, out-of-order
+success/error handling, loading/error recovery, same-type refreshes, delayed save/delete completions and obsolete delete errors
+after tab changes or unmount, and credential removal/restoration without fixed-delay race assumptions.
