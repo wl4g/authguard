@@ -36,7 +36,15 @@ class authguard_fixture_handler(BaseHTTPRequestHandler):
         elif authguard_path == '/.well-known/authn.json':
             authguard_json = {'version': '1', 'standalone': {'enabled': True, 'password': True, 'totp': False, 'webauthn': True}, 'ldap': {'enabled': False}, 'wallet': {'enabled': False}, 'oauth2': {'providers': []}, 'methods': {'password': True}}
         elif authguard_path.startswith('/auth/management/api/'):
-            authguard_json = {'items': [], 'total': 0, 'policy_revision': 1}
+            authguard_kind = authguard_path.rsplit('/', 1)[-1]
+            authguard_items = {
+                'actions': [{'identifier': 'fixture.read'}, {'identifier': 'fixture.write'}],
+                'roles': [{'id': 'fixture-reader'}, {'id': 'fixture-writer'}],
+                'role-bindings': [{'id': 'fixture-binding-a'}, {'id': 'fixture-binding-b'}],
+            }.get(authguard_kind, [])
+            if 'policy_fixture' not in self.headers.get('Referer', ''):
+                authguard_items = []
+            authguard_json = {'items': authguard_items, 'total': len(authguard_items), 'policy_revision': 1}
         if authguard_json is not None:
             authguard_data = json.dumps(authguard_json).encode()
             authguard_type = 'application/json'
@@ -57,7 +65,10 @@ class authguard_fixture_handler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', authguard_type)
         self.send_header('Content-Length', str(len(authguard_data)))
         self.end_headers()
-        self.wfile.write(authguard_data)
+        try:
+            self.wfile.write(authguard_data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # Browser navigation may cancel an in-flight fixture response.
 
 class E2ES32ModuleFederationVerifier(BaseVerifier):
     scenario_id = '32'
@@ -427,3 +438,206 @@ class E2ES32ModuleFederationVerifier(BaseVerifier):
                 authguard_page.screenshot(path=str(authguard_path), full_page=True, animations='disabled')
                 self.record_evidence(self._active_case_id, 'Login language ' + authguard_browser_locale, 'image/png', authguard_path)
                 self.details.append(f'Browser {authguard_browser_locale} resolves to {authguard_expected}; explicit fr_FR selection persists on reload without host HTML changes')
+
+    def authguard_policy_open(self, authguard_embedded):
+        if authguard_embedded:
+            self.authguard_page.goto(self.authguard_origin + '/access-management?policy_fixture=1')
+            expect(self.authguard_page.get_by_test_id('authguard-management')).to_be_visible()
+            self.authguard_page.get_by_test_id('authguard-nav-policy').click()
+        else:
+            self.authguard_page.add_init_script("sessionStorage.setItem('authguard.api-token', 'authguard-browser-fixture-token')")
+            self.authguard_page.goto(self.authguard_standalone_origin + '/policy?policy_fixture=1')
+        self.authguard_policy_rows(['fixture.read', 'fixture.write'])
+
+    def authguard_policy_rows(self, authguard_expected):
+        authguard_rows = self.authguard_page.locator('.authguard-resource-list > article')
+        expect(authguard_rows).to_have_count(len(authguard_expected))
+        expect(authguard_rows.locator('strong')).to_have_text(authguard_expected)
+        expect(authguard_rows.get_by_text('undefined', exact=True)).to_have_count(0)
+
+    def authguard_policy_hold(self, authguard_resource, authguard_method='GET'):
+        authguard_routes = []
+        def authguard_capture(authguard_route):
+            if authguard_route.request.method == authguard_method:
+                authguard_routes.append(authguard_route)
+            else:
+                authguard_route.continue_()
+        authguard_pattern = '**/auth/management/api/v1/' + authguard_resource
+        self.authguard_page.route(authguard_pattern, authguard_capture)
+        return authguard_routes, authguard_pattern
+
+    def authguard_policy_release(self, authguard_route, authguard_status=200, authguard_items=None, authguard_payload=None):
+        # A 204 has no body to finish; Chromium 151 may omit requestfinished.
+        authguard_event = 'response' if authguard_status == 204 else 'requestfinished'
+        with self.authguard_page.expect_event(authguard_event, predicate=lambda authguard_result: (authguard_result.request if authguard_status == 204 else authguard_result) == authguard_route.request):
+            if authguard_status == 204:
+                authguard_route.fulfill(status=204)
+            elif authguard_status != 200:
+                authguard_route.fulfill(status=authguard_status, json={'message': 'policy fixture request failed'})
+            elif authguard_payload is not None:
+                authguard_route.fulfill(status=200, json=authguard_payload)
+            elif authguard_items is not None:
+                authguard_route.fulfill(status=200, json={'items': authguard_items, 'total': len(authguard_items), 'policy_revision': 1})
+            else:
+                authguard_route.fulfill(response=authguard_route.fetch())
+        # Flush fetch callbacks and React commits without relying on a fixed delay.
+        self.authguard_page.evaluate('() => new Promise(authguard_resolve => requestAnimationFrame(() => requestAnimationFrame(authguard_resolve)))')
+
+    def authguard_policy_no_errors(self):
+        assert not self.authguard_errors, self.authguard_errors
+        assert not [authguard_error for authguard_error in self.authguard_console_errors if 'same key' in authguard_error or 'unique "key"' in authguard_error], self.authguard_console_errors
+
+    def authguard_check_11_policy_resource_switch_isolation(self):
+        for authguard_embedded in (False, True):
+            self.authguard_policy_open(authguard_embedded)
+            for authguard_kind, authguard_expected in (
+                ('roles', ['fixture-reader', 'fixture-writer']),
+                ('role-bindings', ['fixture-binding-a', 'fixture-binding-b']),
+                ('actions', ['fixture.read', 'fixture.write']),
+            ):
+                self.authguard_page.get_by_test_id('policy-tab-' + authguard_kind).click()
+                self.authguard_policy_rows(authguard_expected)
+            authguard_roles, authguard_pattern = self.authguard_policy_hold('roles')
+            self.authguard_page.get_by_test_id('policy-tab-roles').click()
+            self.authguard_policy_rows([])
+            assert len(authguard_roles) == 1, 'The role request must be pending before checking the empty list'
+            self.authguard_policy_release(authguard_roles[0])
+            self.authguard_policy_rows(['fixture-reader', 'fixture-writer'])
+            self.authguard_page.unroute(authguard_pattern)
+            self.authguard_screenshot(f'policy-resource-isolation-embedded-{authguard_embedded}')
+        self.authguard_policy_no_errors()
+        self.details.append('Standalone and embedded Actions/Roles/Bindings switches show exact rows; old rows are empty while the next type is pending.')
+
+    def authguard_check_12_policy_response_ordering(self):
+        for authguard_embedded in (False, True):
+            for authguard_status in (200, 500):
+                self.authguard_policy_open(authguard_embedded)
+                authguard_actions, authguard_action_pattern = self.authguard_policy_hold('actions')
+                authguard_roles, authguard_role_pattern = self.authguard_policy_hold('roles')
+                authguard_refresh = self.authguard_page.locator('.authguard-page-heading .authguard-icon-button')
+                authguard_refresh.click()
+                expect(authguard_refresh.locator('.authguard-spin')).to_be_visible()
+                self.authguard_page.get_by_test_id('policy-tab-roles').click()
+                self.authguard_policy_rows([])
+                assert len(authguard_actions) == len(authguard_roles) == 1
+                self.authguard_policy_release(authguard_actions[0], authguard_status)
+                self.authguard_policy_rows([])
+                expect(self.authguard_page.locator('.authguard-error-banner')).to_have_count(0)
+                expect(authguard_refresh.locator('.authguard-spin')).to_be_visible()
+                self.authguard_policy_release(authguard_roles[0])
+                self.authguard_policy_rows(['fixture-reader', 'fixture-writer'])
+                expect(authguard_refresh.locator('.authguard-spin')).to_have_count(0)
+                # A current failure is visible, then a successful retry recovers.
+                authguard_refresh.click()
+                expect(authguard_refresh.locator('.authguard-spin')).to_be_visible()
+                assert len(authguard_roles) == 2
+                self.authguard_policy_release(authguard_roles[-1], 500)
+                expect(self.authguard_page.locator('.authguard-error-banner')).to_have_text('policy fixture request failed')
+                expect(authguard_refresh.locator('.authguard-spin')).to_have_count(0)
+                authguard_refresh.click()
+                expect(authguard_refresh.locator('.authguard-spin')).to_be_visible()
+                assert len(authguard_roles) == 3
+                self.authguard_policy_release(authguard_roles[-1])
+                expect(self.authguard_page.locator('.authguard-error-banner')).to_have_count(0)
+                # Two refreshes for the same type must also obey response order.
+                authguard_refresh.click()
+                expect(authguard_refresh.locator('.authguard-spin')).to_be_visible()
+                authguard_refresh.click()
+                assert len(authguard_roles) == 5
+                self.authguard_policy_release(authguard_roles[-1], authguard_items=[{'id': 'fixture-latest-role'}])
+                self.authguard_policy_release(authguard_roles[-2], authguard_status, [{'id': 'fixture-obsolete-role'}])
+                self.authguard_policy_rows(['fixture-latest-role'])
+                expect(self.authguard_page.locator('.authguard-error-banner')).to_have_count(0)
+                expect(authguard_refresh.locator('.authguard-spin')).to_have_count(0)
+                self.authguard_page.unroute(authguard_action_pattern)
+                self.authguard_page.unroute(authguard_role_pattern)
+        self.authguard_policy_no_errors()
+        self.details.append('Explicitly released out-of-order successes/errors cannot replace the current type, rows, loading or errors; same-type refresh and failure recovery also pass in both modes.')
+
+    def authguard_check_13_policy_delayed_mutations(self):
+        for authguard_embedded in (False, True):
+            for authguard_leave_page, authguard_status in ((False, 204), (False, 500), (True, 204), (True, 500)):
+                self.authguard_policy_open(authguard_embedded)
+                authguard_deletes, authguard_pattern = self.authguard_policy_hold('actions/*', 'DELETE')
+                self.authguard_page.once('dialog', lambda authguard_dialog: authguard_dialog.accept())
+                self.authguard_page.locator('.authguard-resource-list > article').first.locator('.authguard-danger').click()
+                if authguard_leave_page:
+                    self.authguard_page.get_by_test_id('authguard-nav-principals' if authguard_embedded else 'nav-principals').click()
+                    expect(self.authguard_page.get_by_role('heading', name='Principals', exact=True)).to_be_visible()
+                else:
+                    self.authguard_page.get_by_test_id('policy-tab-roles').click()
+                    self.authguard_policy_rows(['fixture-reader', 'fixture-writer'])
+                assert len(authguard_deletes) == 1
+                authguard_action_requests = sum(authguard_url.endswith('/api/v1/actions') for authguard_url in self.authguard_requests)
+                self.authguard_policy_release(authguard_deletes[0], authguard_status)
+                assert sum(authguard_url.endswith('/api/v1/actions') for authguard_url in self.authguard_requests) == authguard_action_requests, 'A delayed mutation must not start an obsolete type reload after a switch or unmount'
+                if not authguard_leave_page:
+                    self.authguard_policy_rows(['fixture-reader', 'fixture-writer'])
+                    expect(self.authguard_page.locator('.authguard-error-banner')).to_have_count(0)
+                else:
+                    expect(self.authguard_page.get_by_role('heading', name='Principals', exact=True)).to_be_visible()
+                self.authguard_page.unroute(authguard_pattern)
+        self.authguard_policy_no_errors()
+        self.details.append('Delayed DELETE success/error cannot restart an Actions load or set an obsolete error after switching to Roles or leaving Policy, in standalone and embedded modes.')
+
+    def authguard_check_14_policy_token_reset(self):
+        self.authguard_policy_open(False)
+        authguard_actions, authguard_pattern = self.authguard_policy_hold('actions')
+        authguard_refresh = self.authguard_page.locator('.authguard-page-heading .authguard-icon-button')
+        authguard_refresh.click()
+        expect(authguard_refresh.locator('.authguard-spin')).to_be_visible()
+        self.authguard_page.get_by_test_id('authguard-profile-trigger').click()
+        self.authguard_page.get_by_test_id('api-token').fill('')
+        self.authguard_page.get_by_test_id('api-token-submit').click()
+        self.authguard_page.get_by_test_id('authguard-profile-trigger').click()
+        self.authguard_policy_rows([])
+        expect(authguard_refresh.locator('.authguard-spin')).to_have_count(0)
+        expect(self.authguard_page.get_by_test_id('policy-create')).to_be_disabled()
+        assert len(authguard_actions) == 1
+        self.authguard_policy_release(authguard_actions[0])
+        self.authguard_policy_rows([])
+        self.authguard_page.get_by_test_id('authguard-profile-trigger').click()
+        self.authguard_page.get_by_test_id('api-token').fill('authguard-browser-fixture-token')
+        self.authguard_page.get_by_test_id('api-token-submit').click()
+        self.authguard_page.get_by_test_id('authguard-profile-trigger').click()
+        expect(authguard_refresh.locator('.authguard-spin')).to_be_visible()
+        assert len(authguard_actions) == 2
+        self.authguard_policy_release(authguard_actions[-1])
+        self.authguard_policy_rows(['fixture.read', 'fixture.write'])
+        expect(authguard_refresh.locator('.authguard-spin')).to_have_count(0)
+        expect(self.authguard_page.get_by_test_id('policy-create')).to_be_enabled()
+        self.authguard_page.unroute(authguard_pattern)
+        self.authguard_policy_no_errors()
+        self.details.append('Removing a credential while a load is pending clears rows/loading and ignores its late reply; restoring the credential recovers normally.')
+
+    def authguard_check_15_policy_delayed_saves(self):
+        for authguard_embedded in (False, True):
+            for authguard_leave_page in (False, True):
+                self.authguard_policy_open(authguard_embedded)
+                authguard_saves, authguard_pattern = self.authguard_policy_hold('actions/*', 'PUT')
+                self.authguard_page.locator('.authguard-resource-list > article').first.locator('.authguard-row-actions button').first.click()
+                expect(self.authguard_page.get_by_test_id('policy-json')).to_be_visible()
+                self.authguard_page.get_by_test_id('policy-save').click()
+                self.authguard_page.get_by_role('button', name='Cancel', exact=True).click()
+                if authguard_leave_page:
+                    self.authguard_page.get_by_test_id('authguard-nav-principals' if authguard_embedded else 'nav-principals').click()
+                    expect(self.authguard_page.get_by_role('heading', name='Principals', exact=True)).to_be_visible()
+                else:
+                    self.authguard_page.get_by_test_id('policy-tab-roles').click()
+                    self.authguard_policy_rows(['fixture-reader', 'fixture-writer'])
+                    self.authguard_page.get_by_test_id('policy-create').click()
+                    expect(self.authguard_page.get_by_test_id('policy-json')).to_be_visible()
+                    authguard_role_draft = self.authguard_page.get_by_test_id('policy-json').input_value()
+                assert len(authguard_saves) == 1
+                authguard_action_requests = sum(authguard_url.endswith('/api/v1/actions') for authguard_url in self.authguard_requests)
+                self.authguard_policy_release(authguard_saves[0], authguard_payload={'policy_revision': 2})
+                assert sum(authguard_url.endswith('/api/v1/actions') for authguard_url in self.authguard_requests) == authguard_action_requests, 'An obsolete save must not restart the Actions loader'
+                if authguard_leave_page:
+                    expect(self.authguard_page.get_by_role('heading', name='Principals', exact=True)).to_be_visible()
+                else:
+                    expect(self.authguard_page.get_by_test_id('policy-json')).to_have_value(authguard_role_draft)
+                    self.authguard_policy_rows(['fixture-reader', 'fixture-writer'])
+                    self.authguard_page.get_by_role('button', name='Cancel', exact=True).click()
+                self.authguard_page.unroute(authguard_pattern)
+        self.authguard_policy_no_errors()
+        self.details.append('A delayed Action save cannot close a new Role editor or issue an obsolete reload after switching types or leaving Policy in either mode.')

@@ -1,5 +1,5 @@
 import { Braces, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useApi } from '../core/ApiContext'
 import { control } from '../core/api'
 import { useI18n } from '../shared/i18n'
@@ -20,15 +20,31 @@ export function PolicyPage() {
   const [collection, setCollection] = useState<Collection>({ policy_revision: 0, total: 0, items: [] })
   const [editing, setEditing] = useState<Resource | null>(null)
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false)
+  const authguard_latest_request = useRef(0)
+  const authguard_active_scope = useRef<{ type: ResourceType; token: string } | null>(null)
+  const authguard_is_current = useCallback(() => authguard_active_scope.current?.type === type && authguard_active_scope.current.token === token, [type, token])
   const definition = definitions[type]
   const load = useCallback(async () => {
-    if (!token) return
+    if (!authguard_is_current()) return
+    const authguard_request = ++authguard_latest_request.current
+    if (!token) {
+      setCollection({ policy_revision: 0, total: 0, items: [] })
+      setEditing(null); setError(''); setBusy(false)
+      return
+    }
     setBusy(true); setError('')
-    try { setCollection(await control<Collection>(`/api/v1/${type}`, token)) }
-    catch (cause) { setError(cause instanceof Error ? cause.message : t('apiError')) }
-    finally { setBusy(false) }
-  }, [token, type, t])
-  useEffect(() => { void load() }, [load])
+    try {
+      const authguard_result = await control<Collection>('/api/v1/' + type, token)
+      if (authguard_request === authguard_latest_request.current) setCollection(authguard_result)
+    } catch (cause) {
+      if (authguard_request === authguard_latest_request.current) setError(cause instanceof Error ? cause.message : t('apiError'))
+    } finally { if (authguard_request === authguard_latest_request.current) setBusy(false) }
+  }, [authguard_is_current, token, type, t])
+  useEffect(() => {
+    authguard_active_scope.current = { type, token }
+    void load()
+    return () => { authguard_active_scope.current = null; authguard_latest_request.current += 1 }
+  }, [load, token, type])
   const labels = useMemo<Record<ResourceType, string>>(() => ({ actions: t('actions'), roles: t('roles'), 'role-bindings': t('bindings') }), [t])
 
   async function save(resource: Resource, original: Resource | null) {
@@ -37,19 +53,27 @@ export function PolicyPage() {
     await control(`/api/v1/${type}${original ? `/${encodeURIComponent(String(original[definition.id]))}` : ''}`, token, {
       method: original ? 'PUT' : 'POST', headers: { 'if-match': String(collection.policy_revision) }, body: JSON.stringify(resource),
     })
-    setEditing(null); await load()
+    if (authguard_is_current()) { setEditing(null); await load() }
   }
   async function remove(resource: Resource) {
     if (!confirm(`${t('remove')} ${String(resource[definition.id])}?`)) return
     try {
       await control(`/api/v1/${type}/${encodeURIComponent(String(resource[definition.id]))}`, token, { method: 'DELETE', headers: { 'if-match': String(collection.policy_revision) } })
-      await load()
-    } catch (cause) { setError(cause instanceof Error ? cause.message : t('apiError')) }
+      if (authguard_is_current()) await load()
+    } catch (cause) { if (authguard_is_current()) setError(cause instanceof Error ? cause.message : t('apiError')) }
   }
 
   return <section>
     <div className="authguard-page-heading authguard-compact"><div><span className="authguard-eyebrow">PAP / CAS</span><h1>{t('policy')}</h1><p>{t('revision')} {collection.policy_revision}</p></div><button className="authguard-icon-button" onClick={load}><RefreshCw className={busy ? 'authguard-spin' : ''}/></button></div>
-    <div className="authguard-tabbar">{(Object.keys(definitions) as ResourceType[]).map(item => <button data-testid={`policy-tab-${item}`} className={type === item ? 'authguard-active' : ''} onClick={() => setType(item)} key={item}>{labels[item]}</button>)}</div>
+    <div className="authguard-tabbar">{(Object.keys(definitions) as ResourceType[]).map(item => <button data-testid={`policy-tab-${item}`} className={type === item ? 'authguard-active' : ''} onClick={() => {
+      if (item !== type) {
+        authguard_active_scope.current = null
+        authguard_latest_request.current += 1
+        setCollection({ policy_revision: 0, total: 0, items: [] })
+        setEditing(null); setError('')
+        setType(item)
+      }
+    }} key={item}>{labels[item]}</button>)}</div>
     <div className="authguard-data-card">
       <div className="authguard-data-toolbar"><span>{collection.total} {labels[type].toLowerCase()}</span><button data-testid="policy-create" className="authguard-primary authguard-small" disabled={!token} onClick={() => setEditing({ ...definition.initial })}><Plus/>{t('add')}</button></div>
       {error && <div className="authguard-error-banner">{error}</div>}
