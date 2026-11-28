@@ -142,7 +142,7 @@ Authentication-only deployment:
 
 ```bash
 helm upgrade --install authguard oci://ghcr.io/wl4g/charts/authguard \
-  --version 0.1.0 --namespace authguard --create-namespace \
+  --version latest --namespace authguard --create-namespace \
   --set authguard.authz.enabled=false \
   --set envoy_gateway.ext_authz.enabled=false
 ```
