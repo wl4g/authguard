@@ -467,7 +467,9 @@ class E2ES32ModuleFederationVerifier(BaseVerifier):
         return authguard_routes, authguard_pattern
 
     def authguard_policy_release(self, authguard_route, authguard_status=200, authguard_items=None, authguard_payload=None):
-        with self.authguard_page.expect_event('requestfinished', predicate=lambda authguard_request: authguard_request.url == authguard_route.request.url and authguard_request.method == authguard_route.request.method):
+        # A 204 has no body to finish; Chromium 151 may omit requestfinished.
+        authguard_event = 'response' if authguard_status == 204 else 'requestfinished'
+        with self.authguard_page.expect_event(authguard_event, predicate=lambda authguard_result: (authguard_result.request if authguard_status == 204 else authguard_result) == authguard_route.request):
             if authguard_status == 204:
                 authguard_route.fulfill(status=204)
             elif authguard_status != 200:
